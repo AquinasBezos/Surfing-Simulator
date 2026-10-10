@@ -10,27 +10,6 @@ Paddle into glassy turquoise waves, pop up, and race the peeling lip through the
 
 There is no build step and no binary assets. Textures, terrain and sound are all generated at start-up, and three.js (r169) loads from jsDelivr.
 
-## Play
-
-### Host on GitHub Pages
-
-1. Push this repository to GitHub.
-2. Open **Settings → Pages**, set **Source** to *Deploy from a branch*, then pick `main` and `/ (root)`.
-3. After a minute the game is live at `https://<your-user>.github.io/<repo-name>/`.
-
-GitHub Pages is served over HTTPS, which WebXR requires. To play in VR, open that URL in the Meta Quest Browser.
-
-### Run locally
-
-ES modules need a web server, so opening `index.html` directly from disk will not work:
-
-```bash
-python -m http.server 8000
-# then open http://localhost:8000
-```
-
-`localhost` counts as a secure context, so the PC version works. A Quest needs the HTTPS URL (GitHub Pages, or a tunnel).
-
 ## Controls
 
 | Action | PC | Meta Quest |
