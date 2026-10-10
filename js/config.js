@@ -1,0 +1,58 @@
+// Global tunables for the simulator. Units are metres, seconds, radians.
+
+export const QUALITY = {
+  high: { rows: 384, cols: 300, cubeSize: 1024, particles: 1600, trees: 1400, pixelRatio: 2 },
+  low: { rows: 232, cols: 196, cubeSize: 512, particles: 600, trees: 500, pixelRatio: 1 },
+};
+
+// Breaking wave behaviour. The wave travels toward the beach (+z).
+export const WAVE = {
+  slots: 2, // waves alive at once (must match shader)
+  speed: 5.2, // crest celerity
+  spawnZ: -115, // crest z when a wave appears
+  breakZ: 0, // crest z at which the peak starts to pitch
+  dieStartZ: 82, // the wave turns to whitewater and fades out here...
+  dieEndZ: 118, // ...and is gone here
+  spacing: 118, // distance between consecutive crests in a set
+  peelSpeed: 6.6, // speed the breaking point travels along the crest (main direction)
+  backSpeed: 2.4, // speed the break spreads the other way from the peak
+  tThrow: 1.5, // seconds for the lip to pitch fully after a section starts breaking
+  tTube: 3.6, // seconds a section stays an open barrel
+  tCollapse: 1.7, // seconds for the barrel to collapse into whitewater
+  curveK: 0.00028, // crest line curvature (sections away from the reef lag behind)
+  curveMax: 24,
+  minHeight: 2.2,
+  maxHeight: 2.9,
+};
+
+// Gerstner swell components: [direction (deg, 0 = toward the beach), wavelength, amplitude, steepness]
+export const SWELL = [
+  [0, 66, 0.2, 0.42],
+  [11, 43, 0.11, 0.42],
+  [-17, 29, 0.065, 0.4],
+  [34, 17.5, 0.035, 0.36],
+  [-41, 11.2, 0.022, 0.32],
+  [68, 7.4, 0.011, 0.3],
+  [-63, 5.2, 0.0075, 0.26],
+  [108, 3.7, 0.0045, 0.22],
+];
+
+export const GRAVITY = 9.81;
+
+// Sun over the ocean so the waves are backlit when looking out to sea or down the line.
+const s = [-0.36, 0.6, -0.71];
+const sl = Math.hypot(s[0], s[1], s[2]);
+export const SUN_DIR = [s[0] / sl, s[1] / sl, s[2] / sl];
+export const SUN_COLOR = [1.0, 0.95, 0.86];
+
+export const LINEUP_Z = -9;
+
+export const BOARD = { length: 1.86, width: 0.5 };
+
+// First-person eye positions in the board frame (x right, y up, z toward the tail).
+export const EYE = {
+  prone: [0, 0.34, 0.3],
+  standing: [0, 1.32, 0.32],
+};
+
+export const WORLD_RADIUS = 5000;

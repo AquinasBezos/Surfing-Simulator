@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <title>Surfing Simulator</title>
+    <meta name="description" content="First-person WebXR surfing simulator with breaking barrels, for PC browsers and Meta Quest." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M6 44c10-22 34-30 52-22-14-2-26 6-30 18 10-8 22-6 28 2-16-6-34 0-50 2z' fill='%2318a6a0'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="css/style.css" />
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+
+    <div id="hud" class="hidden">
+      <div class="hud-tl">
+        <div id="hud-state">Paddling</div>
+        <div id="hud-speed">0 km/h</div>
+      </div>
+      <div class="hud-tr" id="hud-wave"></div>
+      <div id="hud-tube">In the barrel</div>
+      <div id="toast"></div>
+      <div class="hud-bl">R lineup · Esc pause</div>
+      <div id="debug"></div>
+    </div>
+
+    <div id="overlay">
+      <div class="card">
+        <p class="eyebrow">WebXR · Three.js</p>
+        <h1 id="overlay-title">Surfing Simulator</h1>
+        <p class="lede">Paddle into glassy turquoise waves, pop up, and race the peeling lip through the barrel. Play in your browser, or on Meta Quest.</p>
+        <div class="actions">
+          <button id="start" class="primary">Surf on PC</button>
+          <div id="vr-slot"></div>
+        </div>
+        <div class="controls">
+          <table>
+            <thead>
+              <tr><th></th><th>PC</th><th>Meta Quest</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Paddle</td><td><kbd>Scroll</kbd> continuously</td><td>Sweep your hands front-to-back, low by your sides</td></tr>
+              <tr><td>Steer prone</td><td><kbd>A</kbd> / <kbd>D</kbd></td><td>Paddle harder on one side (right turns you left)</td></tr>
+              <tr><td>Pop up</td><td><kbd>Space</kbd></td><td>Stand up for real</td></tr>
+              <tr><td>Surf</td><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> shift weight</td><td>Lean your head and body</td></tr>
+              <tr><td>Look</td><td>Mouse</td><td>Your head</td></tr>
+              <tr><td>Other</td><td><kbd>R</kbd> lineup · <kbd>Esc</kbd> pause</td><td>Trigger: calibrate · Grip: lineup</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="tip">Catch a wave by paddling toward the beach as it lifts you, pop up once you start sliding, then carve along the face, ahead of the breaking lip. Slow down (<kbd>S</kbd>) to let the barrel cover you.</p>
+        <p class="fine">Quest without room to lie down? Kneel, press the trigger to calibrate, or use the thumbstick and <kbd>A</kbd>. <a href="?q=low">Low quality</a> · <a href="?q=high">High quality</a></p>
+      </div>
+    </div>
+
+    <script type="module" src="js/main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,123 @@
+// Procedural ocean soundscape (WebAudio, no samples): ambient sea, the roar of breaking
+// sections nearby, wind/board hiss that grows with speed, and paddle splashes.
+export class OceanAudio {
+  constructor() {
+    this.ctx = null;
+  }
+
+  start() {
+    if (this.ctx) {
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      return;
+    }
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const ctx = (this.ctx = new AC());
+    const len = ctx.sampleRate * 3;
+    const white = ctx.createBuffer(1, len, ctx.sampleRate);
+    const brown = ctx.createBuffer(1, len, ctx.sampleRate);
+    const w = white.getChannelData(0),
+      b = brown.getChannelData(0);
+    let last = 0;
+    for (let i = 0; i < len; i++) {
+      w[i] = Math.random() * 2 - 1;
+      last = (last + 0.02 * w[i]) / 1.02;
+      b[i] = last * 3.5;
+    }
+    const loop = (buf) => {
+      const s = ctx.createBufferSource();
+      s.buffer = buf;
+      s.loop = true;
+      s.start(0, Math.random() * 2);
+      return s;
+    };
+    this.master = ctx.createGain();
+    this.master.gain.value = 0.8;
+    this.master.connect(ctx.destination);
+
+    // ambient wash
+    const amb = loop(brown);
+    const ambF = ctx.createBiquadFilter();
+    ambF.type = 'lowpass';
+    ambF.frequency.value = 700;
+    this.ambG = ctx.createGain();
+    this.ambG.gain.value = 0.22;
+    amb.connect(ambF).connect(this.ambG).connect(this.master);
+
+    // breaking wave roar
+    const roar = loop(brown);
+    const roarF = ctx.createBiquadFilter();
+    roarF.type = 'bandpass';
+    roarF.frequency.value = 420;
+    roarF.Q.value = 0.5;
+    const roar2 = loop(white);
+    const roarF2 = ctx.createBiquadFilter();
+    roarF2.type = 'bandpass';
+    roarF2.frequency.value = 1800;
+    roarF2.Q.value = 0.7;
+    const r2g = ctx.createGain();
+    r2g.gain.value = 0.12;
+    this.roarG = ctx.createGain();
+    this.roarG.gain.value = 0;
+    roar.connect(roarF).connect(this.roarG);
+    roar2.connect(roarF2).connect(r2g).connect(this.roarG);
+    this.roarG.connect(this.master);
+
+    // wind / board hiss
+    const wind = loop(white);
+    this.windF = ctx.createBiquadFilter();
+    this.windF.type = 'bandpass';
+    this.windF.frequency.value = 900;
+    this.windF.Q.value = 0.6;
+    this.windG = ctx.createGain();
+    this.windG.gain.value = 0;
+    wind.connect(this.windF).connect(this.windG).connect(this.master);
+
+    this.whiteBuf = white;
+  }
+
+  splash(strength = 1) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const s = ctx.createBufferSource();
+    s.buffer = this.whiteBuf;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.frequency.value = 1100 + Math.random() * 700;
+    f.Q.value = 1.2;
+    const g = ctx.createGain();
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.25 * strength, t + 0.03);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.35);
+    s.connect(f).connect(g).connect(this.master);
+    s.start(t, Math.random() * 2);
+    s.stop(t + 0.4);
+  }
+
+  thud() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const s = ctx.createBufferSource();
+    s.buffer = this.whiteBuf;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 500;
+    const g = ctx.createGain();
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(0.9, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 1.6);
+    s.connect(f).connect(g).connect(this.master);
+    s.start(t);
+    s.stop(t + 1.7);
+  }
+
+  update(roar, speed, underwater) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime;
+    this.roarG.gain.setTargetAtTime(Math.min(1.2, roar) * 0.9, t, 0.15);
+    this.windG.gain.setTargetAtTime(Math.min(0.5, speed * speed * 0.004), t, 0.2);
+    this.windF.frequency.setTargetAtTime(700 + speed * 90, t, 0.2);
+    this.master.gain.setTargetAtTime(underwater ? 0.35 : 0.8, t, 0.1);
+  }
+}
