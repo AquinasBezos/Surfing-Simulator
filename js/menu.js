@@ -53,6 +53,8 @@ export class Menu {
     this.rooms = [];
     this.inRoom = false;
     this.privacy = 'public';
+    this.role = load('lineup.role', 'surfer') === 'drone' ? 'drone' : 'surfer';
+    this.vrSupported = false;
 
     this.buildBoardPickers();
     this.bindMain();
@@ -60,6 +62,7 @@ export class Menu {
     this.bindNames();
     this.bindSettings();
     this.bindMultiplayer();
+    this.bindRole();
     this.bindPass();
     document.addEventListener('keydown', (e) => this.onKey(e));
     this.show('main');
@@ -386,12 +389,50 @@ export class Menu {
 
   // ---------------------------------------------------------------- VR availability
   setVR(supported, reason = '') {
+    this.vrSupported = supported;
     for (const b of this.root.querySelectorAll('.vr-launch')) {
       b.disabled = !supported;
       b.classList.toggle('vr-off', !supported);
-      b.textContent = supported ? 'Play in VR' : 'VR: open on Meta Quest';
     }
     for (const n of this.root.querySelectorAll('.vr-note')) n.textContent = supported ? '' : reason;
+    this.playLabels();
+  }
+
+  playLabels() {
+    const fly = this.role === 'drone';
+    for (const b of this.root.querySelectorAll('[data-play="pc"]')) b.textContent = fly && b.closest('[data-screen="lobby"]') ? 'Fly on PC' : 'Play on PC';
+    for (const b of this.root.querySelectorAll('.vr-launch')) {
+      b.textContent = !this.vrSupported ? 'VR: open on Meta Quest' : fly && b.closest('[data-screen="lobby"]') ? 'Fly in VR' : 'Play in VR';
+    }
+  }
+
+  // ---------------------------------------------------------------- surfer or drone (multiplayer)
+  bindRole() {
+    this.screens.lobby.querySelector('.role-pick').addEventListener('click', (e) => {
+      const o = e.target.closest('[data-role]');
+      if (o) this.setRole(o.dataset.role, true);
+    });
+    controls.onChange(() => this.setRole(this.role));
+    this.setRole(this.role);
+  }
+
+  setRole(role, fromUser = false) {
+    this.role = role;
+    for (const o of this.screens.lobby.querySelectorAll('[data-role]')) {
+      o.classList.toggle('on', o.dataset.role === role);
+      o.setAttribute('aria-checked', String(o.dataset.role === role));
+    }
+    const drone = role === 'drone';
+    this.screens.lobby.querySelector('.lobby-boards').hidden = drone;
+    const help = this.screens.lobby.querySelector('.drone-help');
+    help.hidden = !drone;
+    const k = (id) => controls.pcKey(id);
+    help.innerHTML = `PC: <kbd>${esc(k('forward'))}</kbd><kbd>${esc(k('left'))}</kbd><kbd>${esc(k('back'))}</kbd><kbd>${esc(k('right'))}</kbd> fly · <kbd>${esc(k('popup'))}</kbd> up · <kbd>${esc(k('crouch'))}</kbd> down · mouse turns and tilts the camera · hold <kbd>${esc(k('charge'))}</kbd> for speed.<br>Quest: left stick climbs and turns, right stick flies, look around to aim the camera.`;
+    this.playLabels();
+    if (fromUser) {
+      save('lineup.role', role);
+      if (this.h.onRole) this.h.onRole(role);
+    }
   }
 
   // ---------------------------------------------------------------- multiplayer
@@ -484,11 +525,13 @@ export class Menu {
     this.inRoom = !!room;
     if (!room) return;
     document.getElementById('lobby-title').textContent = room.name;
-    document.getElementById('lobby-meta').textContent = `${room.isPrivate ? 'Private room (passcode)' : 'Public room'} · ${players.length} surfer${players.length === 1 ? '' : 's'}`;
-    document.getElementById('lobby-players').innerHTML = players.map((p) => `<li class="${p.playing ? 'playing' : ''} ${p.me ? 'me' : ''}"><i></i>${esc(p.name)}${p.me ? ' (you)' : ''}</li>`).join('');
+    document.getElementById('lobby-meta').textContent = `${room.isPrivate ? 'Private room (passcode)' : 'Public room'} · ${players.length} player${players.length === 1 ? '' : 's'}`;
+    document.getElementById('lobby-players').innerHTML = players
+      .map((p) => `<li class="${p.playing ? 'playing' : ''} ${p.me ? 'me' : ''}"><i></i>${esc(p.name)}${p.me ? ' (you)' : ''}${p.role === 'drone' ? ' <small>drone</small>' : ''}</li>`)
+      .join('');
     const pr = document.getElementById('pause-room');
     pr.hidden = false;
-    pr.textContent = `${room.name} · ${players.length} surfer${players.length === 1 ? '' : 's'}`;
+    pr.textContent = `${room.name} · ${players.length} player${players.length === 1 ? '' : 's'}`;
     this.root.querySelector('.pause-name').hidden = false;
     document.querySelector('[data-quit]').textContent = 'Leave room';
   }

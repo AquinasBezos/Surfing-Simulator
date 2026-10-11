@@ -107,9 +107,11 @@ export class VRMenu {
     const items = [];
     const add = (o) => items.push(o);
     if (this.screen === 'pause') {
+      const drone = this.h.info().drone;
       add({ label: 'Resume', primary: true, onClick: () => this.h.onResume() });
-      add({ label: 'Back to the lineup', onClick: () => this.h.onLineup() });
-      add({ label: 'Recalibrate paddling height', sub: 'Lie or kneel in your paddling position first', onClick: () => this.h.onRecalibrate() });
+      add({ label: drone ? 'Relaunch the drone' : 'Back to the lineup', onClick: () => this.h.onLineup() });
+      if (drone) add({ label: 'Re-centre the view', sub: 'Puts the camera back where your head is now', onClick: () => this.h.onRecalibrate() });
+      else add({ label: 'Recalibrate paddling height', sub: 'Lie or kneel in your paddling position first', onClick: () => this.h.onRecalibrate() });
       add({ label: 'Controls and settings', onClick: () => this.go('settings') });
       add({ label: this.h.info().inRoom ? 'Leave room' : 'Main menu', sub: 'Leaves VR', onClick: () => this.h.onQuit() });
     } else {

@@ -140,14 +140,19 @@
             <div class="panel-head"><button type="button" class="back" data-leave>Leave room</button><h2 id="lobby-title">Room</h2></div>
             <div class="panel-body">
               <p class="room-meta" id="lobby-meta"></p>
-              <h3>Surfers in this room</h3>
+              <h3>Players in this room</h3>
               <ul class="player-list" id="lobby-players"></ul>
               <p class="note error" id="lobby-status" role="status"></p>
               <label class="field">
                 <span>Your name</span>
                 <input type="text" class="name-input" maxlength="24" autocomplete="nickname" spellcheck="false" />
               </label>
-              <div class="board-pick compact" role="radiogroup" aria-label="Board"></div>
+              <div class="privacy role-pick" role="radiogroup" aria-label="Join as">
+                <button type="button" class="opt on" data-role="surfer" role="radio" aria-checked="true"><b>Surfer</b><small>Paddle out and ride</small></button>
+                <button type="button" class="opt" data-role="drone" role="radio" aria-checked="false"><b>Join as drone</b><small>Fly over the waves and film</small></button>
+              </div>
+              <div class="board-pick compact lobby-boards" role="radiogroup" aria-label="Board"></div>
+              <p class="note drone-help" hidden></p>
               <div class="play-row">
                 <button type="button" class="btn primary" data-play="pc">Play on PC</button>
                 <button type="button" class="btn vr-launch" data-play="vr">Play in VR</button>

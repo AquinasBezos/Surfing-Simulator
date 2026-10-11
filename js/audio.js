@@ -160,6 +160,44 @@ export class OceanAudio {
     s.stop(t + 1.7);
   }
 
+  // Quadcopter whine: level 0..1 (how loud / close), throttle 0..1 (motor speed).
+  drone(level, throttle) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    if (!this.droneG) {
+      this.droneG = ctx.createGain();
+      this.droneG.gain.value = 0;
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass';
+      f.frequency.value = 2400;
+      this.droneOsc = [0, 7, -5].map((detune) => {
+        const o = ctx.createOscillator();
+        o.type = 'sawtooth';
+        o.frequency.value = 180;
+        o.detune.value = detune * 10;
+        o.connect(f);
+        o.start();
+        return o;
+      });
+      // prop wash
+      const n = ctx.createBufferSource();
+      n.buffer = this.whiteBuf;
+      n.loop = true;
+      const nf = ctx.createBiquadFilter();
+      nf.type = 'bandpass';
+      nf.frequency.value = 1500;
+      nf.Q.value = 0.8;
+      const ng = ctx.createGain();
+      ng.gain.value = 0.5;
+      n.connect(nf).connect(ng).connect(this.droneG);
+      n.start();
+      f.connect(this.droneG).connect(this.master);
+    }
+    const t = ctx.currentTime;
+    this.droneG.gain.setTargetAtTime(Math.min(1, level) * 0.05, t, 0.1);
+    for (const [i, o] of this.droneOsc.entries()) o.frequency.setTargetAtTime((150 + throttle * 140) * (1 + i * 0.5), t, 0.08);
+  }
+
   update(roar, speed, underwater) {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;

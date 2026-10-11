@@ -18,6 +18,7 @@ import { Menu } from './menu.js';
 import { RemotePlayers, POSE } from './remote.js';
 import { VRMenu } from './vrmenu.js';
 import { controls } from './bindings.js';
+import { Drone, createDroneModel, animateDrone } from './drone.js';
 
 const params = new URLSearchParams(location.search);
 const isMobileXR = /OculusBrowser|Quest|Pico/i.test(navigator.userAgent);
@@ -86,6 +87,13 @@ const spray = new Spray(model, quality.particles);
 scene.add(spray.points);
 const remote = new RemotePlayers(scene);
 
+// spectator camera drone (multiplayer): the flight model, and the body you see if you look up
+const drone = new Drone();
+const droneBody = createDroneModel();
+droneBody.gimbal.visible = false; // the camera is in there
+droneBody.visible = false;
+scene.add(droneBody);
+
 // fade sphere for wipeouts and teleports (works in VR too)
 const fadeMat = new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0, side: THREE.BackSide, depthTest: false, depthWrite: false, toneMapped: false });
 const fade = new THREE.Mesh(new THREE.SphereGeometry(0.4, 16, 12), fadeMat);
@@ -102,6 +110,7 @@ xr.onHandModel = (m) => addUnderwaterPass(m);
 // ---------------------------------------------------------------- game state
 const game = {
   mode: null, // 'single' | 'multi' while playing
+  role: 'surfer', // or 'drone' (multiplayer spectator)
   started: false,
   paused: true,
   invulnerable: true,
@@ -129,6 +138,7 @@ let net = null; // multiplayer, loaded on demand
 const menu = new Menu({
   onPlay: (mode, platform) => startGame(mode, platform),
   onBoard: (type) => setBoardType(type),
+  onRole: (role) => net && net.setRole(role),
   onName: (name) => net && net.setName(name),
   onSettings: (s) => applySettings(s),
   onOpenMulti: () => openMultiplayer(),
@@ -175,7 +185,8 @@ const vrMenu = new VRMenu(renderer, rig, camera, {
   setVolume: (v) => menu.setVolume(v),
   info: () => ({
     inRoom: game.mode === 'multi',
-    subtitle: game.mode === 'multi' && net && net.roomInfo ? `${net.roomInfo.name} · ${net.peers.size + 1} surfer${net.peers.size ? 's' : ''}` : 'Singleplayer',
+    drone: game.role === 'drone',
+    subtitle: game.mode === 'multi' && net && net.roomInfo ? roomLine() : 'Singleplayer',
   }),
 });
 
@@ -265,6 +276,11 @@ function respawn(fadeOut = true) {
     return;
   }
   const s = lineupSpot();
+  if (game.role === 'drone') {
+    // hovering inside the break, looking out at the faces of the incoming waves
+    drone.reset(s.x + (Math.random() * 2 - 1) * 4, 9, 24, 0, -0.32);
+    return;
+  }
   // spread players out a little along the lineup in multiplayer
   const spread = game.mode === 'multi' ? (Math.random() * 2 - 1) * 6 : 0;
   surfer.reset(s.x + spread, s.z, s.yaw);
@@ -279,6 +295,11 @@ function startGame(mode, platform) {
   if (mode === 'multi' && (!net || !net.room)) return;
   audio.start();
   game.mode = mode;
+  game.role = mode === 'multi' ? menu.role : 'surfer';
+  if (net) net.setRole(game.role);
+  const flying = game.role === 'drone';
+  bodyFrame.visible = !flying;
+  droneBody.visible = flying;
   if (mode === 'multi') {
     model.setSchedule(net.seed, () => net.now());
     net.setPlaying(true);
@@ -299,7 +320,9 @@ function startGame(mode, platform) {
     enterVR(); // must stay synchronous with the click for the browser to allow it
   } else if (platform === 'pc') {
     resume();
-    hud.toast(`Scroll to paddle (faster = harder) · ${controls.pcKey('left')} / ${controls.pcKey('right')} steer · ${controls.pcKey('popup')} to pop up`, 5);
+    const k = (id) => controls.pcKey(id);
+    if (flying) hud.toast(`${k('forward')} ${k('left')} ${k('back')} ${k('right')} fly · ${k('popup')} up · ${k('crouch')} down · mouse turns and tilts the camera`, 6);
+    else hud.toast(`Scroll to paddle (faster = harder) · ${k('left')} / ${k('right')} steer · ${k('popup')} to pop up`, 5);
   } else menu.hide(); // a VR session that started on its own
 }
 
@@ -325,6 +348,10 @@ function quitToMenu() {
   game.started = false;
   game.paused = true;
   game.mode = null;
+  game.role = 'surfer';
+  bodyFrame.visible = true;
+  droneBody.visible = false;
+  audio.drone(0, 0);
   game.invulnerable = true;
   pc.enabled = false;
   if (document.pointerLockElement) document.exitPointerLock();
@@ -369,6 +396,10 @@ renderer.xr.addEventListener('sessionstart', () => {
   spray.setViewportHeight(1700);
   underwater.setViewportHeight(1700);
   const press = (id) => controls.questText(id).replace(/^Either/, 'either');
+  if (game.role === 'drone') {
+    hud.toast(`Left stick: climb and turn · right stick: fly · look around to aim the camera. ${press('pause')}: menu.`, 7);
+    return;
+  }
   const calibrate = controls.quest.recalibrate === 'none' ? 'Lie or kneel down to start.' : `Lie or kneel down, then press ${press('recalibrate')} to calibrate.`;
   hud.toast(`${calibrate} Paddle with your arms, stand up to surf. ${press('pause')}: menu.`, 7);
 });
@@ -527,7 +558,8 @@ function wireNet(n) {
   let failedPeer = null; // the surfer named in the lobby's connection warning
   n.on('peers', () => updateLobby());
   n.on('join', (id, name) => {
-    hud.feed(`${name} paddled out`);
+    const p = n.peers.get(id);
+    hud.feed(p && p.role === 'drone' ? `${name} launched a drone` : `${name} paddled out`);
     if (id === failedPeer) menu.setLobbyStatus(''); // got through after all
   });
   n.on('leave', (id, name) => {
@@ -620,9 +652,19 @@ async function leaveRoom() {
 
 function updateLobby() {
   if (!net || !net.room) return;
-  const players = [{ name: net.name, playing: game.mode === 'multi', me: true }];
-  for (const p of net.peers.values()) players.push({ name: p.name, playing: p.playing });
+  const players = [{ name: net.name, playing: game.mode === 'multi', me: true, role: game.mode === 'multi' ? game.role : menu.role }];
+  for (const p of net.peers.values()) players.push({ name: p.name, playing: p.playing, role: p.role });
   menu.renderLobby(net.roomInfo, players);
+}
+
+// "3 surfers · 1 drone · Dawn patrol"
+function roomLine() {
+  let surfers = game.role === 'drone' ? 0 : 1;
+  let drones = 1 - surfers;
+  for (const p of net.peers.values()) p.role === 'drone' ? drones++ : surfers++;
+  const parts = [`${surfers} surfer${surfers === 1 ? '' : 's'}`];
+  if (drones) parts.push(`${drones} drone${drones === 1 ? '' : 's'}`);
+  return `${parts.join(' · ')} · ${net.roomInfo.name}`;
 }
 
 function sendEvent(e) {
@@ -632,6 +674,13 @@ function sendEvent(e) {
 const STATE_CODE = { prone: POSE.PRONE, popup: POSE.POPUP, standing: POSE.STANDING, wipeout: POSE.WIPEOUT };
 const poseBuf = new Float32Array(14);
 function sendPose() {
+  if (game.role === 'drone') {
+    // same packet; crouch carries the gimbal pitch and effort the throttle
+    const q = drone.quat;
+    poseBuf.set([net.now(), drone.pos.x, drone.pos.y, drone.pos.z, q.x, q.y, q.z, q.w, POSE.DRONE, drone.camPitch, 0, 0, drone.throttle, 0]);
+    net.sendPose(poseBuf);
+    return;
+  }
   const q = surfer.quat;
   poseBuf[0] = net.now();
   poseBuf[1] = surfer.x;
@@ -667,6 +716,10 @@ function onRemoteEvent(id, e) {
   } else if (e.k === 'air') hud.feed(`${name}: air ${Number(e.t) || 0} s!`);
   else if (e.k === 'hang') hud.feed(`${name}: hang ${e.n === 10 ? 'ten' : 'five'}!`);
   else if (e.k === 'ride' && Number(e.time) >= 4) hud.feed(`${name} rode ${Number(e.time)} s${Number(e.tube) > 0.3 ? ` · barrel ${Number(e.tube)} s` : ''}`);
+  else if (e.k === 'crash') {
+    hud.feed(`${name} crashed their drone`);
+    if (pos) spray.fan(pos.x, pos.y, pos.z, 0, 0, 0.6, 0.25);
+  }
 }
 
 // ---------------------------------------------------------------- camera
@@ -948,6 +1001,64 @@ let fpsAcc = 0,
   fpsFrames = 0,
   fps = 0;
 const NO_INPUT = { paddle: 0, pulse: 0, turn: 0, steer: 0, leanX: 0, leanZ: 0, walk: 0, walkTo: null, crouch: 0, duck: false, charge: false };
+const NO_FLIGHT = { fwd: 0, right: 0, up: 0, yawRate: 0, boost: false };
+
+// ---------------------------------------------------------------- drone
+// PC: strafe on the movement keys, climb / descend on the pop-up / crouch keys, the mouse
+// turns the drone and tilts the gimbal camera.
+function droneInputPC() {
+  const [lx, ly] = pc.consumeLook();
+  const sens = settings.sensitivity;
+  drone.yaw -= lx * sens * 0.0024;
+  drone.camPitch = clamp(drone.camPitch - ly * sens * 0.0024 * (settings.invertY ? -1 : 1), -1.5, 0.6);
+  return { fwd: pc.leanZ, right: pc.steer, up: (pc.down('popup') ? 1 : 0) - (pc.down('crouch') ? 1 : 0), yawRate: 0, boost: pc.charge };
+}
+
+// Quest: left stick climbs / descends and turns, right stick strafes; the head aims.
+const deadzone = (v) => (Math.abs(v) < 0.15 ? 0 : (v - Math.sign(v) * 0.15) / 0.85);
+function droneInputXR() {
+  const L = xr.sticks.left;
+  const R = xr.sticks.right;
+  return { fwd: -deadzone(R[1]), right: deadzone(R[0]), up: -deadzone(L[1]), yawRate: -deadzone(L[0]) * 1.4, boost: false };
+}
+
+function updateDrone(dt, fly) {
+  const wasDown = drone.crash;
+  drone.update(dt, fly, model);
+  if (drone.crash && !wasDown) {
+    // into the water (or the lip, or the land): splash, fade out and relaunch
+    game.teleport = 1.4;
+    game.splash = 0.25;
+    spray.fan(drone.pos.x, drone.pos.y, drone.pos.z, 0, 0, 0.7, 0.3);
+    audio.splash(1.2);
+    hud.toast(`<b>Drone down</b> · ${drone.crash}. Relaunching…`, 2.6);
+    sendEvent({ k: 'crash' });
+  }
+  // height over the water, and flying through a barrel
+  const s = model.sample(drone.pos.x, drone.pos.z, game.droneS || (game.droneS = {}));
+  game.droneAlt = drone.pos.y - s.height;
+  const ceiling = s.wave && s.b > 0.5 && s.un > 0 && s.un < 1.6 ? model.tubeCeiling(s.wave, drone.pos.x, drone.pos.z, drone.pos.y) : Infinity;
+  game.droneTube = ceiling < Infinity && !drone.crash;
+}
+
+function updateCameraDronePC() {
+  // level gimbal: only the drone's heading and the camera tilt, never the body's tilt
+  drone.cameraPosition(rig.position);
+  rig.quaternion.setFromAxisAngle(Yaxis, drone.yaw);
+  camera.position.set(0, 0, 0);
+  camera.rotation.set(drone.camPitch, 0, 0, 'YXZ');
+}
+
+function updateCameraDroneXR() {
+  // the calibrated head sits on the drone's camera point, facing the drone's heading
+  const rigYaw = drone.yaw - xr.yaw0;
+  rig.rotation.set(0, rigYaw, 0);
+  const h0 = _v.copy(xr.h0).applyAxisAngle(Yaxis, rigYaw);
+  drone.cameraPosition(rig.position).sub(h0);
+  // others see the gimbal follow your head
+  camera.getWorldDirection(_v);
+  drone.camPitch = Math.asin(clamp(_v.y, -1, 1));
+}
 
 function frame(time, xrFrame) {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -960,16 +1071,24 @@ function frame(time, xrFrame) {
   // multiplayer keeps the shared world moving even while the menu is open
   const running = game.started && (!game.paused || game.mode === 'multi');
   const acceptInput = game.started && !game.paused;
+  const flying = game.started && game.role === 'drone';
   let inp = NO_INPUT;
+  let fly = NO_FLIGHT;
   pc.update(dt);
 
   if (inXR) {
     const gestures = xr.update(dt, xrFrame, surfer.state, surfer.board);
-    if (acceptInput) inp = gestures;
+    if (acceptInput) {
+      if (flying) fly = droneInputXR();
+      else inp = gestures;
+    }
     for (const e of xr.consumeEvents()) {
       if (e === 'pause') vrMenu.open ? closeVRMenu() : game.started && openVRMenu();
       else if (!acceptInput) continue; // the headset menu is open
-      else if (typeof e === 'object' && e.flick) surfer.flick(e.flick, e.omega, e.sweep);
+      else if (flying) {
+        if (e === 'reset') respawn(true);
+        else if (e === 'recalibrate') xr.calibrate(); // re-centre the view under the drone
+      } else if (typeof e === 'object' && e.flick) surfer.flick(e.flick, e.omega, e.sweep);
       else if (e === 'recalibrate') {
         xr.calibrate();
         hud.toast('Calibrated paddling position', 2);
@@ -978,6 +1097,9 @@ function frame(time, xrFrame) {
       else if (e === 'layDown') surfer.layDown();
       else if (e === 'toggleStand') surfer.state === STATE.PRONE ? surfer.popUp() : surfer.layDown();
     }
+  } else if (acceptInput && flying) {
+    fly = droneInputPC();
+    for (const e of pc.consumeEvents()) if (e === 'reset') respawn(true);
   } else if (acceptInput) {
     const steer = pc.steer;
     inp = {
@@ -1001,7 +1123,10 @@ function frame(time, xrFrame) {
     }
   }
 
-  if (running) {
+  if (running && flying) {
+    model.update(dt);
+    updateDrone(dt, fly);
+  } else if (running) {
     model.update(dt);
     const paddling = !inXR && acceptInput && surfer.state === STATE.PRONE;
     const pulse = arms.update(dt, paddling, inp.paddle, surfer.diving);
@@ -1010,10 +1135,22 @@ function frame(time, xrFrame) {
     updateGame(dt);
   } else arms.update(0, false);
 
-  updateBody(dt);
-  arms.group.visible = !inXR && !game.hideArms && surfer.state === STATE.PRONE && game.standBlend < 0.05;
-  if (inXR) updateCameraXR(dt);
-  else updateCameraPC(dt);
+  if (flying) {
+    // your own drone: in view above you on PC; in a headset it would sit right by your eyes
+    droneBody.visible = !inXR;
+    for (const h of xr.hands) if (h.model) h.model.visible = false; // no wetsuit hands on a drone
+    droneBody.position.copy(drone.pos);
+    droneBody.quaternion.copy(drone.quat);
+    animateDrone(droneBody, dt, drone.throttle, drone.camPitch, drone.quat, drone.yaw);
+    if (inXR) updateCameraDroneXR();
+    else updateCameraDronePC();
+  } else {
+    for (const h of xr.hands) if (h.model) h.model.visible = true;
+    updateBody(dt);
+    arms.group.visible = !inXR && !game.hideArms && surfer.state === STATE.PRONE && game.standBlend < 0.05;
+    if (inXR) updateCameraXR(dt);
+    else updateCameraPC(dt);
+  }
 
   rig.updateMatrixWorld(true);
   // the head. (In VR three.js keeps `camera` on the head pose inside the rig; the XR camera's
@@ -1031,7 +1168,10 @@ function frame(time, xrFrame) {
       sendPose();
     }
     remote.update(net.now(), focus, dt);
-    hud.setPlayers(`${net.peers.size + 1} surfer${net.peers.size ? 's' : ''} · ${net.roomInfo.name}`);
+    hud.setPlayers(roomLine());
+    // motor whine: your own drone, or the nearest one buzzing past
+    const ds = flying ? { level: 0.7, throttle: drone.throttle } : remote.droneSound(focus);
+    audio.drone(ds.level, ds.throttle);
   } else if (game.bots) {
     updateBots();
     remote.update(model.time, focus, dt);
@@ -1101,7 +1241,7 @@ function frame(time, xrFrame) {
     const dz = Math.abs(focus.z - w.crestZ0);
     roar += (w.H / 2.6) * 30 / (30 + dx + dz * 1.5);
   }
-  audio.update(roar, surfer.speed, camUnder);
+  audio.update(roar, flying ? drone.speed * 0.6 : surfer.speed, camUnder);
 
   // ---- HUD
   let stateLabel = { prone: 'Paddling', popup: 'Popping up', standing: 'Surfing', wipeout: 'Wipeout!' }[surfer.state];
@@ -1110,6 +1250,10 @@ function frame(time, xrFrame) {
   else if (surfer.state === STATE.STANDING && surfer.crouch > 0.5) stateLabel = 'Surfing · crouched';
   let warn = '';
   if (surfer.state === STATE.STANDING && surfer.ceiling < 2.1 && surfer.crouch < 0.65) warn = inXR ? 'Crouch!' : `Crouch! (${controls.pcKey('crouch')})`;
+  if (flying) {
+    stateLabel = drone.crash ? 'Drone down' : `Drone · ${Math.max(0, game.droneAlt || 0).toFixed(1)} m up`;
+    warn = !drone.crash && game.droneAlt < 0.9 && drone.vel.y < -0.3 ? 'Pull up!' : '';
+  }
   const B = surfer.board;
   let dbg = '';
   if (debug) {
@@ -1129,12 +1273,12 @@ function frame(time, xrFrame) {
     {
       visible: game.started && (!game.paused || inXR) && !menu.isOpen,
       stateLabel,
-      speed: surfer.speed,
+      speed: flying ? drone.speed : surfer.speed,
       waveLabel: nextWaveInfo(),
-      inTube: surfer.inTube,
+      inTube: flying ? game.droneTube : surfer.inTube,
       warn,
-      paddle: surfer.state === STATE.PRONE && !surfer.diving ? surfer.paddleEffort : null,
-      foot: B.walk && surfer.state === STATE.STANDING ? (surfer.footPos - B.footMin) / (B.footMax - B.footMin) : null,
+      paddle: !flying && surfer.state === STATE.PRONE && !surfer.diving ? surfer.paddleEffort : null,
+      foot: !flying && B.walk && surfer.state === STATE.STANDING ? (surfer.footPos - B.footMin) / (B.footMax - B.footMin) : null,
       debug: dbg,
     },
     inXR && !vrMenu.open,
@@ -1208,6 +1352,8 @@ window.__surf = {
   menu,
   vrMenu,
   rig,
+  drone,
+  droneBody,
   STATE,
   respawn,
   setBoardType,

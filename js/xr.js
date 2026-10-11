@@ -79,6 +79,7 @@ export class XRControls {
       this.hands.push(h);
     }
     this.pressed = {}; // action -> held last frame
+    this.sticks = { left: [0, 0], right: [0, 0] }; // thumbstick x, y per hand (drone flying)
   }
 
   // Ignore buttons that are held right now until they're let go (the trigger that just
@@ -177,6 +178,9 @@ export class XRControls {
         const ay = gp.axes.length >= 4 ? gp.axes[3] : gp.axes[1] || 0;
         if (Math.abs(ax) > Math.abs(stickX)) stickX = ax;
         if (Math.abs(ay) > Math.abs(stickY)) stickY = ay;
+        const st = this.sticks[h.side < 0 ? 'left' : 'right'];
+        st[0] = ax;
+        st[1] = ay;
       }
     }
     // one-shot button actions fire on the press

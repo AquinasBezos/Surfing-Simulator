@@ -67,13 +67,14 @@ const olderTimeline = (a, b) => a.created < b.created || (a.created === b.create
 const clean = (s, n) => String(s || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
 
 export class Net {
-  constructor({ name, board }) {
+  constructor({ name, board, role = 'surfer' }) {
     this.selfId = selfId;
     this.name = clean(name, 24) || 'Surfer';
     this.board = board;
+    this.role = role; // 'surfer' or 'drone'
     this.room = null;
     this.roomInfo = null;
-    this.peers = new Map(); // peerId -> { name, board, origin, playing }
+    this.peers = new Map(); // peerId -> { name, board, role, origin, playing }
     this.playing = false;
     this.timeline = null; // { seed, origin, created }
     this.offset = 0; // shared clock = perfNow() + offset
@@ -205,7 +206,7 @@ export class Net {
       if (msg && typeof msg === 'object') this.emit('event', peerId, msg);
     };
     room.onPeerJoin = (peerId) => {
-      if (!this.peers.has(peerId)) this.peers.set(peerId, { name: '…', board: 'shortboard', origin: null, playing: false });
+      if (!this.peers.has(peerId)) this.peers.set(peerId, { name: '…', board: 'shortboard', role: 'surfer', origin: null, playing: false });
       this.aHello.send(this._hello(), { target: peerId });
       this.emit('peers');
     };
@@ -264,6 +265,11 @@ export class Net {
     this.aHello.send(this._hello());
   }
 
+  setRole(role) {
+    this.role = role;
+    if (this.room) this.aHello.send(this._hello());
+  }
+
   setBoard(board) {
     this.board = board;
     if (this.room) this.aHello.send(this._hello());
@@ -275,16 +281,17 @@ export class Net {
   }
 
   _hello() {
-    return { v: MP.protocol, name: this.name, board: this.board, playing: this.playing, tl: this.timeline };
+    return { v: MP.protocol, name: this.name, board: this.board, role: this.role, playing: this.playing, tl: this.timeline };
   }
 
   _onHello(peerId, msg) {
     if (!msg || typeof msg !== 'object') return;
     const before = this.peers.get(peerId);
-    const p = before || { name: '…', board: 'shortboard', origin: null, playing: false };
+    const p = before || { name: '…', board: 'shortboard', role: 'surfer', origin: null, playing: false };
     const firstHello = !before || before.name === '…';
     p.name = clean(msg.name, 24) || 'Surfer';
     p.board = msg.board === 'longboard' ? 'longboard' : 'shortboard';
+    p.role = msg.role === 'drone' ? 'drone' : 'surfer';
     p.playing = !!msg.playing;
     p.origin = msg.tl && msg.tl.origin;
     p.version = msg.v;

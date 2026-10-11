@@ -1,12 +1,16 @@
 // Other surfers: a board plus a low-poly wetsuit figure posed procedurally from a few
 // numbers (state, crouch, lean, stance position, paddling effort). Every body part of
 // every avatar is one instance of a single ellipsoid mesh, so all bodies cost one draw call.
+// Spectators flying camera drones send a DRONE pose instead and show up as a quadcopter.
 // Network snapshots are buffered and interpolated on the shared room clock.
 import * as THREE from 'three';
 import { createBoard } from './board.js';
 import { BOARDS } from './config.js';
+import { createDroneModel, animateDrone } from './drone.js';
 
-export const POSE = { PRONE: 0, POPUP: 1, STANDING: 2, WIPEOUT: 3 };
+// for a DRONE pose the snapshot's crouch is the gimbal pitch and effort the throttle
+export const POSE = { PRONE: 0, POPUP: 1, STANDING: 2, WIPEOUT: 3, DRONE: 4 };
+const _eul = new THREE.Euler(0, 0, 0, 'YXZ');
 const MAX_PLAYERS = 16;
 const PARTS = 16;
 const DELAY = 0.15; // render this far behind the newest snapshot (s)
@@ -118,7 +122,18 @@ class Avatar {
     this.hair = HAIRS[(h >>> 3) % HAIRS.length];
     this.accent = ACCENTS[(h >>> 6) % ACCENTS.length];
     this.tag = null;
+    this.drone = null; // quadcopter model, made the first time they fly one
     this.cur = { x: 0, y: 0, z: 0, q: new THREE.Quaternion(), state: 0, crouch: 0, foot: 0, lean: 0, effort: 0, dive: 0 };
+  }
+
+  // show the drone or the surfer
+  setDrone(on) {
+    if (on && !this.drone) {
+      this.drone = createDroneModel(this.accent);
+      this.root.add(this.drone);
+    }
+    if (this.drone) this.drone.visible = on;
+    if (this.board) this.board.visible = !on;
   }
 
   setBoard(type) {
@@ -287,6 +302,22 @@ export class RemotePlayers {
     return a && a.visible ? a.root.position : null;
   }
 
+  // How loud the other drones are here: { level 0..1, throttle } of the loudest
+  droneSound(camPos) {
+    let level = 0,
+      throttle = 0;
+    for (const a of this.avatars.values()) {
+      if (!a.visible || a.cur.state !== POSE.DRONE) continue;
+      const d = camPos.distanceTo(a.root.position);
+      const l = 4 / (4 + d * d * 0.15);
+      if (l > level) {
+        level = l;
+        throttle = a.cur.effort;
+      }
+    }
+    return { level, throttle };
+  }
+
   update(now, camPos, dt) {
     let n = 0;
     const mtx = this.bodies.instanceMatrix.array;
@@ -300,6 +331,18 @@ export class RemotePlayers {
       a.root.position.set(c.x, c.y, c.z);
       a.root.quaternion.copy(c.q);
       a.root.updateMatrixWorld(true);
+      a.setDrone(c.state === POSE.DRONE);
+      if (c.state === POSE.DRONE) {
+        animateDrone(a.drone, dt, c.effort, c.crouch, c.q, _eul.setFromQuaternion(c.q, 'YXZ').y);
+        if (a.tag) {
+          const dist = camPos.distanceTo(a.root.position);
+          const s = Math.min(3, Math.max(0.32, dist * 0.04));
+          a.tag.position.set(c.x, c.y + 0.22, c.z);
+          a.tag.scale.set(s * 4, s, 1);
+          a.tag.material.opacity = 1 - Math.min(1, Math.max(0, (dist - 120) / 60));
+        }
+        continue;
+      }
       // tumbling board, no rider, during a wipeout
       if (c.state === POSE.WIPEOUT) {
         if (a.tag) a.tag.position.set(c.x, c.y + 1.2, c.z);

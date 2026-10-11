@@ -696,6 +696,25 @@ kbd {
   margin: 0 0 16px;
 }
 
+/* surfer or drone */
+.player-list li small {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sky);
+}
+
+.drone-help {
+  margin: 0 0 14px;
+  line-height: 1.9;
+}
+
+.drone-help kbd {
+  font-size: 11px;
+}
+
 .stab-body.settings {
   max-width: 520px;
 }
