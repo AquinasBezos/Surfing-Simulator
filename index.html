@@ -42,7 +42,7 @@
       <div id="hud-callout"></div>
       <div id="toast"></div>
       <ul id="hud-feed"></ul>
-      <div class="hud-bl">R lineup · Esc menu</div>
+      <div class="hud-bl" id="hud-hint">R lineup · Esc menu</div>
       <div id="debug"></div>
     </div>
 
@@ -57,7 +57,7 @@
         <!-- main -->
         <section class="screen" data-screen="main">
           <nav class="mode-cards" aria-label="Game modes">
-            <button type="button" class="mode-card active" data-go="single">
+            <button type="button" class="mode-card" data-go="single">
               <span class="mode-head">Singleplayer</span>
               <span class="mode-shot"><img src="assets/menu/singleplayer.jpg" alt="Riding through a barrel" /></span>
             </button>
@@ -142,6 +142,7 @@
               <p class="room-meta" id="lobby-meta"></p>
               <h3>Surfers in this room</h3>
               <ul class="player-list" id="lobby-players"></ul>
+              <p class="note error" id="lobby-status" role="status"></p>
               <label class="field">
                 <span>Your name</span>
                 <input type="text" class="name-input" maxlength="24" autocomplete="nickname" spellcheck="false" />
@@ -160,26 +161,52 @@
         <section class="screen" data-screen="settings">
           <div class="panel wide">
             <div class="panel-head"><button type="button" class="back" data-back>Back</button><h2>Controls and settings</h2></div>
-            <div class="panel-body settings-grid">
-              <div class="controls">
-                <table>
+            <div class="panel-body">
+              <div class="tabs settings-tabs" role="tablist">
+                <button type="button" role="tab" class="tab on" data-stab="pc" aria-selected="true">Keyboard and mouse</button>
+                <button type="button" role="tab" class="tab" data-stab="quest" aria-selected="false">Meta Quest</button>
+                <button type="button" role="tab" class="tab" data-stab="general" aria-selected="false">General</button>
+              </div>
+
+              <div class="stab-body" data-stab-body="pc">
+                <table class="binds" id="binds-pc">
                   <thead>
-                    <tr><th></th><th>PC</th><th>Meta Quest</th></tr>
+                    <tr><th>Action</th><th>Key</th><th>Alternate</th></tr>
                   </thead>
+                  <tbody></tbody>
+                </table>
+                <div class="binds-foot">
+                  <p class="note" id="binds-pc-note">Click a key, then press the new key or click with the mouse button you want. Backspace clears it, Esc cancels.</p>
+                  <button type="button" class="btn small" id="binds-pc-reset">Reset to defaults</button>
+                </div>
+              </div>
+
+              <div class="stab-body" data-stab-body="quest" hidden>
+                <table class="binds" id="binds-quest">
+                  <thead>
+                    <tr><th>Action</th><th>Button</th></tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+                <div class="binds-foot">
+                  <p class="note" id="binds-quest-note"></p>
+                  <button type="button" class="btn small" id="binds-quest-reset">Reset to defaults</button>
+                </div>
+                <h3>Body movement</h3>
+                <table class="binds gestures">
                   <tbody>
-                    <tr><td>Paddle</td><td><kbd>Scroll</kbd> faster to paddle faster</td><td>Sweep your hands back, low at your sides</td></tr>
-                    <tr><td>Steer prone</td><td><kbd>A</kbd> / <kbd>D</kbd></td><td>Paddle harder on one side</td></tr>
-                    <tr><td>Duck dive</td><td>Hold <kbd>Ctrl</kbd> or <kbd>C</kbd> while paddling</td><td>Hold grip on the front of the board</td></tr>
-                    <tr><td>Pop up</td><td><kbd>Space</kbd> as the wave picks you up</td><td>Stand up for real</td></tr>
-                    <tr><td>Surf</td><td><kbd>A</kbd> / <kbd>D</kbd> carve · <kbd>W</kbd> / <kbd>S</kbd> trim</td><td>Lean your head and body</td></tr>
-                    <tr><td>Crouch</td><td>Hold <kbd>Ctrl</kbd> or <kbd>C</kbd>; let go at the lip to hop</td><td>Crouch for real</td></tr>
-                    <tr><td>Tricks</td><td>Hold <kbd>Shift</kbd> and flick the mouse</td><td>Hold a grip and whip your head round</td></tr>
-                    <tr><td>Longboard</td><td><kbd>W</kbd> / <kbd>S</kbd> walk to the nose or tail</td><td>Walk forward or back</td></tr>
-                    <tr><td>Other</td><td><kbd>R</kbd> lineup · <kbd>Esc</kbd> menu</td><td>Trigger: calibrate · <kbd>B</kbd>/<kbd>Y</kbd>: lineup</td></tr>
+                    <tr><td>Paddle</td><td>Sweep your hands back, low at your sides. Faster strokes, more speed</td></tr>
+                    <tr><td>Steer while paddling</td><td>Paddle harder on one side</td></tr>
+                    <tr><td>Pop up</td><td>Stand up for real as the wave picks you up</td></tr>
+                    <tr><td>Surf</td><td>Lean your head and body to carve and trim</td></tr>
+                    <tr><td>Crouch</td><td>Crouch for real; stand up fast at the lip to hop</td></tr>
+                    <tr><td>Longboard</td><td>Walk forward or back</td></tr>
+                    <tr><td>Thumbstick</td><td>Fallback: forward to paddle, sideways to steer or lean</td></tr>
                   </tbody>
                 </table>
               </div>
-              <div class="settings">
+
+              <div class="stab-body settings" data-stab-body="general" hidden>
                 <label class="field">
                   <span>Graphics quality</span>
                   <select id="set-quality">

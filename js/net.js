@@ -10,7 +10,7 @@
 //
 // Gameplay data never touches Firebase: poses, events and clock sync go peer-to-peer.
 import { initializeApp } from 'firebase/app';
-import { getDatabase, ref, onValue, set, update, remove, onDisconnect, goOffline, goOnline } from 'firebase/database';
+import { getDatabase, ref, get, onValue, set, update, remove, onDisconnect, goOffline, goOnline } from 'firebase/database';
 import { joinRoom, selfId } from '@trystero-p2p/firebase';
 import { MULTIPLAYER as MP, WAVE } from './config.js';
 
@@ -32,6 +32,37 @@ export async function hashPasscode(roomId, passcode) {
   return Array.from(new Uint8Array(buf).slice(0, 8), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
+// ?relay sends everything through the TURN relay: a way to check the relay works.
+const RELAY_ONLY = new URLSearchParams(location.search).has('relay');
+
+// TURN servers for players whose networks block direct connections: the static list
+// plus whatever MP.turnCredentialsURL hands out (fetched once, reused for half an hour).
+let fetchedRelays = null; // { servers, expires }
+let fetchingRelays = null;
+async function relayServers() {
+  const servers = [...MP.turnServers];
+  if (!MP.turnCredentialsURL) return servers;
+  if (!fetchedRelays || fetchedRelays.expires < Date.now()) {
+    fetchingRelays ||= (async () => {
+      try {
+        const res = await fetch(MP.turnCredentialsURL, { signal: AbortSignal.timeout(6000) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        let list = Array.isArray(data) ? data : data && data.iceServers;
+        if (list && !Array.isArray(list)) list = [list];
+        fetchedRelays = { servers: (list || []).filter((s) => s && s.urls), expires: Date.now() + 30 * 60 * 1000 };
+      } catch (e) {
+        console.warn('LINEUP: could not get TURN relay credentials', e);
+        fetchedRelays = { servers: [], expires: Date.now() + 60 * 1000 };
+      } finally {
+        fetchingRelays = null;
+      }
+    })();
+    await fetchingRelays;
+  }
+  return servers.concat(fetchedRelays.servers);
+}
+
 const olderTimeline = (a, b) => a.created < b.created || (a.created === b.created && a.origin < b.origin);
 const clean = (s, n) => String(s || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
 
@@ -49,6 +80,8 @@ export class Net {
     this.listeners = {};
     this._unwatch = null;
     this._online = true;
+    this.hasRelay = false; // a TURN relay was configured for the current room
+    relayServers(); // warm up: fetch relay credentials while the player browses rooms
   }
 
   on(event, fn) {
@@ -139,17 +172,19 @@ export class Net {
     this.timeline = { seed: crypto.getRandomValues(new Uint32Array(1))[0], origin: selfId, created: Date.now() };
     this.offset = PERIOD * 0.55 - perfNow();
 
+    const relays = relayServers();
     // presence in the room list (removed automatically if we vanish)
     this.presenceRef = ref(db, `${MP.roomsPath}/${id}/${selfId}`);
     await onDisconnect(this.presenceRef).remove();
     await set(this.presenceRef, { n: this.name, r: roomName, p: !!isPrivate, h: hash || '', t: Date.now() });
 
+    const turn = await relays;
+    this.hasRelay = turn.length > 0;
     const config = { appId: MP.databaseURL, relayConfig: { firebaseApp: app } };
     if (isPrivate) config.password = passcode;
-    if (MP.turnServers.length) config.turnConfig = MP.turnServers;
-    const room = joinRoom(config, `lineup-${id}`, {
-      onJoinError: (e) => this.emit('joinError', e && e.error ? e.error : 'Could not connect to a player'),
-    });
+    if (turn.length) config.turnConfig = turn;
+    if (RELAY_ONLY) config.rtcConfig = { iceTransportPolicy: 'relay' };
+    const room = joinRoom(config, `lineup-${id}`, { onJoinError: (e) => this._joinError(e || {}) });
     this.room = room;
 
     this.aHello = room.makeAction('hello');
@@ -202,6 +237,23 @@ export class Net {
     // tell the peers (they drop our surfer at once) and take our entry off the room list.
     // The onDisconnect remove stays registered: harmless, and a safety net if this write is lost.
     await Promise.allSettled([Promise.resolve().then(() => room.leave()), remove(presence)]);
+  }
+
+  // Trystero couldn't connect to someone. Work out who it was (their room-list entry is
+  // keyed by the same peer id) and why, for a message players can understand.
+  async _joinError({ error = '', peerId }) {
+    const roomId = this.roomInfo && this.roomInfo.id;
+    let name = peerId && this.peers.has(peerId) ? this.peers.get(peerId).name : null;
+    if ((!name || name === '…') && peerId && roomId) {
+      try {
+        name = (await get(ref(db, `${MP.roomsPath}/${roomId}/${peerId}/n`))).val();
+      } catch (e) {
+        name = null;
+      }
+    }
+    if (!this.room || !this.roomInfo || this.roomInfo.id !== roomId) return; // we've left since
+    const reason = /password/i.test(error) ? 'passcode' : /exchanging SDP/i.test(error) ? 'blocked' : 'other';
+    this.emit('joinError', { peerId, name: clean(name, 24) || 'another surfer', reason, error });
   }
 
   // ---------------------------------------------------------------- identity

@@ -1,22 +1,22 @@
-// Keyboard / mouse input for PC play.
-//   Scroll wheel  : paddle; the faster you scroll the harder you paddle
+// Keyboard / mouse input for PC play. Keys come from the remappable bindings (bindings.js);
+// these are the defaults:
+//   Scroll wheel  : paddle; the faster you scroll the harder you paddle (fixed)
 //   A / D         : steer while prone, lean (carve) while standing
 //   W / S         : lean forward / back (shortboard) or walk to the nose / tail (longboard)
 //   Ctrl (or C)   : duck dive while paddling, crouch while standing
 //   Shift + flick : hold Shift and flick the mouse sideways for a snap, cutback or tailslide
 //   Space         : pop up (and lie back down)
-//   Mouse         : look around (pointer lock)
+//   Mouse         : look around (pointer lock, fixed)
 //   R             : back to the lineup
+//   Esc           : pause (fixed)
+import { controls, normCode, lockCodes } from './bindings.js';
 
 // Keys that browsers would otherwise grab (Ctrl+W closes the tab) are captured with the
 // Keyboard Lock API while in fullscreen.
-const LOCK_KEYS = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyC', 'KeyR', 'KeyT', 'KeyN', 'Space', 'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight'];
-const GAME_KEYS = new Set(['Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyC', 'ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight']);
-
 export class PCInput {
   constructor(dom) {
     this.dom = dom;
-    this.keys = new Set();
+    this.keys = new Set(); // held keys / mouse buttons, as binding codes
     this.wheelAccum = 0;
     this.scrollRate = 0; // smoothed scroll speed (px/s)
     this.lookX = 0;
@@ -25,16 +25,25 @@ export class PCInput {
     this.locked = false;
     this.enabled = false;
 
-    window.addEventListener('keydown', (e) => {
+    const press = (code, e) => {
       if (!this.enabled) return;
-      if (GAME_KEYS.has(e.code) || e.ctrlKey) e.preventDefault();
-      if (e.repeat) return;
-      this.keys.add(e.code);
-      if (e.code === 'Space') this.events.push('toggleStand');
-      if (e.code === 'KeyR' && !e.ctrlKey) this.events.push('reset');
-    });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
+      if (e.ctrlKey || Object.values(controls.pc).some((k) => k.includes(code))) e.preventDefault();
+      if (this.keys.has(code)) return; // key repeat
+      this.keys.add(code);
+      if (controls.pcHas('popup', code)) this.events.push('toggleStand');
+      if (controls.pcHas('lineup', code)) this.events.push('reset');
+    };
+    window.addEventListener('keydown', (e) => press(normCode(e.code), e));
+    window.addEventListener('keyup', (e) => this.keys.delete(normCode(e.code)));
     window.addEventListener('blur', () => this.keys.clear());
+    // mouse buttons can be bound too (only while the mouse is captured by the game)
+    document.addEventListener('mousedown', (e) => {
+      if (this.locked) press(`Mouse${e.button}`, e);
+    });
+    document.addEventListener('mouseup', (e) => this.keys.delete(`Mouse${e.button}`));
+    dom.addEventListener('contextmenu', (e) => {
+      if (this.enabled) e.preventDefault();
+    });
     window.addEventListener(
       'wheel',
       (e) => {
@@ -53,6 +62,7 @@ export class PCInput {
     });
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.dom;
+      if (!this.locked) this.keys.clear();
       if (this.onLockChange) this.onLockChange(this.locked);
     });
   }
@@ -61,7 +71,7 @@ export class PCInput {
   capture(fullscreen = true) {
     const el = document.documentElement;
     const lockKeys = () => {
-      if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(LOCK_KEYS).catch(() => {});
+      if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(lockCodes()).catch(() => {});
     };
     if (!fullscreen) {
       this.requestLock();
@@ -96,24 +106,21 @@ export class PCInput {
     return Math.max(0, Math.min(1, (this.scrollRate - 40) / 1050));
   }
 
-  axis(neg, pos) {
-    return (this.keys.has(pos) ? 1 : 0) - (this.keys.has(neg) ? 1 : 0);
+  // is an action's key (or mouse button) held?
+  down(id) {
+    return controls.pc[id].some((k) => k && this.keys.has(k));
   }
 
   get steer() {
-    return this.axis('KeyA', 'KeyD') || this.axis('ArrowLeft', 'ArrowRight');
+    return (this.down('right') ? 1 : 0) - (this.down('left') ? 1 : 0);
   }
 
   get leanZ() {
-    return this.axis('KeyS', 'KeyW') || this.axis('ArrowDown', 'ArrowUp');
-  }
-
-  get crouch() {
-    return this.keys.has('ControlLeft') || this.keys.has('ControlRight') || this.keys.has('KeyC');
+    return (this.down('forward') ? 1 : 0) - (this.down('back') ? 1 : 0);
   }
 
   get charge() {
-    return this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
+    return this.down('charge');
   }
 
   consumeLook() {

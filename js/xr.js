@@ -7,13 +7,30 @@
 //   Crouch     : crouch for real; stand up fast at the lip to hop off it.
 //   Manoeuvre  : hold either grip to charge, then whip your head left/right.
 //   Longboard  : walk forward / back on the board for real.
-//   Trigger    : re-calibrate paddling position     B / Y : back to the lineup
-//   Fallback   : thumbstick forward = paddle, sideways = steer/lean, A/X = pop up / lie down.
+//   Buttons    : remappable (bindings.js). Defaults: Y pause menu, B back to the lineup,
+//                trigger re-calibrates the paddling position, A/X pop up / lie down, grip
+//                duck dives (on the nose) or charges a trick.
+//   Fallback   : thumbstick forward = paddle, sideways = steer/lean.
 import * as THREE from 'three';
 import { createVRHand } from './body.js';
 import { STATE } from './surfer.js';
+import { controls, QUEST_BUTTON_INDEX } from './bindings.js';
 
 const Y = new THREE.Vector3(0, 1, 0);
+
+// Is this hand holding the button bound to a Quest action?
+function held(h, action) {
+  const v = controls.quest[action];
+  if (!v || v === 'none' || !h.source) return false;
+  const [button, hand] = v.split(':');
+  if (hand !== 'any' && hand !== (h.side < 0 ? 'left' : 'right')) return false;
+  const gp = h.source.gamepad;
+  const b = gp && gp.buttons[QUEST_BUTTON_INDEX[button]];
+  return !!(b && b.pressed);
+}
+
+// button actions that fire once per press, and the event each one sends
+const PRESS_ACTIONS = { pause: 'pause', lineup: 'reset', recalibrate: 'recalibrate', popup: 'toggleStand' };
 
 export class XRControls {
   constructor(renderer, rig) {
@@ -44,7 +61,7 @@ export class XRControls {
       const grip = renderer.xr.getControllerGrip(i);
       const ctrl = renderer.xr.getController(i);
       rig.add(grip, ctrl);
-      const h = { grip, ctrl, source: null, side: i === 0 ? -1 : 1, model: null, prev: new THREE.Vector3(), vel: new THREE.Vector3(), has: false, stroking: false, btnA: false, btnB: false, squeeze: false };
+      const h = { grip, ctrl, source: null, side: i === 0 ? -1 : 1, model: null, prev: new THREE.Vector3(), vel: new THREE.Vector3(), has: false, stroking: false, holding: false };
       ctrl.addEventListener('connected', (e) => {
         h.source = e.data;
         h.side = e.data.handedness === 'left' ? -1 : 1;
@@ -59,9 +76,15 @@ export class XRControls {
         if (h.model) grip.remove(h.model);
         h.model = null;
       });
-      ctrl.addEventListener('selectstart', () => this.events.push('recalibrate'));
       this.hands.push(h);
     }
+    this.pressed = {}; // action -> held last frame
+  }
+
+  // Ignore buttons that are held right now until they're let go (the trigger that just
+  // clicked a menu button shouldn't also recalibrate).
+  swallowButtons() {
+    for (const action of Object.keys(PRESS_ACTIONS)) this.pressed[action] = true;
   }
 
   calibrate() {
@@ -132,14 +155,14 @@ export class XRControls {
       h.prev.copy(lp);
       h.has = true;
       const gp = h.source.gamepad;
-      h.squeeze = !!(gp && gp.buttons[1] && gp.buttons[1].pressed);
-      anyGrip = anyGrip || h.squeeze;
-      // gripping the front of the board: hand ahead of and below the head
-      if (h.squeeze && lp.z < -0.12 && lp.y < -0.05) noseGrip = true;
+      h.holding = held(h, 'duck');
+      anyGrip = anyGrip || held(h, 'charge');
+      // holding the front of the board: hand ahead of and below the head
+      if (h.holding && lp.z < -0.12 && lp.y < -0.05) noseGrip = true;
       // paddling: backward sweep below chest height pushes water
       const inWater = lp.y < -0.22;
       const back = h.vel.z;
-      const pulling = prone && inWater && back > 0.3 && !h.squeeze;
+      const pulling = prone && inWater && back > 0.3 && !h.holding;
       const pw = pulling ? Math.min(2.2, back / 1.1) : 0;
       if (pw > 0.5 && !h.stroking) {
         h.stroking = true;
@@ -154,13 +177,13 @@ export class XRControls {
         const ay = gp.axes.length >= 4 ? gp.axes[3] : gp.axes[1] || 0;
         if (Math.abs(ax) > Math.abs(stickX)) stickX = ax;
         if (Math.abs(ay) > Math.abs(stickY)) stickY = ay;
-        const a = !!(gp.buttons[4] && gp.buttons[4].pressed);
-        if (a && !h.btnA) this.events.push('toggleStand');
-        h.btnA = a;
-        const b = !!(gp.buttons[5] && gp.buttons[5].pressed);
-        if (b && !h.btnB) this.events.push('reset');
-        h.btnB = b;
       }
+    }
+    // one-shot button actions fire on the press
+    for (const [action, event] of Object.entries(PRESS_ACTIONS)) {
+      const now = this.hands.some((h) => held(h, action));
+      if (now && !this.pressed[action]) this.events.push(event);
+      this.pressed[action] = now;
     }
     // effort follows how fast the strokes are
     this.effortRaw += (fastest - this.effortRaw) * (1 - Math.exp(-dt / 1.0));

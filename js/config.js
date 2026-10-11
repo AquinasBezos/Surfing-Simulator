@@ -97,7 +97,15 @@ export const MULTIPLAYER = {
   maxPlayers: 8,
   poseHz: 15,
   protocol: 1,
-  // Add a TURN server here if some players can't connect (strict NATs), e.g.
+  // TURN relay. Players connect directly when they can, but strict NATs and many
+  // university, office and mobile networks block that; those players need a relay or
+  // they can't see each other ("could not connect to peer ... after exchanging SDP").
+  // Free option: Metered Open Relay (20 GB a month). Sign up at
+  // https://dashboard.metered.ca/signup?tool=turnserver and paste the credentials URL
+  // it gives you, like 'https://yourapp.metered.live/api/v1/turn/credentials?apiKey=KEY'.
+  // Any URL returning a list of ICE servers (or { iceServers }) works here.
+  turnCredentialsURL: '',
+  // ...or list TURN servers directly:
   // { urls: 'turn:turn.example.com:3478', username: 'user', credential: 'pass' }
   turnServers: [],
 };

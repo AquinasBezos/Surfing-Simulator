@@ -16,6 +16,8 @@ import { Hud } from './hud.js';
 import { waterUniforms, addUnderwaterPass, UnderwaterEnv } from './underwater.js';
 import { Menu } from './menu.js';
 import { RemotePlayers, POSE } from './remote.js';
+import { VRMenu } from './vrmenu.js';
+import { controls } from './bindings.js';
 
 const params = new URLSearchParams(location.search);
 const isMobileXR = /OculusBrowser|Quest|Pico/i.test(navigator.userAgent);
@@ -152,6 +154,49 @@ function applySettings(s) {
 }
 applySettings(settings);
 
+// in-headset pause menu (the page's menus can't be seen in VR)
+const vrMenu = new VRMenu(renderer, rig, camera, {
+  onResume: () => closeVRMenu(),
+  onLineup: () => {
+    closeVRMenu();
+    respawn(true);
+  },
+  onRecalibrate: () => {
+    closeVRMenu();
+    xr.calibrate();
+    hud.toast('Calibrated paddling position', 2);
+  },
+  onQuit: () => {
+    game.quitAfterVR = true;
+    const session = renderer.xr.getSession();
+    if (session) session.end();
+  },
+  getVolume: () => settings.volume,
+  setVolume: (v) => menu.setVolume(v),
+  info: () => ({
+    inRoom: game.mode === 'multi',
+    subtitle: game.mode === 'multi' && net && net.roomInfo ? `${net.roomInfo.name} · ${net.peers.size + 1} surfer${net.peers.size ? 's' : ''}` : 'Singleplayer',
+  }),
+});
+
+function openVRMenu() {
+  vrMenu.show('pause');
+  game.paused = true; // singleplayer stops; a multiplayer room keeps going
+}
+
+function closeVRMenu() {
+  vrMenu.hide();
+  xr.swallowButtons();
+  game.paused = false;
+}
+
+// on-screen hints follow the key bindings
+function updateHints() {
+  document.getElementById('hud-hint').textContent = `${controls.pcKey('lineup')} lineup · Esc menu`;
+}
+controls.onChange(updateHints);
+updateHints();
+
 function setBoardType(type) {
   if (!BOARDS[type]) type = 'shortboard';
   boardType = type;
@@ -254,7 +299,7 @@ function startGame(mode, platform) {
     enterVR(); // must stay synchronous with the click for the browser to allow it
   } else if (platform === 'pc') {
     resume();
-    hud.toast('Scroll to paddle (faster = harder) · A / D steer · Space to pop up', 5);
+    hud.toast(`Scroll to paddle (faster = harder) · ${controls.pcKey('left')} / ${controls.pcKey('right')} steer · ${controls.pcKey('popup')} to pop up`, 5);
   } else menu.hide(); // a VR session that started on its own
 }
 
@@ -323,17 +368,26 @@ renderer.xr.addEventListener('sessionstart', () => {
   bodyFrame.remove(arms.group);
   spray.setViewportHeight(1700);
   underwater.setViewportHeight(1700);
-  hud.toast('Lie or kneel down, then press the trigger to calibrate. Paddle with your arms, stand up to surf.', 7);
+  const press = (id) => controls.questText(id).replace(/^Either/, 'either');
+  const calibrate = controls.quest.recalibrate === 'none' ? 'Lie or kneel down to start.' : `Lie or kneel down, then press ${press('recalibrate')} to calibrate.`;
+  hud.toast(`${calibrate} Paddle with your arms, stand up to surf. ${press('pause')}: menu.`, 7);
 });
 renderer.xr.addEventListener('sessionend', () => {
+  vrMenu.hide();
   ocean.setQuality(quality, qualityName === 'high');
   bodyFrame.add(arms.group);
   rig.position.set(0, 0, 0);
   rig.rotation.set(0, 0, 0);
+  onResize();
+  if (game.quitAfterVR) {
+    // "Main menu" / "Leave room" in the headset menu
+    game.quitAfterVR = false;
+    quitToMenu();
+    return;
+  }
   game.paused = true;
   menu.setInGame(true);
   menu.show('pause');
-  onResize();
 });
 
 model.onSpawn = () => {
@@ -470,8 +524,12 @@ function ensureNet() {
 }
 
 function wireNet(n) {
+  let failedPeer = null; // the surfer named in the lobby's connection warning
   n.on('peers', () => updateLobby());
-  n.on('join', (id, name) => hud.feed(`${name} paddled out`));
+  n.on('join', (id, name) => {
+    hud.feed(`${name} paddled out`);
+    if (id === failedPeer) menu.setLobbyStatus(''); // got through after all
+  });
   n.on('leave', (id, name) => {
     remote.remove(id);
     hud.feed(`${name} left the lineup`);
@@ -487,9 +545,21 @@ function wireNet(n) {
       respawn(true); // the waves just changed under us: fade back to the lineup
     }
   });
-  n.on('joinError', (msg) => hud.feed(`Connection problem: ${msg}`));
+  n.on('joinError', ({ peerId, name, reason, error }) => {
+    let text;
+    if (reason === 'blocked')
+      text = n.hasRelay
+        ? `Couldn't connect to ${name}, even through the relay server.`
+        : `Couldn't connect to ${name}: one of your networks blocks direct connections, and no relay server is set up.`;
+    else if (reason === 'passcode') text = `Couldn't connect to ${name}: the passcodes don't match.`;
+    else text = `Couldn't connect to ${name} (${error}).`;
+    failedPeer = peerId;
+    hud.feed(text);
+    menu.setLobbyStatus(text);
+  });
   n.on('warn', (msg) => hud.feed(msg));
   n.on('left', () => {
+    failedPeer = null;
     remote.clear();
     menu.leftRoom();
   });
@@ -888,15 +958,18 @@ function frame(time, xrFrame) {
   if (hidden) return;
   game.warmup--;
   // multiplayer keeps the shared world moving even while the menu is open
-  const running = game.started && (!game.paused || inXR || game.mode === 'multi');
-  const acceptInput = game.started && (!game.paused || inXR);
+  const running = game.started && (!game.paused || game.mode === 'multi');
+  const acceptInput = game.started && !game.paused;
   let inp = NO_INPUT;
   pc.update(dt);
 
   if (inXR) {
-    inp = xr.update(dt, xrFrame, surfer.state, surfer.board);
+    const gestures = xr.update(dt, xrFrame, surfer.state, surfer.board);
+    if (acceptInput) inp = gestures;
     for (const e of xr.consumeEvents()) {
-      if (typeof e === 'object' && e.flick) surfer.flick(e.flick, e.omega, e.sweep);
+      if (e === 'pause') vrMenu.open ? closeVRMenu() : game.started && openVRMenu();
+      else if (!acceptInput) continue; // the headset menu is open
+      else if (typeof e === 'object' && e.flick) surfer.flick(e.flick, e.omega, e.sweep);
       else if (e === 'recalibrate') {
         xr.calibrate();
         hud.toast('Calibrated paddling position', 2);
@@ -907,7 +980,6 @@ function frame(time, xrFrame) {
     }
   } else if (acceptInput) {
     const steer = pc.steer;
-    const crouchKey = pc.crouch;
     inp = {
       paddle: pc.paddle,
       pulse: 0,
@@ -917,8 +989,8 @@ function frame(time, xrFrame) {
       leanZ: pc.leanZ,
       walk: pc.leanZ,
       walkTo: null,
-      crouch: crouchKey ? 1 : 0,
-      duck: crouchKey && surfer.state === STATE.PRONE,
+      crouch: pc.down('crouch') ? 1 : 0,
+      duck: pc.down('duck') && surfer.state === STATE.PRONE,
       charge: pc.charge,
     };
     for (const e of pc.consumeEvents()) {
@@ -944,8 +1016,10 @@ function frame(time, xrFrame) {
   else updateCameraPC(dt);
 
   rig.updateMatrixWorld(true);
+  // the head. (In VR three.js keeps `camera` on the head pose inside the rig; the XR camera's
+  // own world position is only rig-relative here, between renders.)
   camera.getWorldPosition(focus);
-  if (inXR) renderer.xr.getCamera().getWorldPosition(focus); // centre detail on the head
+  vrMenu.update();
   ocean.update(focus);
   spray.update(running ? dt : 0, focus);
 
@@ -1035,7 +1109,7 @@ function frame(time, xrFrame) {
   else if (surfer.air) stateLabel = 'Airborne';
   else if (surfer.state === STATE.STANDING && surfer.crouch > 0.5) stateLabel = 'Surfing · crouched';
   let warn = '';
-  if (surfer.state === STATE.STANDING && surfer.ceiling < 2.1 && surfer.crouch < 0.65) warn = inXR ? 'Crouch!' : 'Crouch! (Ctrl)';
+  if (surfer.state === STATE.STANDING && surfer.ceiling < 2.1 && surfer.crouch < 0.65) warn = inXR ? 'Crouch!' : `Crouch! (${controls.pcKey('crouch')})`;
   const B = surfer.board;
   let dbg = '';
   if (debug) {
@@ -1063,7 +1137,7 @@ function frame(time, xrFrame) {
       foot: B.walk && surfer.state === STATE.STANDING ? (surfer.footPos - B.footMin) / (B.footMax - B.footMin) : null,
       debug: dbg,
     },
-    inXR,
+    inXR && !vrMenu.open,
   );
 
   renderer.render(scene, camera);
@@ -1102,7 +1176,7 @@ function nextWaveInfo() {
     return r ? `Ride ${r.time.toFixed(1)} s${r.tube > 0.1 ? ` · barrel ${r.tube.toFixed(1)} s` : ''}` : '';
   }
   if (surfer.diving) return 'Release to surface';
-  if (surfer.catching) return 'Caught it! Pop up (Space) before it goes vertical';
+  if (surfer.catching) return renderer.xr.isPresenting ? 'Caught it! Stand up before it goes vertical' : `Caught it! Pop up (${controls.pcKey('popup')}) before it goes vertical`;
   let best = null;
   for (const w of model.waves) {
     if (!w.active) continue;
@@ -1132,6 +1206,8 @@ window.__surf = {
   underwater,
   remote,
   menu,
+  vrMenu,
+  rig,
   STATE,
   respawn,
   setBoardType,

@@ -1,6 +1,7 @@
 // LINEUP menus: main mode cards, singleplayer / multiplayer / settings sub-screens, the
 // multiplayer room browser and lobby, and the in-game pause screen. Pure DOM; the game
 // is driven through the handler callbacks passed to the constructor.
+import { controls, PC_ACTIONS, QUEST_ACTIONS, QUEST_OPTIONS, RESERVED_KEYS, keyLabel, questLabel } from './bindings.js';
 
 const BOARD_SVG = {
   shortboard:
@@ -34,6 +35,9 @@ function save(key, value) {
 }
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+// "Crouch (while surfing) is now C" for actions that gave up a key or button
+const moveText = (moved) => moved.map((m) => `${m.label} ${m.now === 'nothing' || m.now === 'Not set' ? 'is now unbound' : `is now ${m.now}`}.`).join(' ');
 
 export class Menu {
   constructor(h) {
@@ -72,19 +76,19 @@ export class Menu {
   }
 
   show(name, { push = true } = {}) {
+    if (this.capture) this.endCapture();
     if (this.current && this.current !== name && push) this.stack.push(this.current);
     for (const [k, s] of Object.entries(this.screens)) s.classList.toggle('on', k === name);
     this.current = name;
     this.crumb.textContent = CRUMBS[name] || '';
     this.root.classList.remove('hidden');
-    if (name === 'main') {
-      this.stack = [];
-      this.highlight(this.root.querySelector('.mode-card.active') || this.root.querySelector('.mode-card'));
-    }
+    if (name === 'main') this.stack = [];
     if (name === 'multi' && this.h.onOpenMulti) this.h.onOpenMulti();
     if (name === 'pause') this.stack = [];
-    const focusable = this.screens[name].querySelector('.mode-card.active, [data-resume], .btn.primary, input');
-    if (focusable && name !== 'multi') setTimeout(() => focusable.focus({ preventScroll: true }), 30);
+    // (no card is focused on the main screen: only the hovered one is outlined)
+    const focusable = this.screens[name].querySelector('[data-resume], .btn.primary, input');
+    if (focusable && name !== 'multi' && name !== 'main') setTimeout(() => focusable.focus({ preventScroll: true }), 30);
+    else if (name === 'main' && document.activeElement && this.root.contains(document.activeElement)) document.activeElement.blur();
   }
 
   back() {
@@ -118,29 +122,27 @@ export class Menu {
       }
       return;
     }
-    if (this.current === 'main' && (tag !== 'INPUT')) {
+    if (this.current === 'main' && tag !== 'INPUT') {
+      // arrow keys move the focus (and its blue outline) between the cards
       const cards = [...this.root.querySelectorAll('.mode-card')];
-      const i = cards.findIndex((c) => c.classList.contains('active'));
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+      const i = cards.indexOf(document.activeElement);
+      let next = -1;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = i < 0 ? 0 : (i + 1) % cards.length;
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = i < 0 ? cards.length - 1 : (i + cards.length - 1) % cards.length;
+      if (next >= 0) {
         e.preventDefault();
-        this.highlight(cards[(i + 1) % cards.length], true);
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        this.highlight(cards[(i + cards.length - 1) % cards.length], true);
+        cards[next].focus({ preventScroll: true });
       }
     }
   }
 
-  highlight(card, focus = false) {
-    if (!card) return;
-    for (const c of this.root.querySelectorAll('.mode-card')) c.classList.toggle('active', c === card);
-    if (focus) card.focus({ preventScroll: true });
-  }
-
   bindMain() {
+    // only one outlined card at a time: the mouse takes over from the keyboard focus
     for (const card of this.root.querySelectorAll('.mode-card')) {
-      card.addEventListener('mouseenter', () => this.highlight(card));
-      card.addEventListener('focus', () => this.highlight(card));
+      card.addEventListener('mouseenter', () => {
+        const f = document.activeElement;
+        if (f && f !== card && f.classList.contains('mode-card')) f.blur();
+      });
     }
   }
 
@@ -243,6 +245,143 @@ export class Menu {
     };
     for (const el of [q, vol, sens, inv, fs]) el.addEventListener('input', apply);
     document.getElementById('reload').addEventListener('click', () => location.reload());
+    this._volumeInput = vol;
+    this._applySettings = apply;
+
+    for (const t of this.screens.settings.querySelectorAll('[data-stab]')) {
+      t.addEventListener('click', () => this.selectSettingsTab(t.dataset.stab));
+    }
+    this.bindKeybinds();
+  }
+
+  // e.g. from the in-headset menu
+  setVolume(v) {
+    this._volumeInput.value = Math.round(v * 100);
+    this._applySettings();
+  }
+
+  selectSettingsTab(tab) {
+    this.endCapture();
+    for (const t of this.screens.settings.querySelectorAll('[data-stab]')) {
+      t.classList.toggle('on', t.dataset.stab === tab);
+      t.setAttribute('aria-selected', String(t.dataset.stab === tab));
+    }
+    for (const b of this.screens.settings.querySelectorAll('[data-stab-body]')) b.hidden = b.dataset.stabBody !== tab;
+  }
+
+  // ---------------------------------------------------------------- key bindings
+  bindKeybinds() {
+    this.capture = null; // { id, slot, btn } while waiting for a key
+    const pcBody = document.querySelector('#binds-pc tbody');
+    const questBody = document.querySelector('#binds-quest tbody');
+    this.pcNote = document.getElementById('binds-pc-note');
+    this.pcNoteDefault = this.pcNote.textContent;
+    this.questNote = document.getElementById('binds-quest-note');
+
+    pcBody.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-bind]');
+      if (!b || this.capture) return;
+      this.startCapture(b);
+    });
+    // while capturing, the next key (or a mouse button on the cell) becomes the binding
+    window.addEventListener(
+      'keydown',
+      (e) => {
+        if (!this.capture) return;
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        if (e.code === 'Escape') return this.endCapture();
+        if (e.code === 'Backspace' || e.code === 'Delete') return this.finishCapture('');
+        if (RESERVED_KEYS.has(e.code)) {
+          this.pcNote.textContent = `${keyLabel(e.code)} can't be used: Esc pauses the game, and F5, F11 and F12 belong to the browser.`;
+          return;
+        }
+        this.finishCapture(e.code);
+      },
+      true,
+    );
+    window.addEventListener(
+      'mousedown',
+      (e) => {
+        if (!this.capture) return;
+        if (e.target === this.capture.btn) {
+          e.preventDefault();
+          e.stopImmediatePropagation();
+          this.finishCapture(`Mouse${e.button}`);
+        } else this.endCapture();
+      },
+      true,
+    );
+    window.addEventListener(
+      'contextmenu',
+      (e) => {
+        if (e.target.closest && e.target.closest('#binds-pc')) e.preventDefault();
+      },
+      true,
+    );
+    document.getElementById('binds-pc-reset').addEventListener('click', () => {
+      this.endCapture();
+      controls.resetPC();
+      this.pcNote.textContent = 'Keys reset to the defaults.';
+    });
+
+    questBody.addEventListener('change', (e) => {
+      const sel = e.target.closest('select[data-quest]');
+      if (!sel) return;
+      const r = controls.setQuest(sel.dataset.quest, sel.value);
+      if (r.refused) {
+        this.questNote.textContent = r.refused;
+        sel.value = controls.quest[sel.dataset.quest];
+      } else this.questNote.textContent = moveText(r.moved);
+    });
+    document.getElementById('binds-quest-reset').addEventListener('click', () => {
+      controls.resetQuest();
+      this.questNote.textContent = 'Buttons reset to the defaults.';
+    });
+
+    controls.onChange(() => this.renderKeybinds());
+    this.renderKeybinds();
+  }
+
+  renderKeybinds() {
+    const cell = (id, slot) => {
+      const code = controls.pc[id][slot];
+      return `<button type="button" class="keycap${code ? '' : ' empty'}" data-bind="${id}" data-slot="${slot}">${code ? esc(keyLabel(code)) : 'Not set'}</button>`;
+    };
+    const fixed = (label, what) => `<tr class="fixed"><td>${label}</td><td colspan="2"><span class="keycap fixed">${what}</span></td></tr>`;
+    document.querySelector('#binds-pc tbody').innerHTML =
+      fixed('Paddle (faster = harder)', 'Scroll wheel') +
+      fixed('Look around', 'Mouse') +
+      PC_ACTIONS.map((a) => `<tr><td>${esc(a.label)}</td><td>${cell(a.id, 0)}</td><td>${cell(a.id, 1)}</td></tr>`).join('') +
+      fixed('Pause menu', 'Esc');
+    document.querySelector('#binds-quest tbody').innerHTML = QUEST_ACTIONS.map((a) => {
+      const opts = QUEST_OPTIONS.filter((o) => !(a.required && o === 'none'))
+        .map((o) => `<option value="${o}"${o === controls.quest[a.id] ? ' selected' : ''}>${esc(questLabel(o))}</option>`)
+        .join('');
+      return `<tr><td>${esc(a.label)}</td><td><select data-quest="${a.id}" aria-label="${esc(a.label)}">${opts}</select></td></tr>`;
+    }).join('');
+    if (!this.questNote.textContent) this.questNote.textContent = `You can change these in VR too: ${controls.questText('pause')} opens the pause menu.`;
+  }
+
+  startCapture(btn) {
+    this.capture = { id: btn.dataset.bind, slot: +btn.dataset.slot, btn };
+    btn.classList.add('listening');
+    btn.textContent = 'Press a key…';
+    this.pcNote.textContent = 'Press a key, or click this box with the mouse button you want. Backspace clears it, Esc cancels.';
+  }
+
+  finishCapture(code) {
+    const { id, slot } = this.capture;
+    this.capture = null;
+    const moved = controls.setPC(id, slot, code); // re-renders the table
+    this.pcNote.textContent = moved.length ? moveText(moved) : this.pcNoteDefault;
+  }
+
+  endCapture() {
+    if (!this.capture) return;
+    this.capture = null;
+    this.renderKeybinds();
+    this.pcNote.textContent = this.pcNoteDefault;
   }
 
   // ---------------------------------------------------------------- VR availability
@@ -257,7 +396,7 @@ export class Menu {
 
   // ---------------------------------------------------------------- multiplayer
   bindMultiplayer() {
-    for (const t of this.root.querySelectorAll('.tab')) {
+    for (const t of this.screens.multi.querySelectorAll('[data-tab]')) {
       t.addEventListener('click', () => this.selectTab(t.dataset.tab));
     }
     document.getElementById('room-search').addEventListener('input', () => {
@@ -299,7 +438,7 @@ export class Menu {
   }
 
   selectTab(tab) {
-    for (const t of this.root.querySelectorAll('.tab')) {
+    for (const t of this.screens.multi.querySelectorAll('[data-tab]')) {
       t.classList.toggle('on', t.dataset.tab === tab);
       t.setAttribute('aria-selected', String(t.dataset.tab === tab));
     }
@@ -354,8 +493,13 @@ export class Menu {
     document.querySelector('[data-quit]').textContent = 'Leave room';
   }
 
+  setLobbyStatus(text) {
+    document.getElementById('lobby-status').textContent = text;
+  }
+
   leftRoom() {
     this.inRoom = false;
+    this.setLobbyStatus('');
     document.getElementById('pause-room').hidden = true;
     this.root.querySelector('.pause-name').hidden = true;
     document.querySelector('[data-quit]').textContent = 'Main menu';

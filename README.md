@@ -28,9 +28,11 @@ There is no build step. Textures, terrain and sound are generated at start-up, a
 | Snap · cutback · tailslide | Hold `Shift` and flick the mouse left or right | Hold either grip and whip your head round |
 | Longboard | `W` / `S` walk toward the nose or the tail | Walk forward or back on the board |
 | Look | Mouse (click the game to capture it) | Your head |
-| Other | `R` back to the lineup · `Esc` pause menu | Trigger: recalibrate · `B` / `Y`: back to the lineup |
+| Other | `R` back to the lineup · `Esc` pause menu | `Y` pause menu · `B` back to the lineup · trigger: recalibrate |
 
-On Quest, kneel or lie down before you start, then press the trigger to calibrate your paddling height. If you don't have room, the thumbstick (forward to paddle, sideways to steer or lean) and `A`/`X` (pop up / lie down) work as a fallback.
+These are the defaults. Every key and Quest button can be changed in **Controls and settings**, from the main menu or the pause screen. On PC, click a key and press the new one; mouse buttons work too. On Quest, pick a button for each action, either on the page or in VR from the headset's pause menu. If a key is already taken, the two actions swap, except where they can never clash: duck diving only happens while paddling and crouching only while standing, so both can stay on `Ctrl`. Scroll to paddle, mouse look, `Esc`, and the body movements on Quest stay fixed.
+
+On Quest, kneel or lie down before you start, then press the trigger to calibrate your paddling height. `Y` opens a pause menu in the headset: resume, go back to the lineup, recalibrate, change the buttons and volume, or leave. Point at it with either controller and pull the trigger. If you don't have room, the thumbstick (forward to paddle, sideways to steer or lean) and `A`/`X` (pop up / lie down) work as a fallback.
 
 On PC the game goes fullscreen and locks the keyboard when you start, so `Ctrl` combinations such as `Ctrl+W` reach the game instead of closing the tab. If that isn't available (e.g. Firefox), the browser asks before leaving the page, and `C` works instead of `Ctrl`. Fullscreen can be turned off in **Controls and settings**, which also has graphics quality, volume and mouse sensitivity.
 
@@ -76,7 +78,17 @@ To use your own Firebase project instead, create a Realtime Database, paste in t
 
 ### If players can't connect
 
-WebRTC normally connects players directly, using public STUN servers to find a route. Some networks (strict NATs on corporate or mobile connections) need a TURN relay. If you have one, add it to `MULTIPLAYER.turnServers` in `js/config.js`.
+WebRTC connects players directly when it can, using public STUN servers to find a route. Strict NATs and many university, office and mobile networks block that, and then players in the same room can't see each other ("Couldn't connect to … one of your networks blocks direct connections"). The fix is a TURN relay, which passes the traffic through a server when a direct route fails. There are no reliable free relays that need no sign-up, so you need a (free) account:
+
+1. Sign up for Metered's Open Relay at <https://dashboard.metered.ca/signup?tool=turnserver> (20 GB of relay traffic a month free; a pair of players going through the relay uses roughly 20 MB an hour, so that's about 1,000 hours).
+2. Copy the TURN credentials URL from the dashboard. It looks like `https://yourapp.metered.live/api/v1/turn/credentials?apiKey=…`.
+3. Paste it into `MULTIPLAYER.turnCredentialsURL` in `js/config.js`, and push.
+
+The game fetches relay credentials from that URL when you open Multiplayer. Players who can connect directly still do; only blocked connections use the relay. The key is visible to anyone who reads the page, which is how Metered expects it to be used, but it means others could use up your monthly allowance.
+
+Any URL that returns a list of ICE servers works, for example a small Cloudflare Worker that mints Cloudflare TURN credentials (1,000 GB a month free). Fixed TURN servers can go in `MULTIPLAYER.turnServers` instead.
+
+To check the relay works, open the game with `?relay` on two devices and join the same room. That forces every connection through the relay, so if the two players see each other, it's working.
 
 ## Project layout
 
@@ -84,7 +96,9 @@ WebRTC normally connects players directly, using public STUN servers to find a r
 | :-- | :-- |
 | `index.html`, `css/style.css` | Page shell, menus, HUD |
 | `js/main.js` | Renderer, scene, camera rig, game flow (lineup, rides, wipeouts), multiplayer wiring, main loop |
-| `js/menu.js` | Main menu, singleplayer and multiplayer screens (room browser, lobby, passcode prompt), settings, pause |
+| `js/menu.js` | Main menu, singleplayer and multiplayer screens (room browser, lobby, passcode prompt), settings and key bindings, pause |
+| `js/bindings.js` | Remappable controls: actions, default keys and Quest buttons, labels, swapping clashes, saving |
+| `js/vrmenu.js` | Pause menu inside the headset: a floating panel you point at with the controllers |
 | `js/net.js` | Multiplayer networking: room list and presence in Firebase, Trystero peer connections, shared clock |
 | `js/remote.js` | Other players' surfers: interpolated movement, paddling and riding poses, name tags |
 | `js/config.js` | Tunables: wave sizes and timing, swell spectrum, sun, quality presets, board types, multiplayer settings |
@@ -118,3 +132,4 @@ Breaking starts at the peak and spreads along the wave at the peel speed. Each s
 - Extra preset options: `&stand`, `&crouch=0..1`, `&dive=depth` (e.g. `&dive=1.1` to look around under water), `&foot=-1..1.2` (longboard stance), `&pitch=` / `&lookyaw=` (radians), `&tau=` (seconds since the wave started breaking; negative is before).
 - `&bots=N`: puts N stand-in surfers around you, to check how other players look. `&wave2=z`: adds a second wave of the set with its crest at `z`.
 - `?shot=barrel&freeze&cam=x,y,z,yawDeg,pitchDeg`: free spectator camera.
+- `?relay`: multiplayer connections only go through the TURN relay (to test the relay set-up).
