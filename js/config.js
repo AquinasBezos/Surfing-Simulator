@@ -21,9 +21,12 @@ export const WAVE = {
   tCollapse: 1.7, // seconds for the barrel to collapse into whitewater
   curveK: 0.00028, // crest line curvature (sections away from the reef lag behind)
   curveMax: 24,
-  minHeight: 2.2,
-  maxHeight: 2.9,
 };
+
+// Wave heights you can pick (m), the range the 'random' setting wanders through, the size
+// below which a broken wave is gentle enough to ride the whitewater, and the shortest
+// horizontal scale a wave gets (smaller waves are relatively longer and gentler).
+export const WAVE_HEIGHTS = { min: 0.6, max: 3.4, randomMin: 0.8, randomMax: 3.0, default: 2.5, small: 1.5, minScale: 2.2 };
 
 // Gerstner swell components: [direction (deg, 0 = toward the beach), wavelength, amplitude, steepness]
 export const SWELL = [

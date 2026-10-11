@@ -67,7 +67,8 @@ function outlineAt(table, t) {
   return 0;
 }
 
-export function createBoard(type = 'shortboard') {
+// color: deck colour (#rrggbb), or null for the classic finish
+export function createBoard(type = 'shortboard', color = null) {
   const spec = SHAPES[type] || SHAPES.shortboard;
   const L = (BOARDS[type] || BOARDS.shortboard).length;
   const maxHW = Math.max(...spec.outline.map((p) => p[1]));
@@ -120,7 +121,7 @@ export function createBoard(type = 'shortboard') {
   geo.computeVertexNormals();
 
   const mat = new THREE.MeshPhysicalMaterial({
-    map: createBoardTexture(type),
+    map: createBoardTexture(type, color),
     roughness: 0.32,
     clearcoat: 0.6,
     clearcoatRoughness: 0.25,

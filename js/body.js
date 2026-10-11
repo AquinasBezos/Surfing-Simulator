@@ -1,10 +1,14 @@
-// First-person body: wetsuit arms with simple 2-bone IK and a paddling stroke cycle (PC),
-// plus hand models for VR controllers.
+// First-person body: bare arms (the character wears boardshorts) with simple 2-bone IK and
+// a paddling stroke cycle (PC), plus hand models for VR controllers. Skin tone follows the
+// player's look (setSkinColor).
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const SUIT = new THREE.MeshStandardMaterial({ color: 0x121315, roughness: 0.6, metalness: 0.0 });
 const SKIN = new THREE.MeshStandardMaterial({ color: 0xc08465, roughness: 0.62, metalness: 0.0 });
+
+export function setSkinColor(color) {
+  SKIN.color.set(color);
+}
 
 const UP = new THREE.Vector3(0, 1, 0);
 const mix = (a, b, t) => a + (b - a) * t;
@@ -16,7 +20,7 @@ const _m = new THREE.Matrix4();
 function limb(r0, r1) {
   const g = new THREE.CylinderGeometry(r1, r0, 1, 12, 1, false);
   g.translate(0, 0.5, 0);
-  return new THREE.Mesh(g, SUIT);
+  return new THREE.Mesh(g, SKIN);
 }
 
 function placeLimb(mesh, from, to) {
@@ -68,10 +72,6 @@ export function createHand(side) {
   // local frame: fingers toward -z, palm facing -y, thumb toward -side*x (inside)
   const hand = new THREE.Group();
   hand.add(new THREE.Mesh(handGeometry(side), SKIN));
-  const cuff = new THREE.Mesh(new THREE.CylinderGeometry(0.036, 0.034, 0.05, 12), SUIT);
-  cuff.rotation.x = Math.PI / 2;
-  cuff.position.set(0, 0, 0.018);
-  hand.add(cuff);
   return hand;
 }
 
@@ -82,7 +82,7 @@ class Arm {
     this.upper = limb(0.052, 0.044);
     this.fore = limb(0.043, 0.034);
     this.hand = createHand(side);
-    this.elbowJoint = new THREE.Mesh(new THREE.SphereGeometry(0.045, 10, 8), SUIT);
+    this.elbowJoint = new THREE.Mesh(new THREE.SphereGeometry(0.042, 10, 8), SKIN);
     this.phase = -1; // <0 idle, otherwise stroke progress 0..1
     this.blend = 0; // 0 idle pose, 1 stroke pose
     this.dive = 0; // 0..1 blend into the duck-dive grip
@@ -199,7 +199,7 @@ export class Arms {
   }
 }
 
-// Hands that follow VR controller grips (with a short wetsuit forearm).
+// Hands that follow VR controller grips (with a short forearm).
 export function createVRHand(side) {
   const g = new THREE.Group();
   const hand = createHand(side);

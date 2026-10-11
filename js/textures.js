@@ -229,14 +229,15 @@ export function createNoiseTexture(size = 512) {
 }
 
 // Deck graphics for the board: u along the length (tail -> nose), v across.
-export function createBoardTexture(type = 'shortboard') {
+// color: the deck / bottom colour (#rrggbb); the default is the classic white (or cream).
+export function createBoardTexture(type = 'shortboard', color = null) {
   const c = document.createElement('canvas');
   c.width = 1024;
   c.height = 256;
   const g = c.getContext('2d');
   if (type === 'longboard') {
     // cream deck, twin pinlines, logo near the nose, big wax patch in the middle
-    g.fillStyle = '#f4efe2';
+    g.fillStyle = color || '#f4efe2';
     g.fillRect(0, 0, c.width, c.height);
     const rand = rng(17);
     for (let i = 0; i < 1600; i++) {
@@ -258,7 +259,7 @@ export function createBoardTexture(type = 'shortboard') {
     g.beginPath();
     g.arc(0, 0, 30, 0, Math.PI * 2);
     g.fill();
-    g.fillStyle = '#f4efe2';
+    g.fillStyle = color || '#f4efe2';
     g.beginPath();
     g.arc(0, 0, 18, 0, Math.PI * 2);
     g.fill();
@@ -268,7 +269,7 @@ export function createBoardTexture(type = 'shortboard') {
     tex.anisotropy = 8;
     return tex;
   }
-  g.fillStyle = '#f7f6f1';
+  g.fillStyle = color || '#f7f6f1';
   g.fillRect(0, 0, c.width, c.height);
   // faint wax smudges
   const rand = rng(99);
@@ -290,7 +291,7 @@ export function createBoardTexture(type = 'shortboard') {
   g.beginPath();
   g.ellipse(0, -34, 26, 12, 0, 0, Math.PI * 2);
   g.fill();
-  g.fillStyle = '#f7f6f1';
+  g.fillStyle = color || '#f7f6f1';
   g.beginPath();
   g.ellipse(-4, -34, 14, 6, 0, 0, Math.PI * 2);
   g.fill();

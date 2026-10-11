@@ -12,7 +12,7 @@
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, get, onValue, set, update, remove, onDisconnect, goOffline, goOnline } from 'firebase/database';
 import { joinRoom, selfId } from '@trystero-p2p/firebase';
-import { MULTIPLAYER as MP, WAVE } from './config.js';
+import { MULTIPLAYER as MP, WAVE, WAVE_HEIGHTS } from './config.js';
 
 const app = initializeApp({ databaseURL: MP.databaseURL }, 'lineup');
 const db = getDatabase(app);
@@ -63,15 +63,34 @@ async function relayServers() {
   return servers.concat(fetchedRelays.servers);
 }
 
+// A room's wave size: { mode: 'set' | 'random', height, fromK, prev, rev }. A change takes
+// effect from wave fromK (the next one to appear) so the waves already rolling in stay as
+// they are for everyone; rev orders changes.
+function cleanWaves(w) {
+  const one = (x) => ({ mode: x && x.mode === 'random' ? 'random' : 'set', height: Math.min(WAVE_HEIGHTS.max, Math.max(WAVE_HEIGHTS.min, Number(x && x.height) || WAVE_HEIGHTS.default)) });
+  if (!w || typeof w !== 'object') return { ...one(null), fromK: null, prev: null, rev: 0 };
+  return { ...one(w), fromK: Number.isInteger(w.fromK) ? w.fromK : null, prev: w.prev ? one(w.prev) : null, rev: Number.isInteger(w.rev) ? w.rev : 0 };
+}
+
+// someone's colours: only well-formed #rrggbb values get through
+const HEX = /^#[0-9a-f]{6}$/i;
+function cleanLook(l) {
+  if (!l || typeof l !== 'object') return null;
+  const out = {};
+  for (const k of ['skin', 'hair', 'board']) if (typeof l[k] === 'string' && HEX.test(l[k])) out[k] = l[k];
+  return out;
+}
+
 const olderTimeline = (a, b) => a.created < b.created || (a.created === b.created && a.origin < b.origin);
 const clean = (s, n) => String(s || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
 
 export class Net {
-  constructor({ name, board, role = 'surfer' }) {
+  constructor({ name, board, role = 'surfer', look = null }) {
     this.selfId = selfId;
     this.name = clean(name, 24) || 'Surfer';
     this.board = board;
     this.role = role; // 'surfer' or 'drone'
+    this.look = look; // { skin, hair, board } colours
     this.room = null;
     this.roomInfo = null;
     this.peers = new Map(); // peerId -> { name, board, role, origin, playing }
@@ -150,14 +169,14 @@ export class Net {
     }
   }
 
-  async createRoom({ roomName, isPrivate, passcode }) {
+  async createRoom({ roomName, isPrivate, passcode, waves }) {
     const id = randomId();
     const hash = isPrivate ? await hashPasscode(id, passcode) : '';
-    await this.joinRoom({ id, name: roomName, isPrivate, passcode, hash, creating: true });
+    await this.joinRoom({ id, name: roomName, isPrivate, passcode, hash, waves, creating: true });
     return id;
   }
 
-  async joinRoom({ id, name, isPrivate, passcode, hash, creating = false }) {
+  async joinRoom({ id, name, isPrivate, passcode, hash, waves = null, creating = false }) {
     if (this.room) await this.leave();
     if (isPrivate) {
       if (!passcode) throw new Error('This room needs a passcode');
@@ -170,7 +189,7 @@ export class Net {
     this.roomInfo = { id, name: roomName, isPrivate: !!isPrivate, hash: hash || '' };
     this.peers.clear();
     // a fresh timeline; replaced by the room's oldest one as soon as we meet a peer
-    this.timeline = { seed: crypto.getRandomValues(new Uint32Array(1))[0], origin: selfId, created: Date.now() };
+    this.timeline = { seed: crypto.getRandomValues(new Uint32Array(1))[0], origin: selfId, created: Date.now(), waves: cleanWaves(waves) };
     this.offset = PERIOD * 0.55 - perfNow();
 
     const relays = relayServers();
@@ -265,6 +284,11 @@ export class Net {
     this.aHello.send(this._hello());
   }
 
+  setLook(look) {
+    this.look = look;
+    if (this.room) this.aHello.send(this._hello());
+  }
+
   setRole(role) {
     this.role = role;
     if (this.room) this.aHello.send(this._hello());
@@ -280,8 +304,24 @@ export class Net {
     if (this.room) this.aHello.send(this._hello());
   }
 
+  // Change the room's wave size (anyone in the room can). Applies from the next wave.
+  setWaves(cfg) {
+    if (!this.room || !this.timeline) return;
+    const cur = cleanWaves(this.timeline.waves);
+    const kNext = Math.floor(this.now() / PERIOD) + 1;
+    const active = cur.prev && cur.fromK != null && kNext - 1 < cur.fromK ? cur.prev : cur;
+    const waves = cleanWaves({ ...cfg, fromK: kNext, prev: active, rev: cur.rev + 1 });
+    this.timeline = { ...this.timeline, waves };
+    this.aHello.send(this._hello());
+    this.emit('waves', waves, null);
+  }
+
+  get waves() {
+    return cleanWaves(this.timeline && this.timeline.waves);
+  }
+
   _hello() {
-    return { v: MP.protocol, name: this.name, board: this.board, role: this.role, playing: this.playing, tl: this.timeline };
+    return { v: MP.protocol, name: this.name, board: this.board, role: this.role, look: this.look, playing: this.playing, tl: this.timeline };
   }
 
   _onHello(peerId, msg) {
@@ -292,6 +332,7 @@ export class Net {
     p.name = clean(msg.name, 24) || 'Surfer';
     p.board = msg.board === 'longboard' ? 'longboard' : 'shortboard';
     p.role = msg.role === 'drone' ? 'drone' : 'surfer';
+    p.look = cleanLook(msg.look);
     p.playing = !!msg.playing;
     p.origin = msg.tl && msg.tl.origin;
     p.version = msg.v;
@@ -300,6 +341,14 @@ export class Net {
     this.emit('info', peerId, p);
     this.emit('peers');
     if (msg.v !== MP.protocol) this.emit('warn', `${p.name} is on a different version of the game`);
+    // someone changed the room's waves (same timeline, newer revision)
+    if (msg.tl && this.timeline && msg.tl.origin === this.timeline.origin && msg.tl.seed === this.timeline.seed) {
+      const theirs = cleanWaves(msg.tl.waves);
+      if (theirs.rev > cleanWaves(this.timeline.waves).rev) {
+        this.timeline = { ...this.timeline, waves: theirs };
+        this.emit('waves', theirs, p.name);
+      }
+    }
     if (msg.tl && this.timeline && olderTimeline(msg.tl, this.timeline)) this._adopt(peerId);
   }
 

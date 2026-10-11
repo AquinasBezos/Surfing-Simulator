@@ -2,12 +2,15 @@
 // multiplayer room browser and lobby, and the in-game pause screen. Pure DOM; the game
 // is driven through the handler callbacks passed to the constructor.
 import { controls, PC_ACTIONS, QUEST_ACTIONS, QUEST_OPTIONS, RESERVED_KEYS, keyLabel, questLabel } from './bindings.js';
+import { WAVE_HEIGHTS } from './config.js';
+import { SKIN_TONES, HAIR_COLORS, BOARD_COLORS, cleanLook, randomLook } from './character.js';
+import { CharacterPreview } from './preview.js';
 
 const BOARD_SVG = {
   shortboard:
-    '<svg viewBox="0 0 44 92" aria-hidden="true"><path d="M22 3c8 12 13 30 13 52 0 15-3 26-6 33H15c-3-7-6-18-6-33C9 33 14 15 22 3z" fill="#f4f3ee" stroke="#9fb2bd" stroke-width="1.2"/><path d="M22 6v80" stroke="#2b2b2b" stroke-width="1"/></svg>',
+    '<svg viewBox="0 0 44 92" aria-hidden="true"><path class="deck" d="M22 3c8 12 13 30 13 52 0 15-3 26-6 33H15c-3-7-6-18-6-33C9 33 14 15 22 3z" fill="#f4f3ee" stroke="#9fb2bd" stroke-width="1.2"/><path d="M22 6v80" stroke="#2b2b2b" stroke-width="1"/></svg>',
   longboard:
-    '<svg viewBox="0 0 44 92" aria-hidden="true"><path d="M22 2c10 1 15 14 15 40 0 26-3 40-6 47H13c-3-7-6-21-6-47C7 16 12 3 22 2z" fill="#f2ecdd" stroke="#9fb2bd" stroke-width="1.2"/><path d="M8.5 30c0 20 1 40 5 56M35.5 30c0 20-1 40-5 56" stroke="#c0492b" stroke-width="1" fill="none"/><path d="M22 4v84" stroke="#2b2b2b" stroke-width="1"/></svg>',
+    '<svg viewBox="0 0 44 92" aria-hidden="true"><path class="deck" d="M22 2c10 1 15 14 15 40 0 26-3 40-6 47H13c-3-7-6-21-6-47C7 16 12 3 22 2z" fill="#f2ecdd" stroke="#9fb2bd" stroke-width="1.2"/><path d="M8.5 30c0 20 1 40 5 56M35.5 30c0 20-1 40-5 56" stroke="#c0492b" stroke-width="1" fill="none"/><path d="M22 4v84" stroke="#2b2b2b" stroke-width="1"/></svg>',
 };
 const BOARD_INFO = {
   shortboard: ['Shortboard', '6\'1" · snaps, tailslides, barrels'],
@@ -36,6 +39,12 @@ function save(key, value) {
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
+const cleanWaves = (w) => ({
+  mode: w && w.mode === 'random' ? 'random' : 'set',
+  height: Math.round(Math.min(WAVE_HEIGHTS.max, Math.max(WAVE_HEIGHTS.min, Number(w && w.height) || WAVE_HEIGHTS.default)) * 10) / 10,
+});
+const waveWords = (h) => (h < 0.9 ? 'knee to waist high' : h < 1.3 ? 'waist to chest high' : h < 1.8 ? 'about head high' : h < 2.5 ? 'overhead' : 'well overhead');
+
 // "Crouch (while surfing) is now C" for actions that gave up a key or button
 const moveText = (moved) => moved.map((m) => `${m.label} ${m.now === 'nothing' || m.now === 'Not set' ? 'is now unbound' : `is now ${m.now}`}.`).join(' ');
 
@@ -55,8 +64,15 @@ export class Menu {
     this.privacy = 'public';
     this.role = load('lineup.role', 'surfer') === 'drone' ? 'drone' : 'surfer';
     this.vrSupported = false;
+    this.waves = cleanWaves(load('lineup.waves', null));
+    // your look: random the first time (so everyone looks different), then remembered
+    this.look = cleanLook(load('lineup.look', null));
+    save('lineup.look', this.look);
+    this.preview = new CharacterPreview();
 
     this.buildBoardPickers();
+    this.buildWavePickers();
+    this.buildLookPickers();
     this.bindMain();
     this.bindNav();
     this.bindNames();
@@ -92,6 +108,7 @@ export class Menu {
     const focusable = this.screens[name].querySelector('[data-resume], .btn.primary, input');
     if (focusable && name !== 'multi' && name !== 'main') setTimeout(() => focusable.focus({ preventScroll: true }), 30);
     else if (name === 'main' && document.activeElement && this.root.contains(document.activeElement)) document.activeElement.blur();
+    this.syncPreview();
   }
 
   back() {
@@ -104,6 +121,7 @@ export class Menu {
 
   hide() {
     this.root.classList.add('hidden');
+    this.preview.stop();
   }
 
   setInGame(on) {
@@ -181,8 +199,88 @@ export class Menu {
     }
   }
 
+  // ---------------------------------------------------------------- your look
+  buildLookPickers() {
+    const row = (key, label, colors) =>
+      `<div class="swatch-row"><span>${label}</span><div class="swatches" role="radiogroup" aria-label="${label} colour">${colors
+        .map((c) => `<button type="button" class="swatch" role="radio" data-look="${key}" data-color="${c}" style="--c:${c}" aria-label="${label} ${c}"></button>`)
+        .join('')}</div></div>`;
+    for (const el of this.root.querySelectorAll('.look-pick')) {
+      el.innerHTML = `<div class="look-preview"></div><div class="look-opts">${row('skin', 'Skin', SKIN_TONES)}${row('hair', 'Hair', HAIR_COLORS)}${row('board', 'Board', BOARD_COLORS)}<button type="button" class="link look-random">Random look</button></div>`;
+      el.addEventListener('click', (e) => {
+        const sw = e.target.closest('[data-look]');
+        if (sw) this.setLook({ ...this.look, [sw.dataset.look]: sw.dataset.color }, true);
+        else if (e.target.closest('.look-random')) this.setLook(randomLook(), true);
+      });
+    }
+    this.setLook(this.look);
+  }
+
+  setLook(look, fromUser = false) {
+    this.look = cleanLook(look);
+    for (const sw of this.root.querySelectorAll('.swatch')) {
+      const on = this.look[sw.dataset.look] === sw.dataset.color;
+      sw.classList.toggle('on', on);
+      sw.setAttribute('aria-checked', String(on));
+    }
+    for (const d of this.root.querySelectorAll('.board-opt .deck')) d.setAttribute('fill', this.look.board);
+    this.preview.set(this.look, this.board);
+    if (fromUser) {
+      save('lineup.look', this.look);
+      if (this.h.onLook) this.h.onLook(this.look);
+    }
+  }
+
+  // run the turntable only on a screen that shows it
+  syncPreview() {
+    const scr = this.isOpen && this.screens[this.current];
+    const slot = scr && scr.querySelector('.look-pick:not([hidden]) .look-preview');
+    if (slot) {
+      this.preview.attach(slot);
+      this.preview.start();
+    } else this.preview.stop();
+  }
+
+  // ---------------------------------------------------------------- wave size
+  buildWavePickers() {
+    const { min, max } = WAVE_HEIGHTS;
+    for (const el of this.root.querySelectorAll('.wave-pick')) {
+      el.innerHTML = `<div class="wave-row"><span class="wave-label">Waves</span><div class="seg" role="radiogroup" aria-label="Wave size"><button type="button" role="radio" data-wmode="set">Set height</button><button type="button" role="radio" data-wmode="random">Random</button></div></div><input type="range" min="${min}" max="${max}" step="0.1" aria-label="Wave height" /><p class="wave-desc"></p>`;
+      el.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-wmode]');
+        if (b) this.setWaves({ ...this.waves, mode: b.dataset.wmode }, true);
+      });
+      const range = el.querySelector('input');
+      // show the size while dragging; apply it (and tell the room) on release
+      range.addEventListener('input', () => this.setWaves({ mode: 'set', height: +range.value }));
+      range.addEventListener('change', () => this.setWaves({ mode: 'set', height: +range.value }, true));
+    }
+    this.setWaves(this.waves);
+  }
+
+  // Show a wave setting (the room's while you're in one). fromUser: the player changed it.
+  setWaves(cfg, fromUser = false) {
+    this.waves = cleanWaves(cfg);
+    const { mode, height } = this.waves;
+    for (const el of this.root.querySelectorAll('.wave-pick')) {
+      for (const b of el.querySelectorAll('[data-wmode]')) {
+        b.classList.toggle('on', b.dataset.wmode === mode);
+        b.setAttribute('aria-checked', String(b.dataset.wmode === mode));
+      }
+      const range = el.querySelector('input');
+      if (document.activeElement !== range) range.value = height;
+      range.disabled = mode === 'random';
+      el.querySelector('.wave-desc').textContent = mode === 'random' ? 'Sets build and fade over a few minutes, from knee high to well overhead.' : `${height.toFixed(1)} m · ${waveWords(height)}`;
+    }
+    if (fromUser) {
+      save('lineup.waves', { mode, height });
+      if (this.h.onWaves) this.h.onWaves(this.waves);
+    }
+  }
+
   setBoard(type, fromUser = false) {
     this.board = type;
+    if (this.preview) this.preview.set(this.look, type);
     for (const b of this.root.querySelectorAll('.board-opt')) b.setAttribute('aria-checked', String(b.dataset.board === type));
     if (fromUser && this.h.onBoard) this.h.onBoard(type);
   }
@@ -424,6 +522,8 @@ export class Menu {
     }
     const drone = role === 'drone';
     this.screens.lobby.querySelector('.lobby-boards').hidden = drone;
+    this.screens.lobby.querySelector('.lobby-look').hidden = drone;
+    if (this.current) this.syncPreview();
     const help = this.screens.lobby.querySelector('.drone-help');
     help.hidden = !drone;
     const k = (id) => controls.pcKey(id);
@@ -466,7 +566,7 @@ export class Menu {
         return;
       }
       status.textContent = 'Creating room…';
-      if (this.h.onCreateRoom) this.h.onCreateRoom({ roomName: name, isPrivate: this.privacy === 'private', passcode: pass });
+      if (this.h.onCreateRoom) this.h.onCreateRoom({ roomName: name, isPrivate: this.privacy === 'private', passcode: pass, waves: this.waves });
     });
     document.getElementById('room-list').addEventListener('click', (e) => {
       const b = e.target.closest('[data-join]');
@@ -543,6 +643,7 @@ export class Menu {
   leftRoom() {
     this.inRoom = false;
     this.setLobbyStatus('');
+    this.setWaves(load('lineup.waves', null)); // back to your own setting
     document.getElementById('pause-room').hidden = true;
     this.root.querySelector('.pause-name').hidden = true;
     document.querySelector('[data-quit]').textContent = 'Main menu';

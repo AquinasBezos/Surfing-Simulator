@@ -96,10 +96,12 @@ function throughWaterMaterial(src) {
 }
 
 // Give every mesh under root a "seen through the water" copy and underwater fog.
+// (Not skinned meshes: a plain copy wouldn't follow the skeleton. The first-person legs
+// only show while you're standing, above the water.)
 export function addUnderwaterPass(root) {
   const meshes = [];
   root.traverse((o) => {
-    if (o.isMesh && !o.userData.uw && !o.userData.uwClone) meshes.push(o);
+    if (o.isMesh && !o.isSkinnedMesh && !o.userData.uw && !o.userData.uwClone) meshes.push(o);
   });
   for (const mesh of meshes) {
     mesh.userData.uw = true;

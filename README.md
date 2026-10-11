@@ -11,9 +11,11 @@ Paddle into glassy turquoise waves, pop up, and race the peeling lip through the
 - Shortboard or longboard. On the longboard you walk to the nose to hang five, or to the tail for tight turns.
 - You can crouch under the lip and spring off the top of the wave for an air. Snaps, cutbacks and tailslides come from flicking your view.
 - Two control schemes: keyboard and mouse on PC, and body movement on Quest (paddle with your arms, stand up to pop up, lean to carve).
-- Multiplayer: create or find a room, public or private with a passcode, and surf the same waves as up to seven other players. PC and Quest players can share a room.
+- Pick the wave size, from knee high to well overhead, or let it wander: sets build and fade over a few minutes. On small waves you can keep riding the whitewater after the wave breaks.
+- Your surfer is a rigged, animated character (paddling, popping up, a surf stance that crouches and leans with you). Choose skin tone, hair colour and board colour; a turntable preview shows your look.
+- Multiplayer: create or find a room, public or private with a passcode, and surf the same waves as up to seven other players, or join as a camera drone and film them from above. PC and Quest players can share a room.
 
-There is no build step. Textures, terrain and sound are generated at start-up, and three.js (r169) loads from jsDelivr. The only images are the menu art in `assets/menu/`, which are screenshots of the game. Firebase and Trystero load only when you open Multiplayer.
+There is no build step. Textures, terrain and sound are generated at start-up, and three.js (r169) loads from jsDelivr. The only files besides code are the surfer model (`assets/surfer.glb`) and the menu art in `assets/menu/`, which are screenshots of the game. Firebase and Trystero load only when you open Multiplayer.
 
 ## Controls
 
@@ -45,20 +47,39 @@ On PC the game goes fullscreen and locks the keyboard when you start, so `Ctrl` 
 5. To get barrelled, slow down (`S`) just ahead of the breaking lip so it pitches over you, and crouch: the tube is only tall enough to stand in near its middle. Then trim forward (`W`) to escape before it collapses.
 6. Crouch on the way up the face and release at the lip to hop off the top. Land with the board pointing where you're travelling.
 7. If you're caught inside with a wave about to land on you, duck dive under it.
-8. You wipe out if you get sucked up the face of a pitching section (over the falls), the lip lands on you or clips your head in the barrel, or the whitewater catches you while you're standing.
+8. You wipe out if you get sucked up the face of a pitching section (over the falls), the lip lands on you or clips your head in the barrel, or the whitewater catches you while you're standing. Waves under 1.5 m don't have that power: there you can ride the whitewater all the way in.
+
+### Waves and your surfer
+
+The **Waves** setting is on the Singleplayer screen, in Create a room, in the room lobby, and on the pause screen. **Set height** picks a size from 0.6 m to 3.4 m, and each wave varies a few percent around it. **Random** lets the size drift between about 0.8 m and 3 m, building and fading over a few minutes, with no wave much bigger than the last. A change applies from the next wave, so the ones already rolling in keep their size. Small waves are relatively longer and gentler, more like mushy beginner waves, so they can still be caught at the game's fixed wave speed.
+
+**Your surfer** (Singleplayer screen and the room lobby) sets your skin tone, hair colour and board colour. You start with a random look, so everyone looks different, and it's remembered. Your first-person arms and board follow it, and other players see the full character.
 
 ## Multiplayer
 
-1. Choose **Multiplayer**, then set your name and board.
+1. Choose **Multiplayer**, then set your name and board. Your look and the wave size are set in the room lobby.
 2. **Find a room** lists the open rooms and who's in them; type to search by name. Rooms marked 🔒 are private and ask for the passcode.
 3. Or **Create a room**: give it a name and make it public, or private with a passcode of at least 3 characters.
-4. In the room, choose **Play on PC** or **Play in VR**. Everyone in the room gets the same waves at the same moment. Other surfers appear with name tags, and a feed shows who paddled out, got barrelled or wiped out. You can change your name from the pause menu.
+4. In the room, choose **Play on PC** or **Play in VR**. Everyone in the room gets the same waves at the same moment. Other surfers appear with name tags, and a feed shows who paddled out, got barrelled or wiped out. You can change your name, and anyone can change the room's wave size, from the pause menu.
+
+### Join as drone
+
+In the room lobby, pick **Join as drone** instead of Surfer to fly a camera drone over the waves and watch the others, from high above or skimming the water. It's a folding-arm drone like a DJI Mavic with the camera on a gimbal in its nose, so none of the drone is ever in your shot. The body tilts as it speeds up and turns, but the camera stays level. Fly into the water, the lip or the land and it splashes down and relaunches; you can fly through a barrel if you're good.
+
+| | PC | Meta Quest |
+| :-- | :-- | :-- |
+| Fly forward, back, sideways | `W` `A` `S` `D` (your movement keys) | Right stick |
+| Climb / descend | `Space` / `Ctrl` (your pop-up and crouch keys) | Left stick up / down |
+| Turn | Mouse left / right | Left stick left / right |
+| Tilt the camera | Mouse up / down | Look around |
+| Go faster | Hold `Shift` (your trick key) | |
+| Relaunch | `R` (your lineup key) | `B` (your lineup button) |
 
 ### How it works
 
 - The Firebase Realtime Database is only used to find rooms. Each player in a room writes one entry of about 100 bytes, `lineup/rooms/<room>/<player>`, with `onDisconnect().remove()`. A room is nothing more than its players' entries, so it disappears as soon as the last player leaves or closes the tab. There is no cleanup job and nothing is left behind.
 - Players connect to each other directly over WebRTC using [Trystero](https://github.com/dmotz/trystero). Trystero uses the same database for the brief connection handshake and deletes those records itself. Positions (15 times a second, 56 bytes each), events and clock sync all go peer-to-peer and never touch Firebase.
-- Waves aren't sent over the network at all. Each room has a random seed and a shared clock, and every player generates the same sets from them. A player who joins takes the clock of whoever has been in the room longest.
+- Waves aren't sent over the network at all. Each room has a random seed, a shared clock and a wave-size setting, and every player generates the same sets from them. A player who joins takes the clock of whoever has been in the room longest. A change to the wave size carries the wave number it starts from, so everyone switches on the same wave.
 - In a private room the passcode is the key Trystero encrypts the handshake with, so players without it can't connect. The room list stores only a short hash of it so that a wrong passcode is rejected straight away.
 
 ### Firebase free plan
@@ -100,7 +121,10 @@ To check the relay works, open the game with `?relay` on two devices and join th
 | `js/bindings.js` | Remappable controls: actions, default keys and Quest buttons, labels, swapping clashes, saving |
 | `js/vrmenu.js` | Pause menu inside the headset: a floating panel you point at with the controllers |
 | `js/net.js` | Multiplayer networking: room list and presence in Firebase, Trystero peer connections, shared clock |
-| `js/remote.js` | Other players' surfers: interpolated movement, paddling and riding poses, name tags |
+| `js/remote.js` | Other players: interpolated movement, their surfer (or drone), board colour, name tags |
+| `js/character.js` | The rigged surfer from `assets/surfer.glb`: per-player clone and colours, Paddle / Surf clips, crouch and lean with leg IK |
+| `js/preview.js` | Turntable preview of your surfer in the menus |
+| `js/drone.js` | Camera drone: flight model, crash rules, and the quadcopter model |
 | `js/config.js` | Tunables: wave sizes and timing, swell spectrum, sun, quality presets, board types, multiplayer settings |
 | `js/wave.js` | Wave model: set lifecycle, peeling and collapse, swell, and the seeded wave schedule used in multiplayer rooms. Also the JS copy of the wave maths used by the physics and spray |
 | `js/shaders/waveChunk.js` | GLSL copy of the wave maths (profile, curling lip, Gerstner swell). Must stay identical to `wave.js` |
@@ -112,6 +136,7 @@ To check the relay works, open the game with `?relay` on two devices and join th
 | `js/body.js`, `js/board.js` | First-person arms (IK paddling), VR hands, parametric shortboard and longboard |
 | `js/sky.js`, `js/terrain.js` | Procedural HDR sky (rendered once into a cube map), beach, headland, island, trees |
 | `js/spray.js`, `js/audio.js`, `js/hud.js`, `js/textures.js` | Spray particles, procedural sound, HUD, generated textures |
+| `assets/surfer.glb` | The surfer: 19-bone rig with Idle, Walk, Run, Surf and Paddle clips |
 | `assets/menu/` | Menu art, rendered from the game with the debug views below |
 | `database.rules.json` | Recommended Firebase Realtime Database rules |
 
@@ -130,6 +155,6 @@ Breaking starts at the peak and spreads along the wave at the peel speed. Each s
 - `?board=shortboard|longboard`: choose the board (otherwise the last one picked in the menu).
 - `?shot=lineup|barrel|shoulder|behind|paddle|duckdive|beach|boards`: jumps to a preset scene, skipping the menu. Add `&freeze` to stop time.
 - Extra preset options: `&stand`, `&crouch=0..1`, `&dive=depth` (e.g. `&dive=1.1` to look around under water), `&foot=-1..1.2` (longboard stance), `&pitch=` / `&lookyaw=` (radians), `&tau=` (seconds since the wave started breaking; negative is before).
-- `&bots=N`: puts N stand-in surfers around you, to check how other players look. `&wave2=z`: adds a second wave of the set with its crest at `z`.
+- `&bots=N`: puts N stand-in surfers around you, to check how other players look. `&wave2=z`: adds a second wave of the set with its crest at `z`. `&waveh=1.0`: the preset wave's height in metres.
 - `?shot=barrel&freeze&cam=x,y,z,yawDeg,pitchDeg`: free spectator camera.
 - `?relay`: multiplayer connections only go through the TURN relay (to test the relay set-up).

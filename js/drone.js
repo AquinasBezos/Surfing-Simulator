@@ -102,36 +102,53 @@ export class Drone {
     return null;
   }
 
-  // world position of the gimbal camera: hanging under the body, so the (tilting) drone is
-  // only in view when you look up, and still inside the crash radius
+  // world position of the gimbal camera, in the nose: the arms and props are all behind
+  // and beside it, so none of the drone is ever in your shot
   cameraPosition(out = _v) {
+    const s = Math.sin(this.yaw);
+    const c = Math.cos(this.yaw);
     out.copy(this.pos);
-    out.y -= 0.16;
+    out.x -= s * CAM_FORWARD;
+    out.z -= c * CAM_FORWARD;
+    out.y += CAM_Y;
     return out;
   }
 }
 
+// gimbal camera position in the drone's frame (nose toward -z)
+const CAM_FORWARD = 0.13;
+const CAM_Y = -0.028;
+
 // ---------------------------------------------------------------- model
+// A folding-arm camera drone in the style of a DJI Mavic: slim body, "deadcat" arms (the
+// front pair swept out wide, the rear pair lower and further back) so the propellers stay
+// out of the camera's view, and a three-axis gimbal hanging under the nose.
 let parts = null;
 function sharedParts() {
   if (parts) return parts;
-  const dark = new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.45, metalness: 0.2 });
-  const shell = new THREE.MeshStandardMaterial({ color: 0xe9edf0, roughness: 0.35, metalness: 0.05 });
-  const lens = new THREE.MeshStandardMaterial({ color: 0x0b0f14, roughness: 0.1, metalness: 0.6 });
-  const blur = new THREE.MeshBasicMaterial({ color: 0xd8e2e8, transparent: true, opacity: 0.22, depthWrite: false, side: THREE.DoubleSide });
+  const body = new THREE.MeshStandardMaterial({ color: 0x5d6268, roughness: 0.42, metalness: 0.15 });
+  const shell = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.35, metalness: 0.1 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x23272b, roughness: 0.5, metalness: 0.2 });
+  const lens = new THREE.MeshStandardMaterial({ color: 0x0a0d12, roughness: 0.08, metalness: 0.7 });
+  const blur = new THREE.MeshBasicMaterial({ color: 0xd8e2e8, transparent: true, opacity: 0.2, depthWrite: false, side: THREE.DoubleSide });
   const blade = new THREE.MeshStandardMaterial({ color: 0x1d2024, roughness: 0.5 });
+  const top = new THREE.SphereGeometry(1, 20, 10, 0, Math.PI * 2, 0, Math.PI / 2);
   parts = {
-    body: new THREE.BoxGeometry(0.16, 0.05, 0.24),
-    top: new THREE.SphereGeometry(0.085, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2),
-    arm: new THREE.BoxGeometry(0.022, 0.016, 0.2),
-    motor: new THREE.CylinderGeometry(0.017, 0.02, 0.032, 12),
-    disc: new THREE.CircleGeometry(0.075, 24),
-    blade: new THREE.BoxGeometry(0.15, 0.003, 0.014),
-    gimbal: new THREE.BoxGeometry(0.045, 0.04, 0.045),
-    lens: new THREE.CylinderGeometry(0.013, 0.013, 0.012, 14),
-    led: new THREE.SphereGeometry(0.008, 8, 6),
-    dark,
-    shell,
+    body: new THREE.BoxGeometry(0.085, 0.046, 0.19),
+    top,
+    nose: new THREE.BoxGeometry(0.07, 0.03, 0.03),
+    arm: new THREE.BoxGeometry(1, 0.012, 0.018), // stretched along x between body and motor
+    motor: new THREE.CylinderGeometry(0.014, 0.017, 0.026, 12),
+    disc: new THREE.CircleGeometry(0.066, 24),
+    blade: new THREE.BoxGeometry(0.13, 0.003, 0.012),
+    yoke: new THREE.BoxGeometry(0.008, 0.03, 0.026),
+    camBody: new THREE.BoxGeometry(0.034, 0.03, 0.034),
+    lens: new THREE.CylinderGeometry(0.011, 0.012, 0.01, 16),
+    eye: new THREE.CircleGeometry(0.006, 10),
+    led: new THREE.SphereGeometry(0.006, 8, 6),
+    bodyMat: body,
+    shellMat: shell,
+    darkMat: dark,
     lensMat: lens,
     blur,
     bladeMat: blade,
@@ -139,53 +156,74 @@ function sharedParts() {
   return parts;
 }
 
-// A small quadcopter. Returns a group with .props (spin them), .gimbal (tilt it) and
-// .setAccent(color) for the arm lights.
+// Returns a group with .props (spin them), .gimbal (tilt it) and .setAccent(color) for the
+// front arm lights. Nose toward -z.
 export function createDroneModel(accent = 0x19c2b4) {
   const P = sharedParts();
   const g = new THREE.Group();
-  const body = new THREE.Mesh(P.body, P.dark);
-  g.add(body);
-  const top = new THREE.Mesh(P.top, P.shell);
-  top.scale.set(1, 0.45, 1.35);
-  top.position.y = 0.024;
+  g.add(new THREE.Mesh(P.body, P.bodyMat));
+  const top = new THREE.Mesh(P.top, P.shellMat);
+  top.scale.set(0.044, 0.02, 0.1);
+  top.position.y = 0.022;
   g.add(top);
-  const led = new THREE.MeshBasicMaterial({ color: accent, toneMapped: false });
-  g.props = [];
-  for (const [sx, sz] of [
-    [1, -1],
-    [-1, -1],
-    [1, 1],
-    [-1, 1],
-  ]) {
-    const arm = new THREE.Mesh(P.arm, P.dark);
-    arm.position.set(sx * 0.1, 0.005, sz * 0.1);
-    arm.rotation.y = Math.atan2(sx, sz);
-    g.add(arm);
-    const motor = new THREE.Mesh(P.motor, P.dark);
-    motor.position.set(sx * 0.17, 0.02, sz * 0.17);
-    g.add(motor);
-    const prop = new THREE.Group();
-    prop.position.set(sx * 0.17, 0.04, sz * 0.17);
-    const disc = new THREE.Mesh(P.disc, P.blur);
-    disc.rotation.x = -Math.PI / 2;
-    prop.add(disc);
-    const b = new THREE.Mesh(P.blade, P.bladeMat);
-    prop.add(b);
-    prop.spin = sx * sz; // neighbours turn opposite ways
-    g.add(prop);
-    g.props.push(prop);
-    const l = new THREE.Mesh(P.led, sz < 0 ? led : new THREE.MeshBasicMaterial({ color: 0xff4636, toneMapped: false }));
-    l.position.set(sx * 0.17, -0.005, sz * 0.17);
-    g.add(l);
+  // dark sensor face on the nose, with two obstacle sensors
+  const nose = new THREE.Mesh(P.nose, P.darkMat);
+  nose.position.set(0, 0.004, -0.1);
+  nose.rotation.x = -0.35;
+  g.add(nose);
+  for (const sx of [-1, 1]) {
+    const eye = new THREE.Mesh(P.eye, P.lensMat);
+    eye.position.set(sx * 0.018, 0.008, -0.1165);
+    eye.rotation.x = -0.35 + Math.PI;
+    eye.rotation.y = Math.PI;
+    g.add(eye);
   }
+  const led = new THREE.MeshBasicMaterial({ color: accent, toneMapped: false });
+  const rear = new THREE.MeshBasicMaterial({ color: 0x41e07a, toneMapped: false });
+  g.props = [];
+  // [root on the body, motor position, prop height above the motor]
+  const arms = [
+    [new THREE.Vector3(0.036, 0.012, -0.07), new THREE.Vector3(0.155, 0.02, -0.1)],
+    [new THREE.Vector3(0.036, -0.012, 0.07), new THREE.Vector3(0.13, -0.02, 0.13)],
+  ];
+  for (const [i, [root, motorAt]] of arms.entries()) {
+    for (const sx of [-1, 1]) {
+      const a = root.clone().setX(root.x * sx);
+      const m = motorAt.clone().setX(motorAt.x * sx);
+      const arm = new THREE.Mesh(P.arm, P.darkMat);
+      arm.position.addVectors(a, m).multiplyScalar(0.5);
+      arm.scale.x = a.distanceTo(m);
+      arm.rotation.y = -Math.atan2(m.z - a.z, m.x - a.x);
+      g.add(arm);
+      const motor = new THREE.Mesh(P.motor, P.darkMat);
+      motor.position.copy(m);
+      g.add(motor);
+      const prop = new THREE.Group();
+      prop.position.set(m.x, m.y + 0.018, m.z);
+      const disc = new THREE.Mesh(P.disc, P.blur);
+      disc.rotation.x = -Math.PI / 2;
+      prop.add(disc);
+      prop.add(new THREE.Mesh(P.blade, P.bladeMat));
+      prop.spin = i === 0 ? sx : -sx; // diagonal pairs turn the same way
+      g.add(prop);
+      g.props.push(prop);
+      const l = new THREE.Mesh(P.led, i === 0 ? led : rear);
+      l.position.set(m.x, m.y - 0.016, m.z);
+      g.add(l);
+    }
+  }
+  // gimbal under the nose: yoke arms either side of the camera
   const gimbal = new THREE.Group();
-  gimbal.position.set(0, -0.045, -0.09);
-  const cam = new THREE.Mesh(P.gimbal, P.dark);
-  gimbal.add(cam);
+  gimbal.position.set(0, CAM_Y, -CAM_FORWARD + 0.012);
+  for (const sx of [-1, 1]) {
+    const yoke = new THREE.Mesh(P.yoke, P.darkMat);
+    yoke.position.set(sx * 0.022, 0.006, 0);
+    g.add(yoke.translateZ(-CAM_FORWARD + 0.012).translateY(CAM_Y));
+  }
+  gimbal.add(new THREE.Mesh(P.camBody, P.darkMat));
   const lensM = new THREE.Mesh(P.lens, P.lensMat);
   lensM.rotation.x = Math.PI / 2;
-  lensM.position.z = -0.025;
+  lensM.position.z = -0.019;
   gimbal.add(lensM);
   g.add(gimbal);
   g.gimbal = gimbal;

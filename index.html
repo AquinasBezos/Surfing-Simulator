@@ -79,6 +79,9 @@
             <div class="panel-body">
               <h3>Choose your board</h3>
               <div class="board-pick" role="radiogroup" aria-label="Board"></div>
+              <h3>Your surfer</h3>
+              <div class="look-pick"></div>
+              <div class="wave-pick"></div>
               <div class="play-row">
                 <button type="button" class="btn primary" data-play="pc">Play on PC</button>
                 <button type="button" class="btn vr-launch" data-play="vr">Play in VR</button>
@@ -126,6 +129,7 @@
                     <span>Passcode</span>
                     <input type="password" id="room-pass" maxlength="24" autocomplete="new-password" />
                   </label>
+                  <div class="wave-pick"></div>
                   <button type="button" class="btn primary" id="create-room">Create room</button>
                   <p id="create-status" class="note"></p>
                 </form>
@@ -152,7 +156,9 @@
                 <button type="button" class="opt" data-role="drone" role="radio" aria-checked="false"><b>Join as drone</b><small>Fly over the waves and film</small></button>
               </div>
               <div class="board-pick compact lobby-boards" role="radiogroup" aria-label="Board"></div>
+              <div class="look-pick lobby-look"></div>
               <p class="note drone-help" hidden></p>
+              <div class="wave-pick"></div>
               <div class="play-row">
                 <button type="button" class="btn primary" data-play="pc">Play on PC</button>
                 <button type="button" class="btn vr-launch" data-play="vr">Play in VR</button>
@@ -244,6 +250,7 @@
               <p class="room-meta" id="pause-room" hidden></p>
               <button type="button" class="btn primary" data-resume>Resume</button>
               <button type="button" class="btn" data-go="settings">Controls and settings</button>
+              <div class="wave-pick"></div>
               <label class="field pause-name" hidden>
                 <span>Your name</span>
                 <input type="text" class="name-input" maxlength="24" spellcheck="false" />

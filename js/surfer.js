@@ -6,7 +6,7 @@
 // On top of that: effort-based paddling, duck dives, crouching, leg-extension pops and
 // airs, walking on a longboard, and snap / cutback / tailslide manoeuvres.
 import * as THREE from 'three';
-import { GRAVITY, LINEUP_Z, WAVE, BOARDS } from './config.js';
+import { GRAVITY, LINEUP_Z, WAVE, WAVE_HEIGHTS, BOARDS } from './config.js';
 import { clamp, smoothstep, mix } from './wave.js';
 
 export const STATE = { PRONE: 'prone', POPUP: 'popup', STANDING: 'standing', WIPEOUT: 'wipeout' };
@@ -459,7 +459,7 @@ export class Surfer {
 
   checkRules(s, h, deep) {
     const st = this.state;
-    const big = s.wave && s.H > 0.7;
+    const big = s.wave && s.H > 0.45;
     this.inTube = false;
     this.ceiling = Infinity;
     // standing without enough speed to plane: sink back to prone
@@ -497,12 +497,16 @@ export class Surfer {
       return;
     }
     const un = s.un;
+    // small waves: the lip and the whitewater haven't the power to knock you off, so you can
+    // keep riding the foam after the wave breaks
+    const small = s.H < WAVE_HEIGHTS.small;
     if (!deep) {
       // over the falls: sucked up the face of a pitching section
-      if (s.yb > 0.8 && s.b > 0.3 && un > -0.3 && un < 0.65) return this.wipeout('Over the falls!');
+      if (s.H > 1.0 && s.yb > 0.8 && s.b > 0.3 && un > -0.3 && un < 0.65) return this.wipeout('Over the falls!');
       // the lip lands on you
-      if (s.b > 0.55 && un > 1.2 && un < 1.75 && s.kappa < 0.95) return this.wipeout('Smashed by the lip!');
+      if (!small && s.b > 0.55 && un > 1.2 && un < 1.75 && s.kappa < 0.95) return this.wipeout('Smashed by the lip!');
     }
+    this.onWhitewater = false;
     if (st === STATE.STANDING) {
       // the whole wave closing out at the end of its life ends the ride gracefully
       if (s.wave.collapseG > 0.3) {
@@ -511,9 +515,12 @@ export class Surfer {
         this.emit('closeout', {});
         return;
       }
-      if (s.kappa > 0.5 && un > -0.3 && un < 2.4) return this.wipeout('Caught inside the whitewater');
-      // the lip overhead: crouch to fit under it
-      if (s.b > 0.25 && un > 0.2 && un < 1.7) {
+      if (s.kappa > 0.5 && un > -0.3 && un < 2.4) {
+        if (!small) return this.wipeout('Caught inside the whitewater');
+        this.onWhitewater = true;
+      }
+      // the lip overhead: crouch to fit under it (a small wave's lip only hits your legs)
+      if (!small && s.b > 0.25 && un > 0.2 && un < 1.7) {
         const c = this.model.tubeCeiling(s.wave, this.x, this.z, this.y + 0.35);
         this.ceiling = c - this.y;
         const head = mix(1.8, 1.05, this.crouch);

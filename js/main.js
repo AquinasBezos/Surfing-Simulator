@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { QUALITY, SUN_DIR, SUN_COLOR, EYE, LINEUP_Z, WAVE, BOARDS, CROUCH_DROP, MULTIPLAYER } from './config.js';
-import { WaveModel, smoothstep, clamp, crestOffset } from './wave.js';
+import { WaveModel, smoothstep, clamp, crestOffset, waveScale } from './wave.js';
 import { Ocean } from './ocean.js';
 import { createSky } from './sky.js';
 import { createTerrain, seabedY } from './terrain.js';
 import { createWaterNormalTexture, createNoiseTexture } from './textures.js';
 import { createBoard } from './board.js';
-import { Arms } from './body.js';
+import { Arms, setSkinColor } from './body.js';
 import { Spray } from './spray.js';
 import { Surfer, STATE } from './surfer.js';
 import { PCInput } from './input.js';
@@ -19,6 +19,7 @@ import { RemotePlayers, POSE } from './remote.js';
 import { VRMenu } from './vrmenu.js';
 import { controls } from './bindings.js';
 import { Drone, createDroneModel, animateDrone } from './drone.js';
+import { loadSurferModel, randomLook } from './character.js';
 
 const params = new URLSearchParams(location.search);
 const isMobileXR = /OculusBrowser|Quest|Pico/i.test(navigator.userAgent);
@@ -86,6 +87,7 @@ const eyeStand = new THREE.Vector3(...EYE.standing);
 const spray = new Spray(model, quality.particles);
 scene.add(spray.points);
 const remote = new RemotePlayers(scene);
+loadSurferModel().catch(() => {}); // fetch the character early (other players, the menu preview)
 
 // spectator camera drone (multiplayer): the flight model, and the body you see if you look up
 const drone = new Drone();
@@ -139,6 +141,11 @@ const menu = new Menu({
   onPlay: (mode, platform) => startGame(mode, platform),
   onBoard: (type) => setBoardType(type),
   onRole: (role) => net && net.setRole(role),
+  onLook: (look) => applyLook(look),
+  onWaves: (cfg) => {
+    if (net && net.room) net.setWaves(cfg); // the room's waves, for everyone
+    else model.setHeights(cfg);
+  },
   onName: (name) => net && net.setName(name),
   onSettings: (s) => applySettings(s),
   onOpenMulti: () => openMultiplayer(),
@@ -158,11 +165,20 @@ const menu = new Menu({
   onQuit: () => quitToMenu(),
 });
 let settings = menu.settings;
+model.setHeights(menu.waves);
 function applySettings(s) {
   settings = s;
   audio.setVolume(s.volume);
 }
 applySettings(settings);
+
+// your look: skin tone on your first-person arms, board colour, and what others see
+function applyLook(look) {
+  setSkinColor(look.skin);
+  if (board) setBoardType(boardType);
+  if (net) net.setLook(look);
+}
+setSkinColor(menu.look.skin);
 
 // in-headset pause menu (the page's menus can't be seen in VR)
 const vrMenu = new VRMenu(renderer, rig, camera, {
@@ -215,7 +231,7 @@ function setBoardType(type) {
     bodyFrame.remove(board);
     board.traverse((o) => o.geometry && o.geometry.dispose());
   }
-  board = createBoard(type);
+  board = createBoard(type, menu.look.board);
   bodyFrame.add(board);
   addUnderwaterPass(bodyFrame);
   surfer.setBoard(type);
@@ -301,10 +317,11 @@ function startGame(mode, platform) {
   bodyFrame.visible = !flying;
   droneBody.visible = flying;
   if (mode === 'multi') {
-    model.setSchedule(net.seed, () => net.now());
+    model.setSchedule(net.seed, () => net.now(), net.waves);
     net.setPlaying(true);
   } else {
     model.clearSchedule();
+    model.setHeights(menu.waves);
     model.reset(-62);
     remote.clear();
   }
@@ -542,7 +559,7 @@ function ensureNet() {
   if (net) return Promise.resolve(net);
   netLoading ||= import('./net.js').then(
     (mod) => {
-      net = new mod.Net({ name: menu.name, board: boardType });
+      net = new mod.Net({ name: menu.name, board: boardType, role: menu.role, look: menu.look });
       wireNet(net);
       return net;
     },
@@ -566,12 +583,13 @@ function wireNet(n) {
     remote.remove(id);
     hud.feed(`${name} left the lineup`);
   });
-  n.on('info', (id, p) => remote.setInfo(id, { name: p.name, board: p.board }));
+  n.on('info', (id, p) => remote.setInfo(id, { name: p.name, board: p.board, look: p.look }));
   n.on('pose', (id, f) => remote.push(id, decodePose(f)));
   n.on('event', (id, e) => onRemoteEvent(id, e));
   n.on('timeline', () => {
+    menu.setWaves(n.waves);
     if (game.mode === 'multi') {
-      model.setSchedule(n.seed, () => n.now());
+      model.setSchedule(n.seed, () => n.now(), n.waves);
       for (const a of remote.avatars.values()) a.snaps.length = 0;
       spray.clear();
       respawn(true); // the waves just changed under us: fade back to the lineup
@@ -590,6 +608,12 @@ function wireNet(n) {
     menu.setLobbyStatus(text);
   });
   n.on('warn', (msg) => hud.feed(msg));
+  n.on('waves', (w, by) => {
+    model.setScheduleHeights(w);
+    menu.setWaves(w);
+    const what = w.mode === 'random' ? 'random sizes' : `${w.height.toFixed(1)} m`;
+    hud.feed(by ? `${by} set the waves to ${what}` : `Waves set to ${what} from the next one`);
+  });
   n.on('left', () => {
     failedPeer = null;
     remote.clear();
@@ -617,6 +641,7 @@ async function createRoom(opts) {
   try {
     const n = await ensureNet();
     await n.createRoom(opts);
+    menu.setWaves(n.waves);
     menu.setCreateStatus('');
     menu.show('lobby', { push: false });
     updateLobby();
@@ -629,7 +654,8 @@ async function joinRoom(room, passcode) {
   const n = await ensureNet();
   if (room.count >= MULTIPLAYER.maxPlayers) return menu.renderRooms(menu.rooms, null, MULTIPLAYER.maxPlayers);
   try {
-    await n.joinRoom({ id: room.id, name: room.name, isPrivate: room.isPrivate, passcode, hash: room.hash });
+    await n.joinRoom({ id: room.id, name: room.name, isPrivate: room.isPrivate, passcode, hash: room.hash, waves: menu.waves });
+    menu.setWaves(n.waves);
     menu.closePass();
     menu.show('lobby', { push: false });
     updateLobby();
@@ -882,8 +908,8 @@ function applyShot(name) {
   w.active = true;
   w.peakX = 0;
   w.dir = 1;
-  w.height = 2.6;
-  w.S = 2.6;
+  w.height = parseFloat(params.get('waveh')) || 2.6;
+  w.S = waveScale(w.height);
   const setTau = (tau) => {
     w.crestZ0 = WAVE.breakZ + tau * WAVE.speed;
     model._derive(w);
@@ -976,7 +1002,7 @@ function spawnBots(n) {
   for (let i = 0; i < n; i++) {
     const id = `bot${i}`;
     const [side, ahead, dyaw, effort] = spots[i % spots.length];
-    remote.setInfo(id, { name: names[i % names.length], board: i % 3 === 1 ? 'longboard' : 'shortboard' });
+    remote.setInfo(id, { name: names[i % names.length], board: i % 3 === 1 ? 'longboard' : 'shortboard', look: randomLook() });
     game.bots.push({ id, x: surfer.x + fx * ahead - fz * side, z: surfer.z + fz * ahead + fx * side, yaw: surfer.yaw + dyaw, effort });
   }
 }
@@ -1248,6 +1274,7 @@ function frame(time, xrFrame) {
   if (surfer.diving) stateLabel = 'Duck diving';
   else if (surfer.air) stateLabel = 'Airborne';
   else if (surfer.state === STATE.STANDING && surfer.crouch > 0.5) stateLabel = 'Surfing · crouched';
+  else if (surfer.state === STATE.STANDING && surfer.onWhitewater) stateLabel = 'Surfing the whitewater';
   let warn = '';
   if (surfer.state === STATE.STANDING && surfer.ceiling < 2.1 && surfer.crouch < 0.65) warn = inXR ? 'Crouch!' : `Crouch! (${controls.pcKey('crouch')})`;
   if (flying) {
