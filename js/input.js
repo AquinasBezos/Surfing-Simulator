@@ -58,11 +58,15 @@ export class PCInput {
   }
 
   // Fullscreen + pointer lock + keyboard lock (must be called from a click).
-  capture() {
+  capture(fullscreen = true) {
     const el = document.documentElement;
     const lockKeys = () => {
       if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(LOCK_KEYS).catch(() => {});
     };
+    if (!fullscreen) {
+      this.requestLock();
+      return;
+    }
     if (el.requestFullscreen && !document.fullscreenElement) {
       el.requestFullscreen({ navigationUI: 'hide' }).then(lockKeys, () => {});
     } else lockKeys();

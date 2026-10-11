@@ -72,6 +72,12 @@ export class Spray {
     this.material.uniforms.uScale.value = h * 0.5;
   }
 
+  // Kill every particle (new game, or the waves jumped under us).
+  clear() {
+    this.life.fill(2);
+    this.lifeAttr.needsUpdate = true;
+  }
+
   emit(x, y, z, vx, vy, vz, dur, size, drag) {
     const i = this.cursor;
     this.cursor = (this.cursor + 1) % this.max;

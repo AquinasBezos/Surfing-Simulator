@@ -3,15 +3,22 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-    <title>Surfing Simulator</title>
-    <meta name="description" content="First-person WebXR surfing simulator with breaking barrels, for PC browsers and Meta Quest." />
-    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M6 44c10-22 34-30 52-22-14-2-26 6-30 18 10-8 22-6 28 2-16-6-34 0-50 2z' fill='%2318a6a0'/%3E%3C/svg%3E" />
+    <title>LINEUP</title>
+    <meta name="description" content="LINEUP: a first-person WebXR surfing game with breaking barrels and peer-to-peer multiplayer, for PC browsers and Meta Quest." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M6 44c10-22 34-30 52-22-14-2-26 6-30 18 10-8 22-6 28 2-16-6-34 0-50 2z' fill='%238fd0ee'/%3E%3C/svg%3E" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="css/style.css" />
     <script type="importmap">
       {
         "imports": {
           "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/"
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+          "firebase/app": "https://www.gstatic.com/firebasejs/12.19.0/firebase-app.js",
+          "firebase/database": "https://www.gstatic.com/firebasejs/12.19.0/firebase-database.js",
+          "@trystero-p2p/core": "https://cdn.jsdelivr.net/npm/@trystero-p2p/core@0.26.0/dist/index.mjs",
+          "@trystero-p2p/firebase": "https://cdn.jsdelivr.net/npm/@trystero-p2p/firebase@0.26.0/dist/index.mjs"
         }
       }
     </script>
@@ -26,55 +33,210 @@
         <div id="hud-paddle" title="Paddling effort"><i></i></div>
         <div id="hud-foot" title="Where you're standing on the longboard"><span>tail</span><b><i></i></b><span>nose</span></div>
       </div>
-      <div class="hud-tr" id="hud-wave"></div>
+      <div class="hud-tr">
+        <div id="hud-wave"></div>
+        <div id="hud-players"></div>
+      </div>
       <div id="hud-tube">In the barrel</div>
       <div id="hud-warn"></div>
       <div id="hud-callout"></div>
       <div id="toast"></div>
-      <div class="hud-bl">R lineup · Esc pause</div>
+      <ul id="hud-feed"></ul>
+      <div class="hud-bl">R lineup · Esc menu</div>
       <div id="debug"></div>
     </div>
 
-    <div id="overlay">
-      <div class="card">
-        <div class="intro">
-        <p class="eyebrow">WebXR · Three.js</p>
-        <h1 id="overlay-title">Surfing Simulator</h1>
-        <p class="lede">Paddle into glassy turquoise waves, pop up, and race the peeling lip through the barrel. Play in your browser, or on Meta Quest.</p>
-        <div class="pick" role="radiogroup" aria-label="Board">
-          <button type="button" class="seg" role="radio" data-board="shortboard" aria-checked="true">
-            <b>Shortboard</b><small>6'1" · snaps, tailslides, barrels</small>
-          </button>
-          <button type="button" class="seg" role="radio" data-board="longboard" aria-checked="false">
-            <b>Longboard</b><small>9'2" · glides, walk to the nose</small>
-          </button>
-        </div>
-        <div class="actions">
-          <button id="start" class="primary">Surf on PC</button>
-          <div id="vr-slot"></div>
-        </div>
-        </div>
-        <div class="side">
-        <details class="controls" open>
-          <summary>Controls</summary>
-          <table>
-            <thead>
-              <tr><th></th><th>PC</th><th>Meta Quest</th></tr>
-            </thead>
-            <tbody>
-              <tr><td>Paddle</td><td><kbd>Scroll</kbd>: scroll faster to paddle faster</td><td>Sweep your hands back, low at your sides. Faster strokes, more speed</td></tr>
-              <tr><td>Steer prone</td><td><kbd>A</kbd> / <kbd>D</kbd></td><td>Paddle harder on one side (right turns you left)</td></tr>
-              <tr><td>Duck dive</td><td>Hold <kbd>Ctrl</kbd> or <kbd>C</kbd> while paddling</td><td>Hold grip on the front of the board</td></tr>
-              <tr><td>Pop up</td><td><kbd>Space</kbd> as the wave picks you up</td><td>Stand up for real</td></tr>
-              <tr><td>Surf</td><td><kbd>A</kbd> / <kbd>D</kbd> carve · <kbd>W</kbd> / <kbd>S</kbd> trim</td><td>Lean your head and body</td></tr>
-              <tr><td>Crouch</td><td>Hold <kbd>Ctrl</kbd> or <kbd>C</kbd>. Let go at the lip to hop</td><td>Crouch for real; spring up at the lip</td></tr>
-              <tr><td>Snap · cutback · tailslide</td><td>Hold <kbd>Shift</kbd> and flick the mouse sideways</td><td>Hold either grip and whip your head round</td></tr>
-              <tr><td>Longboard</td><td><kbd>W</kbd> / <kbd>S</kbd> walk to the nose or tail</td><td>Walk forward or back</td></tr>
-              <tr><td>Other</td><td><kbd>R</kbd> lineup · <kbd>Esc</kbd> pause</td><td>Trigger: calibrate · <kbd>B</kbd>/<kbd>Y</kbd>: lineup</td></tr>
-            </tbody>
-          </table>
-        </details>
-        <p class="fine">The game goes fullscreen so <kbd>Ctrl</kbd> combinations can't close the tab. Quest without room to lie down? Kneel, press the trigger to calibrate, or use the thumbstick and <kbd>A</kbd>. <a href="?q=low">Low quality</a> · <a href="?q=high">High quality</a></p>
+    <div id="menu" class="menu">
+      <div class="menu-bg" aria-hidden="true"></div>
+      <div class="menu-inner">
+        <header class="brand">
+          <h1 class="logo" aria-label="LINEUP"><span class="logo-text">LINEUP</span><span class="logo-reflect" aria-hidden="true">LINEUP</span></h1>
+          <p class="crumb" id="crumb"></p>
+        </header>
+
+        <!-- main -->
+        <section class="screen" data-screen="main">
+          <nav class="mode-cards" aria-label="Game modes">
+            <button type="button" class="mode-card active" data-go="single">
+              <span class="mode-head">Singleplayer</span>
+              <span class="mode-shot"><img src="assets/menu/singleplayer.jpg" alt="Riding through a barrel" /></span>
+            </button>
+            <button type="button" class="mode-card" data-go="multi">
+              <span class="mode-head">Multiplayer</span>
+              <span class="mode-shot"><img src="assets/menu/multiplayer.jpg" alt="Other surfers in the lineup" /></span>
+            </button>
+            <button type="button" class="mode-card" data-go="settings">
+              <span class="mode-head">Controls and settings</span>
+              <span class="mode-shot"><img src="assets/menu/settings.jpg" alt="A shortboard and a longboard" /></span>
+            </button>
+          </nav>
+        </section>
+
+        <!-- singleplayer -->
+        <section class="screen" data-screen="single">
+          <div class="panel">
+            <div class="panel-head"><button type="button" class="back" data-back>Back</button><h2>Singleplayer</h2></div>
+            <div class="panel-body">
+              <h3>Choose your board</h3>
+              <div class="board-pick" role="radiogroup" aria-label="Board"></div>
+              <div class="play-row">
+                <button type="button" class="btn primary" data-play="pc">Play on PC</button>
+                <button type="button" class="btn vr-launch" data-play="vr">Play in VR</button>
+              </div>
+              <p class="note vr-note"></p>
+            </div>
+          </div>
+        </section>
+
+        <!-- multiplayer: find / create -->
+        <section class="screen" data-screen="multi">
+          <div class="panel wide">
+            <div class="panel-head"><button type="button" class="back" data-back>Back</button><h2>Multiplayer</h2></div>
+            <div class="panel-body mp-grid">
+              <div class="mp-side">
+                <label class="field">
+                  <span>Your name</span>
+                  <input type="text" class="name-input" maxlength="24" autocomplete="nickname" spellcheck="false" />
+                </label>
+                <h3>Board</h3>
+                <div class="board-pick compact" role="radiogroup" aria-label="Board"></div>
+                <p class="note mp-net"></p>
+              </div>
+              <div class="mp-main">
+                <div class="tabs" role="tablist">
+                  <button type="button" role="tab" class="tab on" data-tab="find" aria-selected="true">Find a room</button>
+                  <button type="button" role="tab" class="tab" data-tab="create" aria-selected="false">Create a room</button>
+                </div>
+                <div class="tab-body" data-tab-body="find">
+                  <input type="search" id="room-search" class="search" placeholder="Search rooms by name" spellcheck="false" />
+                  <ul id="room-list" class="room-list" aria-live="polite"></ul>
+                  <p id="room-status" class="note"></p>
+                </div>
+                <form class="tab-body" data-tab-body="create" hidden onsubmit="return false">
+                  <input type="text" class="visually-hidden" autocomplete="username" tabindex="-1" aria-hidden="true" />
+                  <label class="field">
+                    <span>Room name</span>
+                    <input type="text" id="room-name" maxlength="40" spellcheck="false" autocomplete="off" />
+                  </label>
+                  <div class="privacy" role="radiogroup" aria-label="Privacy">
+                    <button type="button" class="opt on" data-privacy="public" role="radio" aria-checked="true"><b>Public</b><small>Anyone can join</small></button>
+                    <button type="button" class="opt" data-privacy="private" role="radio" aria-checked="false"><b>Private</b><small>Needs a passcode</small></button>
+                  </div>
+                  <label class="field pass-field" hidden>
+                    <span>Passcode</span>
+                    <input type="password" id="room-pass" maxlength="24" autocomplete="new-password" />
+                  </label>
+                  <button type="button" class="btn primary" id="create-room">Create room</button>
+                  <p id="create-status" class="note"></p>
+                </form>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- multiplayer: in a room -->
+        <section class="screen" data-screen="lobby">
+          <div class="panel">
+            <div class="panel-head"><button type="button" class="back" data-leave>Leave room</button><h2 id="lobby-title">Room</h2></div>
+            <div class="panel-body">
+              <p class="room-meta" id="lobby-meta"></p>
+              <h3>Surfers in this room</h3>
+              <ul class="player-list" id="lobby-players"></ul>
+              <label class="field">
+                <span>Your name</span>
+                <input type="text" class="name-input" maxlength="24" autocomplete="nickname" spellcheck="false" />
+              </label>
+              <div class="board-pick compact" role="radiogroup" aria-label="Board"></div>
+              <div class="play-row">
+                <button type="button" class="btn primary" data-play="pc">Play on PC</button>
+                <button type="button" class="btn vr-launch" data-play="vr">Play in VR</button>
+              </div>
+              <p class="note vr-note"></p>
+            </div>
+          </div>
+        </section>
+
+        <!-- controls & settings -->
+        <section class="screen" data-screen="settings">
+          <div class="panel wide">
+            <div class="panel-head"><button type="button" class="back" data-back>Back</button><h2>Controls and settings</h2></div>
+            <div class="panel-body settings-grid">
+              <div class="controls">
+                <table>
+                  <thead>
+                    <tr><th></th><th>PC</th><th>Meta Quest</th></tr>
+                  </thead>
+                  <tbody>
+                    <tr><td>Paddle</td><td><kbd>Scroll</kbd> faster to paddle faster</td><td>Sweep your hands back, low at your sides</td></tr>
+                    <tr><td>Steer prone</td><td><kbd>A</kbd> / <kbd>D</kbd></td><td>Paddle harder on one side</td></tr>
+                    <tr><td>Duck dive</td><td>Hold <kbd>Ctrl</kbd> or <kbd>C</kbd> while paddling</td><td>Hold grip on the front of the board</td></tr>
+                    <tr><td>Pop up</td><td><kbd>Space</kbd> as the wave picks you up</td><td>Stand up for real</td></tr>
+                    <tr><td>Surf</td><td><kbd>A</kbd> / <kbd>D</kbd> carve · <kbd>W</kbd> / <kbd>S</kbd> trim</td><td>Lean your head and body</td></tr>
+                    <tr><td>Crouch</td><td>Hold <kbd>Ctrl</kbd> or <kbd>C</kbd>; let go at the lip to hop</td><td>Crouch for real</td></tr>
+                    <tr><td>Tricks</td><td>Hold <kbd>Shift</kbd> and flick the mouse</td><td>Hold a grip and whip your head round</td></tr>
+                    <tr><td>Longboard</td><td><kbd>W</kbd> / <kbd>S</kbd> walk to the nose or tail</td><td>Walk forward or back</td></tr>
+                    <tr><td>Other</td><td><kbd>R</kbd> lineup · <kbd>Esc</kbd> menu</td><td>Trigger: calibrate · <kbd>B</kbd>/<kbd>Y</kbd>: lineup</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="settings">
+                <label class="field">
+                  <span>Graphics quality</span>
+                  <select id="set-quality">
+                    <option value="auto">Auto</option>
+                    <option value="high">High</option>
+                    <option value="low">Low (Quest, laptops)</option>
+                  </select>
+                </label>
+                <p class="note" id="quality-note" hidden>Takes effect after a reload. <button type="button" class="link" id="reload">Reload now</button></p>
+                <label class="field">
+                  <span>Volume <output id="out-volume"></output></span>
+                  <input type="range" id="set-volume" min="0" max="100" step="1" />
+                </label>
+                <label class="field">
+                  <span>Mouse sensitivity <output id="out-sens"></output></span>
+                  <input type="range" id="set-sens" min="30" max="250" step="5" />
+                </label>
+                <label class="check"><input type="checkbox" id="set-invert" /> <span>Invert mouse Y</span></label>
+                <label class="check"><input type="checkbox" id="set-fullscreen" /> <span>Go fullscreen when playing (stops <kbd>Ctrl</kbd> shortcuts closing the tab)</span></label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- pause (over the live game) -->
+        <section class="screen" data-screen="pause">
+          <div class="panel narrow">
+            <div class="panel-head"><h2 id="pause-title">Paused</h2></div>
+            <div class="panel-body stack">
+              <p class="room-meta" id="pause-room" hidden></p>
+              <button type="button" class="btn primary" data-resume>Resume</button>
+              <button type="button" class="btn" data-go="settings">Controls and settings</button>
+              <label class="field pause-name" hidden>
+                <span>Your name</span>
+                <input type="text" class="name-input" maxlength="24" spellcheck="false" />
+              </label>
+              <button type="button" class="btn" data-quit>Main menu</button>
+            </div>
+          </div>
+        </section>
+
+        <div class="dialog" id="pass-dialog" role="dialog" aria-modal="true" aria-labelledby="pass-title" hidden>
+          <form class="panel narrow" id="pass-form">
+            <div class="panel-head"><h2 id="pass-title">Private room</h2></div>
+            <div class="panel-body stack">
+              <p class="note" id="pass-room"></p>
+              <label class="field">
+                <span>Passcode</span>
+                <input type="password" id="pass-input" maxlength="24" autocomplete="off" />
+              </label>
+              <p class="note error" id="pass-error"></p>
+              <div class="play-row">
+                <button type="submit" class="btn primary">Join</button>
+                <button type="button" class="btn" id="pass-cancel">Cancel</button>
+              </div>
+            </div>
+          </form>
         </div>
       </div>
     </div>

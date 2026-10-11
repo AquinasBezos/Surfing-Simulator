@@ -1,0 +1,27 @@
+{
+  "rules": {
+    "lineup": {
+      "rooms": {
+        ".read": true,
+        "$room": {
+          "$peer": {
+            ".write": "$room.matches(/^[a-z0-9]+$/) && $room.length == 8 && $peer.matches(/^[0-9A-Za-z]+$/) && $peer.length == 20",
+            ".validate": "newData.hasChildren(['n', 'r', 'p', 't'])",
+            "n": { ".validate": "newData.isString() && newData.val().length <= 24" },
+            "r": { ".validate": "newData.isString() && newData.val().length <= 40" },
+            "p": { ".validate": "newData.isBoolean()" },
+            "h": { ".validate": "newData.isString() && newData.val().length <= 16" },
+            "t": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        }
+      }
+    },
+    "__trystero__": {
+      "$topic": {
+        ".read": true,
+        ".write": true
+      }
+    }
+  }
+}

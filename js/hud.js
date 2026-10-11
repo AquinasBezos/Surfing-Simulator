@@ -16,12 +16,16 @@ export class Hud {
       paddleFill: document.querySelector('#hud-paddle i'),
       foot: document.getElementById('hud-foot'),
       footMark: document.querySelector('#hud-foot i'),
+      feed: document.getElementById('hud-feed'),
+      players: document.getElementById('hud-players'),
       debug: document.getElementById('debug'),
     };
     this.toastTimer = 0;
     this.toastText = '';
     this.calloutTimer = 0;
     this.calloutText = '';
+    this.feedTimer = 0;
+    this.feedText = '';
 
     // VR panel
     this.canvas = document.createElement('canvas');
@@ -45,6 +49,21 @@ export class Hud {
     this.toastTimer = seconds;
     this.el.toast.innerHTML = text;
     this.el.toast.classList.add('show');
+  }
+
+  // Multiplayer event feed ("Kai paddled out", "Mia: Snap!")
+  feed(text) {
+    const li = document.createElement('li');
+    li.textContent = text;
+    this.el.feed.appendChild(li);
+    while (this.el.feed.children.length > 5) this.el.feed.firstChild.remove();
+    setTimeout(() => li.remove(), 5600);
+    this.feedText = text;
+    this.feedTimer = 3;
+  }
+
+  setPlayers(text) {
+    if (this.el.players.textContent !== text) this.el.players.textContent = text;
   }
 
   // Big transient trick call-out ("SNAP", "AIR 0.6 s" ...)
@@ -88,6 +107,7 @@ export class Hud {
       this.calloutTimer -= dt;
       if (this.calloutTimer <= 0) el.callout.classList.remove('show');
     }
+    if (this.feedTimer > 0) this.feedTimer -= dt;
     el.state.textContent = info.stateLabel;
     el.speed.textContent = `${Math.round(info.speed * 3.6)} km/h`;
     el.wave.textContent = info.waveLabel;
@@ -106,6 +126,7 @@ export class Hud {
       if (info.warn) t = info.warn;
       else if (this.calloutTimer > 0) t = this.calloutText;
       else if (this.toastTimer > 0) t = this.toastText;
+      else if (this.feedTimer > 0) t = this.feedText;
       else if (info.inTube) t = 'IN THE BARREL';
       this.drawVR(t);
       this.panel.material.opacity = t ? 1 : 0;

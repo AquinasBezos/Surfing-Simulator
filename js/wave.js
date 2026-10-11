@@ -20,6 +20,18 @@ const sech2 = (x) => {
   return 1 / (c * c);
 };
 
+// Small deterministic PRNG (mulberry32) so every client derives identical waves.
+export function seededRandom(seed) {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0;
+    let t = s;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 // Curl (barrel) constants, normalised by the wave scale.
 export const CURL = {
   rin: 0.4, // tube radius
@@ -90,6 +102,7 @@ export class WaveModel {
   }
 
   reset(firstZ = WAVE.spawnZ) {
+    this.schedule = null;
     for (const w of this.waves) w.active = false;
     this.spawn(firstZ);
   }
@@ -128,7 +141,54 @@ export class WaveModel {
     w.collapseG = smoothstep(WAVE.dieStartZ - 25, WAVE.dieStartZ + 12, c);
   }
 
+  // Multiplayer: waves become a pure function of (seed, shared time) so every client
+  // sees the same set. `clock()` returns the room's shared time in seconds.
+  setSchedule(seed, clock) {
+    this.schedule = { seed: seed >>> 0, clock };
+    for (const w of this.waves) {
+      w.active = false;
+      w.id = null;
+    }
+    this._applySchedule();
+  }
+
+  clearSchedule() {
+    this.schedule = null;
+  }
+
+  _applySchedule() {
+    const { seed, clock } = this.schedule;
+    const t = clock();
+    this.time = t;
+    const P = WAVE.spacing / WAVE.speed; // a new wave every P seconds
+    const kNow = Math.floor(t / P);
+    for (const k of [kNow, kNow - 1]) {
+      const w = this.waves[((k % 2) + 2) % 2];
+      const crest = WAVE.spawnZ + WAVE.speed * (t - k * P);
+      if (crest > WAVE.dieEndZ) {
+        w.active = false;
+        continue;
+      }
+      if (w.id !== `s${k}`) {
+        const r = seededRandom(seed ^ Math.imul(k, 0x9e3779b1));
+        w.id = `s${k}`;
+        w.peakX = (r() * 2 - 1) * 5;
+        w.dir = r() < 0.5 ? 1 : -1;
+        w.height = mix(WAVE.minHeight, WAVE.maxHeight, r());
+        w.S = w.height;
+        w.active = true;
+        w.crestZ0 = crest;
+        this._derive(w);
+        if (this.onSpawn) this.onSpawn(w);
+      }
+      w.active = true;
+      w.crestZ0 = crest;
+      this._derive(w);
+    }
+  }
+
   update(dt) {
+    if (this.schedule) return this._applySchedule();
     this.time += dt;
     for (const w of this.waves) {
       if (!w.active) continue;

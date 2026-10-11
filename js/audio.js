@@ -3,6 +3,11 @@
 export class OceanAudio {
   constructor() {
     this.ctx = null;
+    this.volume = 0.8;
+  }
+
+  setVolume(v) {
+    this.volume = Math.max(0, Math.min(1, v));
   }
 
   start() {
@@ -161,7 +166,7 @@ export class OceanAudio {
     this.roarG.gain.setTargetAtTime(Math.min(1.2, roar) * 0.9, t, 0.15);
     this.windG.gain.setTargetAtTime(Math.min(0.5, speed * speed * 0.004), t, 0.2);
     this.windF.frequency.setTargetAtTime(700 + speed * 90, t, 0.2);
-    this.master.gain.setTargetAtTime(underwater ? 0.55 : 0.8, t, 0.1);
+    this.master.gain.setTargetAtTime((underwater ? 0.7 : 1) * this.volume, t, 0.1);
     this.lp.frequency.setTargetAtTime(underwater ? 420 : 20000, t, 0.05);
   }
 }

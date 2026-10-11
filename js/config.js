@@ -88,3 +88,16 @@ export const EYE = {
 export const CROUCH_DROP = 0.55; // how far the eye drops when fully crouched (m)
 
 export const WORLD_RADIUS = 5000;
+
+// Multiplayer: Firebase Realtime Database used only for room matchmaking; gameplay data
+// goes peer-to-peer over WebRTC (Trystero).
+export const MULTIPLAYER = {
+  databaseURL: 'https://lineup-dbc58-default-rtdb.europe-west1.firebasedatabase.app',
+  roomsPath: 'lineup/rooms',
+  maxPlayers: 8,
+  poseHz: 15,
+  protocol: 1,
+  // Add a TURN server here if some players can't connect (strict NATs), e.g.
+  // { urls: 'turn:turn.example.com:3478', username: 'user', credential: 'pass' }
+  turnServers: [],
+};

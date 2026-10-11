@@ -344,6 +344,12 @@ export class UnderwaterEnv {
     this.bubbleMat.uniforms.uScale.value = h * 0.5;
   }
 
+  clearBubbles() {
+    this.life.fill(2);
+    this.bp.fill(-1000);
+    this.bubbles.visible = false;
+  }
+
   bubble(x, y, z, vx, vy, vz, size, dur) {
     const i = this.cursor;
     this.cursor = (this.cursor + 1) % this.max;
