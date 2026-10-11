@@ -229,11 +229,45 @@ export function createNoiseTexture(size = 512) {
 }
 
 // Deck graphics for the board: u along the length (tail -> nose), v across.
-export function createBoardTexture() {
+export function createBoardTexture(type = 'shortboard') {
   const c = document.createElement('canvas');
   c.width = 1024;
   c.height = 256;
   const g = c.getContext('2d');
+  if (type === 'longboard') {
+    // cream deck, twin pinlines, logo near the nose, big wax patch in the middle
+    g.fillStyle = '#f4efe2';
+    g.fillRect(0, 0, c.width, c.height);
+    const rand = rng(17);
+    for (let i = 0; i < 1600; i++) {
+      const x = 180 + rand() * 660,
+        y = 30 + rand() * (c.height - 60);
+      g.fillStyle = `rgba(205,198,180,${0.05 + rand() * 0.07})`;
+      g.beginPath();
+      g.ellipse(x, y, 3 + rand() * 12, 2 + rand() * 4, rand() * Math.PI, 0, Math.PI * 2);
+      g.fill();
+    }
+    g.fillStyle = '#c0492b';
+    g.fillRect(0, 22, c.width, 5);
+    g.fillRect(0, c.height - 27, c.width, 5);
+    g.fillStyle = '#2b2b2b';
+    g.fillRect(0, c.height / 2 - 2.2, c.width, 4.4);
+    g.save();
+    g.translate(c.width * 0.86, c.height / 2);
+    g.fillStyle = '#c0492b';
+    g.beginPath();
+    g.arc(0, 0, 30, 0, Math.PI * 2);
+    g.fill();
+    g.fillStyle = '#f4efe2';
+    g.beginPath();
+    g.arc(0, 0, 18, 0, Math.PI * 2);
+    g.fill();
+    g.restore();
+    const tex = new THREE.CanvasTexture(c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.anisotropy = 8;
+    return tex;
+  }
   g.fillStyle = '#f7f6f1';
   g.fillRect(0, 0, c.width, c.height);
   // faint wax smudges

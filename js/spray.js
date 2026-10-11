@@ -9,20 +9,24 @@ attribute float aLife;
 attribute float aSize;
 uniform float uScale;
 varying float vLife;
+varying float vDist;
 void main() {
   vLife = aLife;
   vec4 mv = modelViewMatrix * vec4(position, 1.0);
+  vDist = -mv.z;
   gl_Position = projectionMatrix * mv;
-  gl_PointSize = min(aSize * uScale * projectionMatrix[1][1] / max(-mv.z, 0.1), 96.0);
+  gl_PointSize = min(aSize * uScale * projectionMatrix[1][1] / max(-mv.z, 0.1), 40.0);
 }`;
 
 const FRAG = /* glsl */ `
 uniform sampler2D uTex;
 uniform vec3 uColor;
 varying float vLife;
+varying float vDist;
 void main() {
   float a = texture2D(uTex, gl_PointCoord).r;
-  float fade = smoothstep(0.0, 0.15, vLife) * smoothstep(1.0, 0.55, vLife);
+  // fade out right in front of the lens so nearby droplets don't turn into big discs
+  float fade = smoothstep(0.0, 0.15, vLife) * smoothstep(1.0, 0.55, vLife) * smoothstep(0.6, 2.6, vDist);
   gl_FragColor = vec4(uColor, a * fade * 0.38);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
@@ -81,6 +85,17 @@ export class Spray {
     this.dur[i] = dur;
     this.size[i] = size;
     this.drag[i] = drag;
+  }
+
+  // Fan of spray thrown off the rail: (ox, oz) is the outward direction, `power` 0..1.
+  fan(x, y, z, ox, oz, power, dt) {
+    const R = Math.random;
+    let n = this.max * 1.6 * power * dt + R();
+    while (n-- >= 1) {
+      const s = 3 + R() * 5 * power;
+      const j = (R() - 0.5) * 0.7;
+      this.emit(x + (R() - 0.5) * 0.3, y + 0.05, z + (R() - 0.5) * 0.3, (ox + j * oz) * s, 1.8 + R() * 3.8 * power, (oz - j * ox) * s, 0.5 + R() * 0.6, 0.018 + R() * R() * 0.05, 1.2);
+    }
   }
 
   update(dt, camPos) {

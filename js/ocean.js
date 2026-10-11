@@ -6,6 +6,7 @@ import { OceanGrid } from './oceanGrid.js';
 import { WAVE_GLSL, createWaveUniforms } from './shaders/waveChunk.js';
 import { SEABED_GLSL } from './terrain.js';
 import { SUN_DIR, SUN_COLOR } from './config.js';
+import { markOceanStencil } from './underwater.js';
 
 const VERT = /* glsl */ `
 ${WAVE_GLSL}
@@ -51,6 +52,7 @@ uniform vec3 uSunDir;
 uniform vec3 uSunColor;
 uniform float uRipple;
 uniform float uHQ;
+uniform float uCamUnder;
 varying vec3 vWorld;
 varying vec3 vNormal;
 varying vec4 vInfo;
@@ -112,6 +114,34 @@ void main() {
   vec3 pert = vec3(slope.x, 0.0, slope.y);
   pert -= N * dot(N, pert);
   N = normalize(N + pert);
+
+  if (under && uCamUnder > 0.5) {
+    // Looking up at the surface from below: Snell's window onto the sky, total internal
+    // reflection of the dark water outside it, foam glowing white, limited visibility.
+    vec3 Tu = refract(-V, N, 1.333);
+    // outside the window the surface mirrors the water below; ripples make it shimmer
+    vec3 Rd = reflect(-V, N);
+    vec3 below = mix(vec3(0.014, 0.14, 0.14), vec3(0.003, 0.035, 0.045), pow(clamp(-Rd.y, 0.0, 1.0), 0.6));
+    vec3 ucol;
+    if (dot(Tu, Tu) < 1e-4) {
+      ucol = below;
+    } else {
+      float Fu = 0.02 + 0.98 * pow(1.0 - max(dot(V, N), 0.0), 5.0);
+      vec3 skyC = textureLod(uEnv, Tu, 0.5).rgb;
+      skyC += uSunColor * pow(max(dot(Tu, uSunDir), 0.0), 400.0) * 25.0;
+      ucol = mix(skyC, below, Fu);
+    }
+    float fa = clamp(vInfo.y, 0.0, 1.6);
+    vec2 fuvU = vec2(vWorld.x, vWorld.z + vWorld.y * 0.9);
+    float fp = texture(uNoise, fuvU * 0.16 + vec2(0.0, -uTime * 0.03)).r * 0.6 + texture(uNoise, fuvU * 0.047 + 0.3).r * 0.4;
+    float fm = smoothstep(1.0 - fa * 0.7, 1.15 - fa * 0.55, fp + 0.15) * min(fa * 1.4, 1.0);
+    ucol = mix(ucol, vec3(0.75, 0.95, 0.95) * 1.4, clamp(fm + smoothstep(1.0, 1.7, fa) * 0.7, 0.0, 1.0));
+    ucol = mix(ucol, vec3(0.01, 0.12, 0.12), 1.0 - exp(-dist * 0.085));
+    gl_FragColor = vec4(ucol, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    return;
+  }
 
   float NdV = max(dot(N, V), 0.0);
   float F = 0.02 + 0.98 * pow(1.0 - NdV, 5.0);
@@ -200,6 +230,7 @@ export class Ocean {
       uSunColor: { value: new THREE.Vector3(...SUN_COLOR).multiplyScalar(3.2) },
       uRipple: { value: 0.14 },
       uHQ: { value: 1 },
+      uCamUnder: { value: 0 },
     };
     this.material = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
@@ -207,6 +238,7 @@ export class Ocean {
       fragmentShader: FRAG,
       side: THREE.DoubleSide,
     });
+    markOceanStencil(this.material);
     this.mesh = new THREE.Mesh(this.grid.geometry, this.material);
     this.mesh.frustumCulled = false;
     this.mesh.renderOrder = 1;

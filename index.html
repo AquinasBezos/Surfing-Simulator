@@ -23,9 +23,13 @@
       <div class="hud-tl">
         <div id="hud-state">Paddling</div>
         <div id="hud-speed">0 km/h</div>
+        <div id="hud-paddle" title="Paddling effort"><i></i></div>
+        <div id="hud-foot" title="Where you're standing on the longboard"><span>tail</span><b><i></i></b><span>nose</span></div>
       </div>
       <div class="hud-tr" id="hud-wave"></div>
       <div id="hud-tube">In the barrel</div>
+      <div id="hud-warn"></div>
+      <div id="hud-callout"></div>
       <div id="toast"></div>
       <div class="hud-bl">R lineup · Esc pause</div>
       <div id="debug"></div>
@@ -33,30 +37,45 @@
 
     <div id="overlay">
       <div class="card">
+        <div class="intro">
         <p class="eyebrow">WebXR · Three.js</p>
         <h1 id="overlay-title">Surfing Simulator</h1>
         <p class="lede">Paddle into glassy turquoise waves, pop up, and race the peeling lip through the barrel. Play in your browser, or on Meta Quest.</p>
+        <div class="pick" role="radiogroup" aria-label="Board">
+          <button type="button" class="seg" role="radio" data-board="shortboard" aria-checked="true">
+            <b>Shortboard</b><small>6'1" · snaps, tailslides, barrels</small>
+          </button>
+          <button type="button" class="seg" role="radio" data-board="longboard" aria-checked="false">
+            <b>Longboard</b><small>9'2" · glides, walk to the nose</small>
+          </button>
+        </div>
         <div class="actions">
           <button id="start" class="primary">Surf on PC</button>
           <div id="vr-slot"></div>
         </div>
-        <div class="controls">
+        </div>
+        <div class="side">
+        <details class="controls" open>
+          <summary>Controls</summary>
           <table>
             <thead>
               <tr><th></th><th>PC</th><th>Meta Quest</th></tr>
             </thead>
             <tbody>
-              <tr><td>Paddle</td><td><kbd>Scroll</kbd> continuously</td><td>Sweep your hands front-to-back, low by your sides</td></tr>
+              <tr><td>Paddle</td><td><kbd>Scroll</kbd>: scroll faster to paddle faster</td><td>Sweep your hands back, low at your sides. Faster strokes, more speed</td></tr>
               <tr><td>Steer prone</td><td><kbd>A</kbd> / <kbd>D</kbd></td><td>Paddle harder on one side (right turns you left)</td></tr>
-              <tr><td>Pop up</td><td><kbd>Space</kbd></td><td>Stand up for real</td></tr>
-              <tr><td>Surf</td><td><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd> shift weight</td><td>Lean your head and body</td></tr>
-              <tr><td>Look</td><td>Mouse</td><td>Your head</td></tr>
-              <tr><td>Other</td><td><kbd>R</kbd> lineup · <kbd>Esc</kbd> pause</td><td>Trigger: calibrate · Grip: lineup</td></tr>
+              <tr><td>Duck dive</td><td>Hold <kbd>Ctrl</kbd> or <kbd>C</kbd> while paddling</td><td>Hold grip on the front of the board</td></tr>
+              <tr><td>Pop up</td><td><kbd>Space</kbd> as the wave picks you up</td><td>Stand up for real</td></tr>
+              <tr><td>Surf</td><td><kbd>A</kbd> / <kbd>D</kbd> carve · <kbd>W</kbd> / <kbd>S</kbd> trim</td><td>Lean your head and body</td></tr>
+              <tr><td>Crouch</td><td>Hold <kbd>Ctrl</kbd> or <kbd>C</kbd>. Let go at the lip to hop</td><td>Crouch for real; spring up at the lip</td></tr>
+              <tr><td>Snap · cutback · tailslide</td><td>Hold <kbd>Shift</kbd> and flick the mouse sideways</td><td>Hold either grip and whip your head round</td></tr>
+              <tr><td>Longboard</td><td><kbd>W</kbd> / <kbd>S</kbd> walk to the nose or tail</td><td>Walk forward or back</td></tr>
+              <tr><td>Other</td><td><kbd>R</kbd> lineup · <kbd>Esc</kbd> pause</td><td>Trigger: calibrate · <kbd>B</kbd>/<kbd>Y</kbd>: lineup</td></tr>
             </tbody>
           </table>
+        </details>
+        <p class="fine">The game goes fullscreen so <kbd>Ctrl</kbd> combinations can't close the tab. Quest without room to lie down? Kneel, press the trigger to calibrate, or use the thumbstick and <kbd>A</kbd>. <a href="?q=low">Low quality</a> · <a href="?q=high">High quality</a></p>
         </div>
-        <p class="tip">Catch a wave by paddling toward the beach as it lifts you, pop up once you start sliding, then carve along the face, ahead of the breaking lip. Slow down (<kbd>S</kbd>) to let the barrel cover you.</p>
-        <p class="fine">Quest without room to lie down? Kneel, press the trigger to calibrate, or use the thumbstick and <kbd>A</kbd>. <a href="?q=low">Low quality</a> · <a href="?q=high">High quality</a></p>
       </div>
     </div>
 

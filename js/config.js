@@ -45,14 +45,46 @@ const sl = Math.hypot(s[0], s[1], s[2]);
 export const SUN_DIR = [s[0] / sl, s[1] / sl, s[2] / sl];
 export const SUN_COLOR = [1.0, 0.95, 0.86];
 
-export const LINEUP_Z = -9;
+export const LINEUP_Z = -5;
 
 export const BOARD = { length: 1.86, width: 0.5 };
+
+// Board types. Distances along the board are measured from its centre, + toward the nose.
+export const BOARDS = {
+  shortboard: {
+    label: 'Shortboard',
+    length: 1.86,
+    paddleTop: 2.5, // m/s at full paddling effort
+    paddleTau: 2.6, // s: how quickly paddling reaches that speed
+    catchBoost: 1.0,
+    turn: 1.0,
+    planeLo: 1.8, // speeds (m/s) over which the board starts planing when standing
+    planeHi: 4.0,
+    proneEyeZ: 0.3,
+    walk: false,
+  },
+  longboard: {
+    label: 'Longboard',
+    length: 2.8,
+    paddleTop: 3.0,
+    paddleTau: 2.8,
+    catchBoost: 1.35,
+    turn: 0.6,
+    planeLo: 1.2,
+    planeHi: 3.2,
+    proneEyeZ: 0.55,
+    walk: true,
+    footMin: -1.0, // tail (tight turns)
+    footMax: 1.18, // nose (hang ten)
+  },
+};
 
 // First-person eye positions in the board frame (x right, y up, z toward the tail).
 export const EYE = {
   prone: [0, 0.34, 0.3],
   standing: [0, 1.32, 0.32],
 };
+
+export const CROUCH_DROP = 0.55; // how far the eye drops when fully crouched (m)
 
 export const WORLD_RADIUS = 5000;

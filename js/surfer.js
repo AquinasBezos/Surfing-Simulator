@@ -3,22 +3,28 @@
 // The board rides on the smooth (un-curled) wave surface. Gravity acts along the slope,
 // water drag acts relative to the moving water (orbital velocity on the wave face, the
 // push of whitewater), and the fins convert sideways slip into forward speed (carving).
+// On top of that: effort-based paddling, duck dives, crouching, leg-extension pops and
+// airs, walking on a longboard, and snap / cutback / tailslide manoeuvres.
 import * as THREE from 'three';
-import { GRAVITY, LINEUP_Z, WAVE } from './config.js';
+import { GRAVITY, LINEUP_Z, WAVE, BOARDS } from './config.js';
 import { clamp, smoothstep, mix } from './wave.js';
 
 export const STATE = { PRONE: 'prone', POPUP: 'popup', STANDING: 'standing', WIPEOUT: 'wipeout' };
 
 const POPUP_TIME = 0.42;
-const WIPEOUT_TIME = 3.4;
+const DEG = Math.PI / 180;
+
+const moveToward = (v, t, d) => (v < t ? Math.min(t, v + d) : Math.max(t, v - d));
 
 export class Surfer {
   constructor(model) {
     this.model = model;
+    this.board = BOARDS.shortboard;
     this.x = 0;
     this.z = LINEUP_Z;
     this.y = 0;
     this.vx = 0;
+    this.vy = 0;
     this.vz = 0;
     this.yaw = 0; // three.js rotation.y; forward = (-sin yaw, -cos yaw)
     this.state = STATE.PRONE;
@@ -26,9 +32,25 @@ export class Surfer {
     this.leanX = 0;
     this.leanZ = 0;
     this.crouch = 0;
+    this.footPos = 0; // longboard: stance position along the board (m from centre, + = nose)
+    this.charge = 0; // snap/tailslide charge (Shift / grip)
+    this.move = null; // active manoeuvre
     this.roll = 0;
     this.pitch = 0;
     this.yawRate = 0;
+    this.paddleEffort = 0;
+    this.air = false;
+    this.airTime = 0;
+    this.popVel = 0;
+    this.diving = false;
+    this.diveDepth = 0;
+    this.diveRate = 0;
+    this.diveT = 0;
+    this.diveCool = 0;
+    this.effPitch = 0; // nose-down angle of the board including a pitching ledge (rad)
+    this.pearlT = 0;
+    this.ceiling = Infinity; // height of the lip above the board (m)
+    this.lipT = 0;
     this.normal = new THREE.Vector3(0, 1, 0);
     this.quat = new THREE.Quaternion();
     this.position = new THREE.Vector3();
@@ -36,11 +58,17 @@ export class Surfer {
     this.wipeReason = '';
     this.inTube = false;
     this.riding = false;
+    this.catching = false;
     this.onEvent = null; // (type, data)
     this._n = new THREE.Vector3();
     this._m = new THREE.Matrix4();
     this._q = new THREE.Quaternion();
     this.tumble = 0;
+  }
+
+  setBoard(type) {
+    this.board = BOARDS[type] || BOARDS.shortboard;
+    this.footPos = 0;
   }
 
   get speed() {
@@ -51,15 +79,28 @@ export class Surfer {
     return [-Math.sin(this.yaw), -Math.cos(this.yaw)];
   }
 
+  emit(type, data = {}) {
+    if (this.onEvent) this.onEvent(type, data);
+  }
+
   reset(x, z, yaw) {
     this.x = x;
     this.z = z;
-    this.vx = this.vz = 0;
+    this.vx = this.vy = this.vz = 0;
     this.yaw = yaw;
     this.yawRate = 0;
-    this.leanX = this.leanZ = this.crouch = 0;
+    this.leanX = this.leanZ = this.crouch = this.footPos = this.charge = 0;
+    this.legCrouch = this.stanceCrouch = 0;
     this.roll = this.pitch = 0;
     this.tumble = 0;
+    this.move = null;
+    this.air = false;
+    this.airTime = 0;
+    this.popVel = 0;
+    this.diving = false;
+    this.diveDepth = this.diveRate = 0;
+    this.pearlT = this.lipT = 0;
+    this.paddleEffort = 0;
     this.setState(STATE.PRONE);
     this.inTube = false;
     this.riding = false;
@@ -74,25 +115,59 @@ export class Surfer {
     const prev = this.state;
     this.state = st;
     this.stateTime = 0;
-    if (this.onEvent) this.onEvent('state', { from: prev, to: st });
+    this.pearlT = 0;
+    if (st !== STATE.STANDING) this.move = null;
+    this.emit('state', { from: prev, to: st });
   }
 
   popUp() {
-    if (this.state === STATE.PRONE) this.setState(STATE.POPUP);
+    if (this.state === STATE.PRONE && !this.diving) this.setState(STATE.POPUP);
   }
 
   layDown() {
-    if (this.state === STATE.STANDING || this.state === STATE.POPUP) this.setState(STATE.PRONE);
+    if ((this.state === STATE.STANDING || this.state === STATE.POPUP) && !this.air) this.setState(STATE.PRONE);
   }
 
   wipeout(reason) {
     if (this.state === STATE.WIPEOUT) return;
     this.wipeReason = reason;
+    this.air = false;
+    this.diving = false;
     this.setState(STATE.WIPEOUT);
-    if (this.onEvent) this.onEvent('wipeout', { reason });
+    this.emit('wipeout', { reason });
   }
 
-  // input: { thrust, turn, steer, leanX, leanZ, crouch }
+  // A quick look/head turn while charged: snap, cutback or tailslide toward `dir`
+  // (+1 = left, -1 = right). omega: peak turn speed (rad/s), sweep: how far the look turned.
+  flick(dir, omega, sweep) {
+    if (this.state !== STATE.STANDING || this.air || this.move || this.charge < 0.15 || this.speed < 3) return null;
+    const same = this.yawRate * dir; // > 0 when already turning that way
+    let kind, theta, dur, slide = 0, loss;
+    if (omega > 10 || (omega > 6.5 && same > 1.0)) {
+      kind = 'tailslide';
+      theta = clamp(1.25 + 0.07 * omega, 1.4, 2.3);
+      dur = 0.28;
+      slide = 0.5;
+      loss = 0.1;
+    } else if (sweep > 1.3) {
+      kind = 'cutback';
+      theta = clamp(2.3 + 0.35 * (sweep - 1.3), 2.3, 3.0);
+      dur = 0.9;
+      loss = 0.16;
+    } else {
+      kind = 'snap';
+      theta = clamp(0.6 + 0.09 * omega + 0.35 * sweep, 0.75, 1.7);
+      dur = 0.3;
+      loss = 0.08;
+    }
+    theta *= mix(0.6, 1, this.charge) * (this.board.walk ? 0.85 : 1);
+    this.move = { kind, dir, theta, dur, slide, loss, t: 0, yaw0: this.yaw };
+    this.charge = 0;
+    this.emit('maneuver', { kind, dir });
+    return kind;
+  }
+
+  // input: { paddle, pulse, turn, steer, leanX, leanZ, walk, walkTo, crouch, duck, charge }
   update(dt, input) {
     const steps = Math.max(1, Math.ceil(dt / (1 / 120)));
     const h = dt / steps;
@@ -102,9 +177,9 @@ export class Surfer {
 
   step(h, inp) {
     const s = this.model.sample(this.x, this.z, this.s);
+    const B = this.board;
     this.stateTime += h;
-    const st = this.state;
-    if (st === STATE.POPUP && this.stateTime > POPUP_TIME) this.setState(STATE.STANDING);
+    if (this.state === STATE.POPUP && this.stateTime > POPUP_TIME) this.setState(STATE.STANDING);
 
     // surface gradient (finite differences on the smooth surface)
     const e = 0.06;
@@ -116,11 +191,23 @@ export class Surfer {
     const standing = this.state === STATE.STANDING;
     const prone = this.state === STATE.PRONE || this.state === STATE.POPUP;
 
-    // smoothed weight shift
+    // --- stance ---
     const k = 1 - Math.exp(-h * (standing ? 7 : 4));
-    this.leanX += ((standing ? inp.leanX : 0) - this.leanX) * k;
-    this.leanZ += ((standing ? inp.leanZ : 0) - this.leanZ) * k;
-    this.crouch += ((standing ? Math.max(inp.crouch || 0, -Math.min(this.leanZ, 0) * 0.8, this.inTube ? 0.6 : 0) : 0) - this.crouch) * k;
+    this.leanX += ((standing && !this.move ? inp.leanX : 0) - this.leanX) * k;
+    this.leanZ += ((standing && !B.walk ? inp.leanZ : 0) - this.leanZ) * k;
+    if (standing && B.walk) {
+      if (inp.walkTo != null) this.footPos += (clamp(inp.walkTo, B.footMin, B.footMax) - this.footPos) * (1 - Math.exp(-h * 8));
+      else this.footPos = clamp(this.footPos + (inp.walk || 0) * 0.8 * h, B.footMin, B.footMax);
+    } else if (!standing) this.footPos = moveToward(this.footPos, 0, h * 2);
+    this.charge = standing && inp.charge ? Math.min(1, this.charge + h / 0.45) : Math.max(0, this.charge - h * 4);
+    // deliberate crouching (Ctrl / your real knees) drives the leg-extension pop; charging a
+    // manoeuvre or stalling just compresses the stance
+    const prevLeg = this.legCrouch || 0;
+    this.legCrouch = prevLeg + ((standing ? inp.crouch || 0 : 0) - prevLeg) * (1 - Math.exp(-h * 11));
+    const ext = Math.max(0, (prevLeg - this.legCrouch) / h); // leg extension rate
+    const stance = standing ? Math.max(0.45 * this.charge, this.move ? 0.45 : 0, Math.max(-this.leanZ, 0) * 0.5) : 0;
+    this.stanceCrouch = (this.stanceCrouch || 0) + (stance - (this.stanceCrouch || 0)) * (1 - Math.exp(-h * 6));
+    this.crouch = Math.max(this.legCrouch, this.stanceCrouch);
 
     if (this.state === STATE.WIPEOUT) {
       // tumbling in the whitewater: carried by the water, no control
@@ -130,16 +217,25 @@ export class Surfer {
       this.x += this.vx * h;
       this.z += this.vz * h;
       this.tumble += h;
+      this.diveDepth = moveToward(this.diveDepth, 0, h);
+      this.y = s.height - Math.min(1.4, this.tumble * 1.5);
       return;
     }
+
+    this.updateDive(h, inp);
+    const deep = this.diveDepth > 0.35;
+    const wvz = s.waterVz * Math.exp(-this.diveDepth * 1.4);
 
     // --- forces ---
     // A board drifting with the water just rides the orbital motion (the slope is what
     // drives the water itself); only once it moves through the water (paddling, planing)
     // does it slide down the face. So scale slope gravity by the speed relative to the water.
     const g2 = hx * hx + hz * hz;
-    const relSp = Math.hypot(this.vx, this.vz - s.waterVz);
-    const plane = standing ? mix(0.45, 1, smoothstep(1.5, 4, relSp)) : mix(0.2, 1, smoothstep(1.1, 3.0, relSp));
+    const relSp = Math.hypot(this.vx, this.vz - wvz);
+    let plane = standing ? mix(0.45, 1, smoothstep(B.planeLo - 0.3, B.planeHi, relSp)) : mix(0.2, 1, smoothstep(1.1, 3.0, relSp));
+    // extending out of a crouch presses the board into the face (pumping)
+    if (standing && ext > 0.5) plane *= 1 + Math.min(0.7, ext * 0.12);
+    if (this.diving) plane *= 1 - smoothstep(0.1, 0.6, this.diveDepth);
     let ax = (-GRAVITY * hx * plane) / (1 + g2);
     let az = (-GRAVITY * hz * plane) / (1 + g2);
     const [fx, fz] = this.forward;
@@ -147,9 +243,19 @@ export class Surfer {
       rz = fx; // right vector (x, z) = (cos yaw, -sin yaw)
     const slope = Math.sqrt(g2);
 
-    // paddling / pumping
-    let thrust = prone ? inp.thrust : 0;
-    if (thrust > 0.3) this.lastStroke = 0;
+    // paddling: effort sets the speed you can paddle at, each stroke pushes toward it
+    let thrust = 0;
+    const vfw = this.vx * fx + (this.vz - wvz) * fz;
+    const effort = this.state === STATE.PRONE && !this.diving ? clamp(inp.paddle || 0, 0, 1) : 0;
+    this.paddleEffort += (effort - this.paddleEffort) * (1 - Math.exp(-h * 3));
+    if (effort > 0.02) {
+      const vTop = B.paddleTop * mix(0.35, 1, effort);
+      const v = Math.max(vfw, 0);
+      const lin = mix(0.38, 0.2, smoothstep(2.2, 4.5, v));
+      const drag = lin * v + 0.11 * v * v;
+      thrust = (inp.pulse || 0) * Math.max(0, drag + (vTop - v) / B.paddleTau) * smoothstep(vTop + 0.5, vTop - 0.05, v);
+    }
+    if (thrust > 0.25) this.lastStroke = 0;
     else this.lastStroke = (this.lastStroke ?? 9) + h;
     if (standing && this.leanZ > 0.1 && slope > 0.1 && this.speed > 2) thrust += 1.1 * this.leanZ * Math.min(1, slope * 3);
     ax += fx * thrust;
@@ -158,112 +264,276 @@ export class Surfer {
     // Catching: a paddler stroking on the steep part of the face, pointed at the beach,
     // gets picked up by the wave and accelerated toward its speed.
     this.catching = false;
-    if (prone && this.lastStroke < 0.7 && s.wave && s.H > 0.6 && s.un > 0.05 && s.un < 1.5 && slope > 0.16 && fz > 0.35) {
-      const c = WAVE.speed;
-      const pull = 2.4 * smoothstep(0.16, 0.45, slope) * smoothstep(0.35, 0.8, fz);
-      az += Math.max(0, c * 0.95 - this.vz) * pull;
+    if (prone && !this.diving && this.lastStroke < 0.7 && s.wave && s.H > 0.6 && s.un > 0.05 && s.un < 1.5 && slope > 0.16 && fz > 0.35) {
+      const pull = 2.4 * B.catchBoost * mix(0.45, 1, this.paddleEffort) * smoothstep(0.16, 0.45, slope) * smoothstep(0.35, 0.8, fz);
+      az += Math.max(0, WAVE.speed * 0.95 - this.vz) * pull;
       this.catching = true;
     }
 
-    this.vx += ax * h;
-    this.vz += az * h;
+    if (!this.air) {
+      this.vx += ax * h;
+      this.vz += az * h;
 
-    // --- drag relative to the water ---
-    const wvz = s.waterVz;
-    let rvx = this.vx,
-      rvz = this.vz - wvz;
-    let vf = rvx * fx + rvz * fz;
-    let vl = rvx * rx + rvz * rz;
-    const sp = Math.hypot(vf, vl);
-    if (standing) {
-      const planing = smoothstep(1.8, 4.0, sp);
-      let lin = mix(0.65, 0.07, planing);
-      let quad = 0.042;
-      lin *= 1 - 0.3 * Math.max(this.leanZ, 0);
-      lin += 1.6 * Math.max(-this.leanZ, 0) * planing; // stall
-      lin += 0.07 * Math.abs(this.yawRate) * planing; // carving costs a little speed
-      quad += 0.05 * smoothstep(8.5, 12, sp); // hull speed: hard to go much faster
-      vf -= (lin * vf + quad * vf * Math.abs(vf)) * h;
-      // fins: sideways slip is converted to forward speed
-      const vl2 = vl * Math.exp(-h * 7.5);
-      vf += Math.sign(vf || 1) * (Math.abs(vl) - Math.abs(vl2)) * 0.82;
-      vl = vl2;
-    } else {
-      const lin = mix(0.38, 0.2, smoothstep(2.2, 4.5, sp)),
-        quad = 0.11;
-      vf -= (lin * vf + quad * vf * Math.abs(vf)) * h;
-      const vl2 = vl * Math.exp(-h * 2.6);
-      vf += Math.sign(vf || 1) * (Math.abs(vl) - Math.abs(vl2)) * 0.3;
-      vl = vl2;
+      // --- drag relative to the water ---
+      let rvx = this.vx,
+        rvz = this.vz - wvz;
+      let vf = rvx * fx + rvz * fz;
+      let vl = rvx * rx + rvz * rz;
+      const sp = Math.hypot(vf, vl);
+      const m = this.move;
+      const sliding = m && m.kind === 'tailslide' && m.t < m.dur + m.slide;
+      if (standing) {
+        const planing = smoothstep(B.planeLo, B.planeHi, sp);
+        let lin = mix(0.65, 0.07, planing);
+        let quad = 0.042;
+        lin *= 1 - 0.3 * Math.max(this.leanZ, 0);
+        lin += 1.6 * Math.max(-this.leanZ, 0) * planing; // stall
+        lin += 0.07 * Math.abs(this.yawRate) * planing; // carving costs a little speed
+        if (B.walk) {
+          // longboard: trim forward glides, stepping back stalls
+          lin *= 1 - 0.3 * smoothstep(0.2, 1.0, this.footPos);
+          lin += 0.9 * smoothstep(0.3, 1.0, -this.footPos) * planing;
+        }
+        quad += 0.05 * smoothstep(8.5, 12, sp); // hull speed: hard to go much faster
+        vf -= (lin * vf + quad * vf * Math.abs(vf)) * h;
+        if (sliding) {
+          // fins released: the board skids sideways and scrubs speed
+          vl *= Math.exp(-h * 1.25);
+        } else {
+          // fins: sideways slip is converted to forward speed
+          const vl2 = vl * Math.exp(-h * 7.5);
+          vf += Math.sign(vf || 1) * (Math.abs(vl) - Math.abs(vl2)) * (m ? 0.7 : 0.82);
+          vl = vl2;
+        }
+      } else {
+        const lin = mix(0.38, 0.2, smoothstep(2.2, 4.5, sp)) + (this.diving ? 0.8 : 0),
+          quad = 0.11;
+        vf -= (lin * vf + quad * vf * Math.abs(vf)) * h;
+        const vl2 = vl * Math.exp(-h * 2.6);
+        vf += Math.sign(vf || 1) * (Math.abs(vl) - Math.abs(vl2)) * 0.3;
+        vl = vl2;
+      }
+      this.vx = vf * fx + vl * rx;
+      this.vz = vf * fz + vl * rz + wvz;
     }
-    this.vx = vf * fx + vl * rx;
-    this.vz = vf * fz + vl * rz + wvz;
 
     // --- steering ---
     const speed = this.speed;
-    if (standing) {
-      const target = -this.leanX * Math.min(2.8, 0.55 + 0.3 * speed);
+    if (this.move) {
+      const m = this.move;
+      m.t += h;
+      const p = Math.min(1, m.t / m.dur);
+      const ease = 1 - Math.pow(1 - p, 3);
+      const yaw = m.yaw0 + m.dir * m.theta * ease;
+      this.yawRate = (yaw - this.yaw) / h;
+      this.yaw = yaw;
+      if (m.t >= m.dur + m.slide) {
+        const f = 1 - m.loss;
+        this.vx *= f;
+        this.vz = wvz + (this.vz - wvz) * f;
+        this.move = null;
+        this.yawRate *= 0.2;
+      }
+    } else if (standing) {
+      let turn = B.turn;
+      if (B.walk) turn *= mix(1, 0.35, smoothstep(0.2, 1.0, this.footPos)) * mix(1, 2.1, smoothstep(0.2, 0.9, -this.footPos));
+      const target = this.air ? 0 : -this.leanX * Math.min(2.8, 0.55 + 0.3 * speed) * turn;
       this.yawRate += (target - this.yawRate) * (1 - Math.exp(-h * 6));
     } else if (prone) {
       // steer: +1 = right (D). turn: VR paddling differential in rad/s, + = left.
       const target = (-inp.steer * 1.25) / (1 + 0.18 * speed) + (inp.turn || 0);
       this.yawRate += (target - this.yawRate) * (1 - Math.exp(-h * 5));
     }
-    this.yaw += this.yawRate * h;
+    if (!this.move) this.yaw += this.yawRate * h;
 
     this.x += this.vx * h;
     this.z += this.vz * h;
 
-    this.checkRules(s, h);
+    this.updateVertical(h, s, ext);
+    if (this.state === STATE.WIPEOUT) return;
+    this.updatePitch(h, hx, hz, slope, fx, fz, s);
+    if (!this.air) this.checkRules(s, h, deep);
   }
 
-  checkRules(s, h) {
+  // Duck dive: hold to push the board under, release to float back up.
+  updateDive(h, inp) {
+    const can = this.state === STATE.PRONE && !this.air;
+    const want = can && !!inp.duck;
+    const prev = this.diveDepth;
+    this.diveCool = Math.max(0, this.diveCool - h);
+    if (want && !this.diving && this.diveCool <= 0) {
+      this.diving = true;
+      this.diveT = 0;
+      this.emit('duckdive', {});
+    }
+    if (this.diving) {
+      this.diveT += h;
+      const hold = want && this.diveT < 3.2;
+      const target = hold ? 0.95 + 0.25 * Math.min(this.speed, 2.4) : 0;
+      this.diveDepth = moveToward(this.diveDepth, target, (target > this.diveDepth ? 2.4 : 1.5) * h);
+      if (!can || (!hold && this.diveDepth <= 0.001)) {
+        this.diving = false;
+        this.diveCool = 0.5;
+        this.emit('surface', {});
+      }
+    } else this.diveDepth = moveToward(this.diveDepth, 0, 1.5 * h);
+    this.diveRate = (this.diveDepth - prev) / h;
+  }
+
+  // Vertical motion: glued to the surface until the surface drops away faster than gravity
+  // (cresting the lip at speed) or a leg extension pops the board up, then ballistic.
+  updateVertical(h, s, ext) {
+    const target = this.model.heightAt(this.x, this.z) - this.diveDepth;
+    const standing = this.state === STATE.STANDING;
+    if (!this.air) {
+      const vySurf = (target - this.y) / h;
+      let launch = null;
+      if (standing) {
+        // extending the legs pushes down on the board; the rebound pops it up
+        if (ext > 1.2) this.popVel = Math.max(this.popVel, Math.min(2.4, ext * 0.42) * mix(0.35, 1, smoothstep(2, 7, this.speed)));
+        else {
+          if (this.popVel > 0.6) launch = vySurf + this.popVel;
+          this.popVel = 0;
+        }
+        // going up and over the top of the wave fast enough leaves the water (suction keeps
+        // most of the upward speed from carrying over)
+        const aReq = (vySurf - this.vy) / h;
+        // (not while turning off the top: the fins hold the board in for snaps)
+        const nearTop = s.wave && (s.yb > 0.82 || s.un < -0.1);
+        const turning = this.move || this.charge > 0.1;
+        if (launch === null && !turning && nearTop && this.vy > 3.5 && aReq < -GRAVITY * 2.6) launch = Math.min(this.vy, 4.5) * 0.55;
+      } else this.popVel = 0;
+      if (launch !== null && launch > vySurf + 0.3) {
+        this.air = true;
+        this.airTime = 0;
+        this.vy = launch;
+        this.y += this.vy * h;
+        // a turn can't continue without water under the fins
+        if (this.move) {
+          this.move = null;
+          this.yawRate = 0;
+        }
+        this.emit('takeoff', {});
+      } else {
+        this.y = target;
+        this.vy = vySurf;
+      }
+    } else {
+      this.vy -= GRAVITY * h;
+      this.y += this.vy * h;
+      this.airTime += h;
+      if (this.y <= target) this.land(target);
+    }
+  }
+
+  land(target) {
+    this.air = false;
+    this.y = target;
+    const [fx, fz] = this.forward;
+    const sp = this.speed;
+    const align = sp > 0.5 ? (this.vx * fx + this.vz * fz) / sp : 1;
+    const n = this._n.set(-(this._gx || 0), 1, -(this._gz || 0)).normalize();
+    const impact = -(this.vx * n.x + this.vy * n.y + this.vz * n.z);
+    const t = this.airTime;
+    this.airTime = 0;
+    // legs absorb a lot; landing sideways or from a huge drop doesn't work
+    if (t > 0.35 && (align < 0.3 || impact > 10)) return this.wipeout(align < 0.3 ? 'Landed sideways' : 'Too big a drop: botched the landing');
+    const f = 1 - Math.min(0.35, Math.max(0, impact) * 0.03);
+    this.vx *= f;
+    this.vz *= f;
+    if (t > 0.35) this.emit('air', { time: t });
+  }
+
+  // How steeply the nose points down. A pitching lip turns the face toward vertical.
+  updatePitch(h, hx, hz, slope, fx, fz, s) {
+    const fall = -(hx * fx + hz * fz); // slope along the heading (> 0 = nose down)
+    let ang = Math.atan(Math.max(0, fall));
+    if (s.wave && slope > 0.05) {
+      // when a section pitches the whole upper face goes near-vertical (the ledge)
+      const ledge = s.b * (1 - s.kappa) * smoothstep(-0.3, 0.1, s.un) * smoothstep(1.25, 0.75, s.un);
+      const align = Math.max(0, fall / slope);
+      ang += (Math.PI / 2 - ang) * ledge * align;
+    }
+    this.effPitch += (ang - this.effPitch) * (1 - Math.exp(-h * 12));
+  }
+
+  checkRules(s, h, deep) {
     const st = this.state;
     const big = s.wave && s.H > 0.7;
     this.inTube = false;
+    this.ceiling = Infinity;
     // standing without enough speed to plane: sink back to prone
     if (st === STATE.STANDING && this.speed < 1.2 && this.stateTime > 1.0) {
       this._slow = (this._slow || 0) + h;
       if (this._slow > 1.2) {
         this._slow = 0;
         this.setState(STATE.PRONE);
-        if (this.onEvent) this.onEvent('sink', {});
+        this.emit('sink', { waveNear: !!big && Math.abs(s.un) < 4 });
         return;
       }
     } else this._slow = 0;
+
+    // nose-dive: lying down as the board goes vertical, or popping up too late
+    const ang = this.effPitch;
+    let limit = Infinity,
+      why = '';
+    if (st === STATE.PRONE && !this.diving) {
+      limit = 52 * DEG;
+      why = 'Pearled! Pop up before the board goes vertical';
+    } else if (st === STATE.POPUP) {
+      limit = 41 * DEG;
+      why = 'Too late! Pearled on the take-off';
+    } else if (st === STATE.STANDING && this.board.walk && this.footPos > 0.85) {
+      limit = 42 * DEG;
+      why = 'Nose-dived off the nose';
+    }
+    if (ang > limit) {
+      this.pearlT += h;
+      if (this.pearlT > (st === STATE.POPUP ? 0.1 : 0.18)) return this.wipeout(why);
+    } else this.pearlT = 0;
+
     if (!big) {
       this.riding = false;
       return;
     }
     const un = s.un;
-    // over the falls: sucked up the face of a pitching section
-    if (s.yb > 0.8 && s.b > 0.3 && un > -0.3 && un < 0.65) return this.wipeout('Over the falls!');
-    // the lip lands on you
-    if (s.b > 0.55 && un > 1.2 && un < 1.75 && s.kappa < 0.95) return this.wipeout('Smashed by the lip!');
+    if (!deep) {
+      // over the falls: sucked up the face of a pitching section
+      if (s.yb > 0.8 && s.b > 0.3 && un > -0.3 && un < 0.65) return this.wipeout('Over the falls!');
+      // the lip lands on you
+      if (s.b > 0.55 && un > 1.2 && un < 1.75 && s.kappa < 0.95) return this.wipeout('Smashed by the lip!');
+    }
     if (st === STATE.STANDING) {
       // the whole wave closing out at the end of its life ends the ride gracefully
       if (s.wave.collapseG > 0.3) {
         this.riding = false;
         this.setState(STATE.PRONE);
-        if (this.onEvent) this.onEvent('closeout', {});
+        this.emit('closeout', {});
         return;
       }
       if (s.kappa > 0.5 && un > -0.3 && un < 2.4) return this.wipeout('Caught inside the whitewater');
+      // the lip overhead: crouch to fit under it
+      if (s.b > 0.25 && un > 0.2 && un < 1.7) {
+        const c = this.model.tubeCeiling(s.wave, this.x, this.z, this.y + 0.35);
+        this.ceiling = c - this.y;
+        const head = mix(1.8, 1.05, this.crouch);
+        if (this.ceiling < head) {
+          this.lipT += h;
+          if (this.lipT > 0.08) return this.wipeout('Clipped by the lip! Crouch under it');
+        } else this.lipT = 0;
+      } else this.lipT = 0;
       this.inTube = s.b > 0.6 && s.kappa < 0.35 && un > 0.38 && un < 1.25 && s.H > 1.2;
       this.riding = un > -0.7 && un < 3 && this.speed > 2.2;
     } else this.riding = false;
   }
 
   updatePose(dt) {
-    // surface normal (smoothed)
+    // surface normal (smoothed); level out in the air
     const gx = this._gx || 0,
       gz = this._gz || 0;
-    const n = this._n.set(-gx, 1, -gz).normalize();
-    this.normal.lerp(n, 1 - Math.exp(-dt * 10)).normalize();
-    const s = this.s;
-    let y = s.height;
-    if (this.state === STATE.WIPEOUT) y -= Math.min(1.4, this.tumble * 1.5);
-    this.y = y;
+    const n = this.air ? this._n.set(0, 1, 0) : this._n.set(-gx, 1, -gz).normalize();
+    this.normal.lerp(n, 1 - Math.exp(-dt * (this.air ? 3 : 10))).normalize();
+    this.position.set(this.x, this.y, this.z);
 
     const fwd = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
     const up = this.normal;
@@ -272,14 +542,21 @@ export class Surfer {
     this._m.makeBasis(right, up, fwd.clone().negate());
     this.quat.setFromRotationMatrix(this._m);
 
-    // rail lean & trim
-    const standing = this.state === STATE.STANDING;
-    const targetRoll = standing ? -this.leanX * 0.42 : this.state === STATE.WIPEOUT ? Math.sin(this.tumble * 5) * 1.2 : -this.yawRate * 0.05;
-    const targetPitch = standing ? -this.leanZ * 0.06 : this.state === STATE.PRONE ? 0.035 : 0;
+    // rail lean, trim, dives and ledges
+    const st = this.state;
+    const standing = st === STATE.STANDING;
+    let targetRoll = standing ? -this.leanX * 0.42 : st === STATE.WIPEOUT ? Math.sin(this.tumble * 5) * 1.2 : -this.yawRate * 0.05;
+    if (this.move) targetRoll = this.move.dir * (this.move.kind === 'tailslide' ? 0.2 : 0.6);
+    let targetPitch = standing ? -this.leanZ * 0.06 : st === STATE.PRONE ? 0.035 : 0;
+    if (standing && this.board.walk) targetPitch -= 0.06 * smoothstep(0.3, 1.1, this.footPos) - 0.07 * smoothstep(0.3, 1.0, -this.footPos);
+    // the extra steepness of a pitching ledge beyond the smooth surface
+    const surfAng = Math.atan(Math.max(0, -(gx * fwd.x + gz * fwd.z) / Math.max(1e-3, Math.hypot(fwd.x, fwd.z))));
+    targetPitch -= Math.max(0, this.effPitch - surfAng) * 0.8;
+    if (this.diving || this.diveDepth > 0) targetPitch -= clamp(this.diveRate * 0.22, -0.35, 0.45);
+    if (this.air) targetPitch += clamp(this.vy * 0.04, -0.25, 0.2);
     this.roll += (targetRoll - this.roll) * (1 - Math.exp(-dt * 8));
     this.pitch += (targetPitch - this.pitch) * (1 - Math.exp(-dt * 6));
     this._q.setFromEuler(new THREE.Euler(this.pitch, 0, this.roll, 'YXZ'));
     this.quat.multiply(this._q);
-    this.position.set(this.x, this.y, this.z);
   }
 }

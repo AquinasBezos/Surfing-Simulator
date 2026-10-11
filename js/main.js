@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { VRButton } from 'three/addons/webxr/VRButton.js';
-import { QUALITY, SUN_DIR, SUN_COLOR, EYE, LINEUP_Z, WAVE } from './config.js';
+import { QUALITY, SUN_DIR, SUN_COLOR, EYE, LINEUP_Z, WAVE, BOARDS, CROUCH_DROP } from './config.js';
 import { WaveModel, smoothstep, clamp, crestOffset } from './wave.js';
 import { Ocean } from './ocean.js';
 import { createSky } from './sky.js';
-import { createTerrain } from './terrain.js';
+import { createTerrain, seabedY } from './terrain.js';
 import { createWaterNormalTexture, createNoiseTexture } from './textures.js';
 import { createBoard } from './board.js';
 import { Arms } from './body.js';
@@ -14,6 +14,7 @@ import { PCInput } from './input.js';
 import { XRControls } from './xr.js';
 import { OceanAudio } from './audio.js';
 import { Hud } from './hud.js';
+import { waterUniforms, addUnderwaterPass, UnderwaterEnv } from './underwater.js';
 
 const params = new URLSearchParams(location.search);
 const isMobileXR = /OculusBrowser|Quest|Pico/i.test(navigator.userAgent);
@@ -22,7 +23,7 @@ const quality = QUALITY[qualityName] || QUALITY.high;
 const debug = params.has('debug');
 
 // ---------------------------------------------------------------- renderer & scene
-const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ antialias: true, stencil: true, powerPreference: 'high-performance' });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatio));
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -54,17 +55,23 @@ scene.fog = new THREE.Fog(0xb4cbe0, 600, 7000);
 const model = new WaveModel();
 const normalTex = createWaterNormalTexture(256);
 const noiseTex = createNoiseTexture(512);
+waterUniforms.uUWNoise.value = noiseTex;
 const ocean = new Ocean(model, sky.cube, normalTex, noiseTex, quality);
 scene.add(ocean.mesh);
-scene.add(createTerrain(qualityName));
+const terrain = createTerrain(qualityName);
+scene.add(terrain);
+const underwater = new UnderwaterEnv(noiseTex, SUN_DIR, qualityName);
+scene.add(underwater.group);
 
 // board + body share the board frame
 const bodyFrame = new THREE.Group();
-const board = createBoard();
-bodyFrame.add(board);
 const arms = new Arms();
 bodyFrame.add(arms.group);
 scene.add(bodyFrame);
+let board = null;
+let boardType = 'shortboard';
+const eyeProne = new THREE.Vector3(...EYE.prone);
+const eyeStand = new THREE.Vector3(...EYE.standing);
 
 const spray = new Spray(model, quality.particles);
 scene.add(spray.points);
@@ -80,6 +87,38 @@ const audio = new OceanAudio();
 const surfer = new Surfer(model);
 const pc = new PCInput(renderer.domElement);
 const xr = new XRControls(renderer, rig);
+xr.onHandModel = (m) => addUnderwaterPass(m);
+
+// ---------------------------------------------------------------- board choice
+const segs = [...document.querySelectorAll('.seg[data-board]')];
+function setBoardType(type) {
+  if (!BOARDS[type]) type = 'shortboard';
+  boardType = type;
+  if (board) {
+    bodyFrame.remove(board);
+    board.traverse((o) => o.geometry && o.geometry.dispose());
+  }
+  board = createBoard(type);
+  bodyFrame.add(board);
+  addUnderwaterPass(bodyFrame);
+  surfer.setBoard(type);
+  eyeProne.z = BOARDS[type].proneEyeZ;
+  arms.group.position.z = BOARDS[type].proneEyeZ - EYE.prone[2];
+  for (const s of segs) s.setAttribute('aria-checked', String(s.dataset.board === type));
+  try {
+    localStorage.setItem('surf.board', type);
+  } catch (e) {
+    /* storage unavailable */
+  }
+}
+for (const s of segs) s.addEventListener('click', () => setBoardType(s.dataset.board));
+let savedBoard = null;
+try {
+  savedBoard = localStorage.getItem('surf.board');
+} catch (e) {
+  /* storage unavailable */
+}
+setBoardType(params.get('board') || savedBoard || 'shortboard');
 
 // ---------------------------------------------------------------- game flow
 const game = {
@@ -90,11 +129,17 @@ const game = {
   best: null,
   waves: 0,
   teleport: 0, // fade timer
-  teleportTarget: null,
   look: { yaw: 0, pitch: 0 },
+  lookRate: 0,
+  flick: null,
+  moveFollow: 0,
   standBlend: 0,
   vrStandOffset: 0,
   missTimer: 0,
+  noseT: 0,
+  noseCalled: 0,
+  splash: 0,
+  wasUnder: false,
 };
 
 function lineupSpot() {
@@ -127,6 +172,8 @@ model.onSpawn = () => {
   game.waves++;
 };
 
+const TRICK_NAMES = { snap: 'Snap', cutback: 'Cutback', tailslide: 'Tailslide' };
+
 surfer.onEvent = (type, data) => {
   if (type === 'wipeout') {
     if (game.invulnerable) {
@@ -134,19 +181,35 @@ surfer.onEvent = (type, data) => {
       return;
     }
     endRide('wipeout');
-    hud.toast(`<b>Wipeout</b> · ${data.reason}`, 3);
+    hud.toast(`<b>Wipeout</b> · ${data.reason}`, 3.2);
     audio.thud();
+    underwater.burst(surfer.x, surfer.y - 0.6, surfer.z, 60, 1.6, 0.4);
   } else if (type === 'closeout') {
     endRide('closeout');
   } else if (type === 'sink') {
-    hud.toast('Too slow to stand. Paddle (scroll) to get moving again', 3);
+    hud.toast(data.waveNear ? 'Too early! Pop up once the wave is carrying you' : 'Too slow to stand. Paddle (scroll) to get moving again', 3);
   } else if (type === 'state' && data.to === STATE.STANDING) {
     xr.stateWas = null;
+  } else if (type === 'maneuver') {
+    hud.callout(TRICK_NAMES[data.kind]);
+    audio.whoosh(data.kind === 'cutback' ? 0.8 : 1);
+    if (game.ride) game.ride.tricks.push(data.kind);
+  } else if (type === 'air') {
+    hud.callout(`Air ${data.time.toFixed(1)} s`);
+    if (game.ride) game.ride.tricks.push('air');
+  } else if (type === 'takeoff') {
+    audio.splash(0.6);
+  } else if (type === 'duckdive') {
+    audio.plunge();
+    const [fx, fz] = surfer.forward;
+    underwater.burst(surfer.x + fx * 0.6, surfer.y, surfer.z + fz * 0.6, 26, 0.7, 0.3);
+  } else if (type === 'surface') {
+    audio.splash(0.7);
   }
 };
 
 function startRide() {
-  game.ride = { time: 0, top: 0, tube: 0, dist: 0 };
+  game.ride = { time: 0, top: 0, tube: 0, nose: 0, tricks: [] };
 }
 
 function endRide(reason) {
@@ -155,7 +218,11 @@ function endRide(reason) {
   if (!r || r.time < 2) return;
   const parts = [`Ride ${r.time.toFixed(1)} s`, `top ${Math.round(r.top * 3.6)} km/h`];
   if (r.tube > 0.3) parts.push(`barrel ${r.tube.toFixed(1)} s`);
-  const score = Math.round(r.time * 10 + r.top * 6 + r.tube * 60);
+  if (r.nose > 0.3) parts.push(`nose ${r.nose.toFixed(1)} s`);
+  const counts = {};
+  for (const t of r.tricks) counts[t] = (counts[t] || 0) + 1;
+  for (const [k, n] of Object.entries(counts)) parts.push(`${n} ${k === 'air' ? 'air' : k}${n > 1 ? 's' : ''}`);
+  const score = Math.round(r.time * 10 + r.top * 6 + r.tube * 60 + r.nose * 25 + r.tricks.length * 40);
   if (!game.best || score > game.best) game.best = score;
   const title = { wipeout: 'Ride ended', kickout: 'Nice kick-out!', closeout: 'The wave closed out' }[reason] || 'Ride over';
   setTimeout(() => hud.toast(`<b>${title}</b> · ${parts.join(' · ')} · score ${score}`, 5), reason === 'wipeout' ? 3000 : 0);
@@ -170,10 +237,28 @@ function updateGame(dt) {
     r.time += dt;
     r.top = Math.max(r.top, surfer.speed);
     if (surfer.inTube) r.tube += dt;
-  } else if (game.ride && surfer.state === STATE.STANDING) {
+  } else if (game.ride && surfer.state === STATE.STANDING && !surfer.air) {
     const behind = s.un < -0.7 || !s.wave || s.H < 0.6;
     if (behind) endRide(s.un < -0.7 ? 'kickout' : 'over');
   } else if (game.ride && surfer.state === STATE.PRONE) endRide('over');
+
+  // nose riding on the longboard
+  const onNose = surfer.board.walk && surfer.state === STATE.STANDING && surfer.footPos > 0.88 && surfer.speed > 3;
+  if (onNose) {
+    game.noseT += dt;
+    if (game.ride) game.ride.nose += dt;
+    if (game.noseT > 0.3 && game.noseCalled < 1) {
+      hud.callout('Hang five');
+      game.noseCalled = 1;
+    }
+    if (surfer.footPos > 1.06 && game.noseT > 0.6 && game.noseCalled < 2) {
+      hud.callout('Hang ten');
+      game.noseCalled = 2;
+    }
+  } else if (surfer.footPos < 0.6) {
+    game.noseT = 0;
+    game.noseCalled = 0;
+  }
 
   // wipeout -> back to the lineup
   if (surfer.state === STATE.WIPEOUT && surfer.stateTime > 2.4 && game.teleport <= 0) respawn(true);
@@ -193,12 +278,16 @@ function updateGame(dt) {
 // ---------------------------------------------------------------- camera
 const _q = new THREE.Quaternion();
 const _qYaw = new THREE.Quaternion();
+const _qPart = new THREE.Quaternion();
 const _v = new THREE.Vector3();
 const _e = new THREE.Euler();
-const eyeProne = new THREE.Vector3(...EYE.prone);
-const eyeStand = new THREE.Vector3(...EYE.standing);
 const Yaxis = new THREE.Vector3(0, 1, 0);
 const focus = new THREE.Vector3();
+const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+function mix(a, b, t) {
+  return a + (b - a) * t;
+}
 
 function updateBody(dt) {
   bodyFrame.position.copy(surfer.position);
@@ -207,6 +296,50 @@ function updateBody(dt) {
   const target = standingish ? 1 : 0;
   const rate = surfer.state === STATE.POPUP ? 1 / 0.42 : 1 / 0.35;
   game.standBlend += clamp(target - game.standBlend, -rate * dt, rate * dt);
+}
+
+// The view follows the board heading with a little lag so steering corrections don't jerk
+// it. During a manoeuvre the board swings round under a fixed view (you looked where you
+// wanted to go), then the view eases back to straight ahead.
+function updateCamYaw(dt, inXR) {
+  if (game.camYaw === undefined || game.snapCam) {
+    game.camYaw = surfer.yaw;
+    game.snapCam = false;
+  }
+  if (surfer.move) game.moveFollow = 0.6;
+  if (game.moveFollow > 0) {
+    const d = wrap(surfer.yaw - game.camYaw);
+    game.camYaw += d;
+    if (inXR) xr.rotateFrame(d);
+    else game.look.yaw = clamp(game.look.yaw - d, -2.9, 2.9);
+    if (!surfer.move) {
+      game.moveFollow -= dt;
+      if (!inXR) game.look.yaw *= Math.exp(-dt * 5);
+    }
+    return;
+  }
+  const d = wrap(surfer.yaw - game.camYaw);
+  game.camYaw += d * (1 - Math.exp(-dt * 7));
+}
+
+function detectFlickPC(dt, lx) {
+  // look turn speed (+ = left) while Shift is held
+  const rate = dt > 0 ? (-lx * 0.0024) / dt : 0;
+  game.lookRate += (rate - game.lookRate) * (1 - Math.exp(-dt / 0.03));
+  const f = game.flick;
+  if (f) {
+    // keep measuring while the look keeps turning: short fast flick = tailslide, medium = snap,
+    // long sweeping look = cutback
+    f.t += dt;
+    f.sweep += -lx * 0.0024 * f.dir;
+    f.peak = Math.max(f.peak, game.lookRate * f.dir);
+    if ((f.t > 0.1 && game.lookRate * f.dir < 1.5) || f.t > 0.45) {
+      surfer.flick(f.dir, f.peak, f.sweep);
+      game.flick = null;
+    }
+  } else if (pc.charge && surfer.state === STATE.STANDING && !surfer.move && Math.abs(game.lookRate) > 4) {
+    game.flick = { dir: Math.sign(game.lookRate), t: 0, sweep: 0, peak: 0 };
+  }
 }
 
 function updateCameraPC(dt) {
@@ -221,8 +354,9 @@ function updateCameraPC(dt) {
   const [lx, ly] = pc.consumeLook();
   game.look.yaw = clamp(game.look.yaw - lx * 0.0024, -2.9, 2.9);
   game.look.pitch = clamp(game.look.pitch - ly * 0.0024, -1.35, 1.35);
+  detectFlickPC(dt, lx);
 
-  updateCamYaw(dt);
+  updateCamYaw(dt, false);
   _qYaw.setFromAxisAngle(Yaxis, game.camYaw);
   rig.position.copy(surfer.position);
   rig.quaternion.copy(_qYaw);
@@ -233,14 +367,14 @@ function updateCameraPC(dt) {
   const b = smoothstep(0, 1, game.standBlend);
   const eye = _v.lerpVectors(eyeProne, eyeStand, b);
   eye.x += surfer.leanX * 0.14 * b;
-  eye.z -= surfer.leanZ * 0.12 * b;
-  eye.y -= surfer.crouch * 0.34 * b;
+  eye.z -= (surfer.leanZ * 0.12 + surfer.footPos) * b;
+  eye.y -= surfer.crouch * CROUCH_DROP * b;
   // the body stays roughly upright while the board tilts on the face
   _qPart.identity().slerp(_q, mix(0.85, 0.3, b));
   eye.applyQuaternion(_qPart);
   camera.position.copy(eye);
 
-  let pitch = game.look.pitch + _e.x * mix(0.5, 0.22, b) + mix(-0.05, -0.2, b);
+  let pitch = game.look.pitch + _e.x * mix(0.5, 0.22, b) + mix(-0.05, -0.2 - 0.12 * surfer.crouch, b);
   let roll = _e.z * mix(0.3, 0.2, b);
   let yaw = game.look.yaw;
   if (surfer.state === STATE.WIPEOUT) {
@@ -252,25 +386,9 @@ function updateCameraPC(dt) {
   camera.rotation.set(pitch, yaw, roll, 'YXZ');
 }
 
-function mix(a, b, t) {
-  return a + (b - a) * t;
-}
-
-const _qPart = new THREE.Quaternion();
-// The view follows the board heading with a little lag so steering corrections don't jerk it.
-function updateCamYaw(dt) {
-  if (game.camYaw === undefined || game.snapCam) {
-    game.camYaw = surfer.yaw;
-    game.snapCam = false;
-  }
-  let d = surfer.yaw - game.camYaw;
-  d = Math.atan2(Math.sin(d), Math.cos(d));
-  game.camYaw += d * (1 - Math.exp(-dt * 7));
-}
-
 function updateCameraXR(dt) {
   // rig yaw follows the board heading; the calibrated head maps onto the paddling eye point
-  updateCamYaw(dt);
+  updateCamYaw(dt, true);
   const rigYaw = game.camYaw - xr.yaw0;
   rig.rotation.set(0, rigYaw, 0);
   _qYaw.setFromAxisAngle(Yaxis, surfer.yaw);
@@ -289,30 +407,43 @@ const startBtn = document.getElementById('start');
 const resumeTitle = document.getElementById('overlay-title');
 const vrHolder = document.getElementById('vr-slot');
 
+function pause() {
+  if (!game.started || game.paused || renderer.xr.isPresenting) return;
+  game.paused = true;
+  pc.enabled = false;
+  resumeTitle.textContent = 'Paused';
+  startBtn.textContent = 'Resume';
+  overlay.classList.remove('hidden');
+}
+
 function begin() {
   audio.start();
   if (!game.started) {
     game.started = true;
     game.invulnerable = false;
     respawn(false);
-    hud.toast('Scroll to paddle · A / D to steer · Space to pop up', 5);
+    hud.toast('Scroll to paddle (faster = harder) · A / D steer · Space to pop up', 5);
   }
   game.paused = false;
   overlay.classList.add('hidden');
   pc.enabled = true;
-  pc.requestLock();
+  pc.capture();
 }
 
 startBtn.addEventListener('click', begin);
 pc.onLockChange = (locked) => {
-  if (!locked && game.started && !renderer.xr.isPresenting) {
-    game.paused = true;
-    pc.enabled = false;
-    resumeTitle.textContent = 'Paused';
-    startBtn.textContent = 'Resume';
-    overlay.classList.remove('hidden');
-  }
+  if (!locked) pause();
 };
+document.addEventListener('fullscreenchange', () => {
+  if (!document.fullscreenElement) pause();
+});
+// Ctrl+W can't always be intercepted (no fullscreen keyboard lock): ask before leaving
+window.addEventListener('beforeunload', (e) => {
+  if (game.started && !game.paused) {
+    e.preventDefault();
+    e.returnValue = '';
+  }
+});
 
 const vrButton = VRButton.createButton(renderer, { optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'] });
 vrButton.classList.add('vr-button');
@@ -343,6 +474,8 @@ renderer.xr.addEventListener('sessionstart', () => {
   ocean.setQuality(QUALITY.low, false);
   xr.calibrated = false;
   bodyFrame.remove(arms.group);
+  spray.setViewportHeight(1700);
+  underwater.setViewportHeight(1700);
   hud.toast('Lie or kneel down, then press the trigger to calibrate. Paddle with your arms, stand up to surf.', 7);
 });
 renderer.xr.addEventListener('sessionend', () => {
@@ -352,19 +485,21 @@ renderer.xr.addEventListener('sessionend', () => {
   rig.rotation.set(0, 0, 0);
   game.paused = true;
   overlay.classList.remove('hidden');
+  onResize();
 });
 
-window.addEventListener('resize', () => {
+function onResize() {
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
   renderer.setSize(window.innerWidth, window.innerHeight);
   spray.setViewportHeight(renderer.domElement.height);
-});
-spray.setViewportHeight(renderer.domElement.height);
-renderer.xr.addEventListener('sessionstart', () => spray.setViewportHeight(1700));
+  underwater.setViewportHeight(renderer.domElement.height);
+}
+window.addEventListener('resize', onResize);
+onResize();
 
-arms.onStroke = () => audio.splash(0.8);
-xr.onStroke = () => audio.splash(1);
+arms.onStroke = (side, effort) => audio.splash(0.5 + 0.5 * effort);
+xr.onStroke = (side, effort) => audio.splash(0.5 + 0.5 * effort);
 
 // ---------------------------------------------------------------- start state
 model.reset(-62);
@@ -397,7 +532,7 @@ function applyShot(name) {
     const x = WAVE.peelSpeed * 4.2 - 9;
     surfer.reset(x, zAt(x, 0.78), -Math.PI / 2 + 0.12);
     surfer.setState(STATE.STANDING);
-    surfer.crouch = 0.6;
+    surfer.crouch = surfer.legCrouch = 0.6;
     game.standBlend = 1;
     surfer.vx = 8;
   } else if (name === 'shoulder') {
@@ -411,6 +546,10 @@ function applyShot(name) {
   } else if (name === 'paddle') {
     setTau(-2.2);
     surfer.reset(4, LINEUP_Z + 2, Math.PI + 0.3);
+  } else if (name === 'duckdive') {
+    // facing an incoming broken wave
+    setTau(2.2);
+    surfer.reset(6, zAt(6, 2.2), 0.15);
   } else if (name === 'beach') {
     setTau(1);
     surfer.reset(0, 60, Math.PI);
@@ -424,6 +563,15 @@ function applyShot(name) {
     surfer.setState(STATE.STANDING);
     game.standBlend = 1;
   }
+  if (params.has('crouch')) surfer.crouch = surfer.legCrouch = parseFloat(params.get('crouch')) || 1;
+  if (params.has('foot')) surfer.footPos = parseFloat(params.get('foot'));
+  if (params.has('dive')) {
+    const d = parseFloat(params.get('dive')) || 1.1;
+    surfer.diving = true;
+    surfer.diveDepth = d;
+    surfer.y -= d;
+    surfer.updatePose(1);
+  }
   model.spawn = () => w; // keep the scene stable
 }
 
@@ -432,7 +580,7 @@ const clock = new THREE.Clock();
 let fpsAcc = 0,
   fpsFrames = 0,
   fps = 0;
-const NO_INPUT = { thrust: 0, turn: 0, steer: 0, leanX: 0, leanZ: 0, crouch: 0 };
+const NO_INPUT = { paddle: 0, pulse: 0, turn: 0, steer: 0, leanX: 0, leanZ: 0, walk: 0, walkTo: null, crouch: 0, duck: false, charge: false };
 
 function frame(time, xrFrame) {
   const dt = Math.min(clock.getDelta(), 0.05);
@@ -440,11 +588,13 @@ function frame(time, xrFrame) {
   if (game.onFrame) game.onFrame(dt);
   const running = !game.paused || inXR || !game.started;
   let inp = NO_INPUT;
+  pc.update(dt);
 
   if (inXR) {
-    inp = xr.update(dt, xrFrame, surfer.state);
+    inp = xr.update(dt, xrFrame, surfer.state, surfer.board);
     for (const e of xr.consumeEvents()) {
-      if (e === 'recalibrate') {
+      if (typeof e === 'object' && e.flick) surfer.flick(e.flick, e.omega, e.sweep);
+      else if (e === 'recalibrate') {
         xr.calibrate();
         hud.toast('Calibrated paddling position', 2);
       } else if (e === 'reset') respawn(true);
@@ -453,9 +603,21 @@ function frame(time, xrFrame) {
       else if (e === 'toggleStand') surfer.state === STATE.PRONE ? surfer.popUp() : surfer.layDown();
     }
   } else if (game.started && !game.paused) {
-    for (let n = pc.consumeStrokes(); n > 0; n--) arms.requestStroke();
-    const lean = pc.steer;
-    inp = { thrust: 0, turn: 0, steer: lean, leanX: lean, leanZ: pc.leanZ, crouch: 0 };
+    const steer = pc.steer;
+    const crouchKey = pc.crouch;
+    inp = {
+      paddle: pc.paddle,
+      pulse: 0,
+      turn: 0,
+      steer,
+      leanX: steer,
+      leanZ: pc.leanZ,
+      walk: pc.leanZ,
+      walkTo: null,
+      crouch: crouchKey ? 1 : 0,
+      duck: crouchKey && surfer.state === STATE.PRONE,
+      charge: pc.charge,
+    };
     for (const e of pc.consumeEvents()) {
       if (e === 'toggleStand') {
         if (surfer.state === STATE.PRONE) surfer.popUp();
@@ -466,28 +628,12 @@ function frame(time, xrFrame) {
 
   if (running) {
     model.update(dt);
-    const armThrust = arms.update(dt, !inXR && surfer.state === STATE.PRONE && game.started && !game.paused);
-    if (!inXR) inp = { ...inp, thrust: armThrust };
+    const paddling = !inXR && surfer.state === STATE.PRONE && game.started && !game.paused;
+    const pulse = arms.update(dt, paddling, inp.paddle, surfer.diving);
+    if (!inXR) inp = { ...inp, pulse };
     surfer.update(dt, inp);
     if (game.started) updateGame(dt);
   } else arms.update(0, false);
-
-  // teleport fade
-  let fadeAlpha = 0;
-  let fadeColor = 0x000000;
-  if (game.teleport > 0) {
-    const before = game.teleport;
-    game.teleport -= dt;
-    if (before > 0.7 && game.teleport <= 0.7) respawn(false);
-    fadeAlpha = Math.max(0, 1 - Math.abs(game.teleport - 0.7) / 0.7);
-  }
-  if (surfer.state === STATE.WIPEOUT) {
-    fadeColor = 0x2a8f88;
-    fadeAlpha = Math.max(fadeAlpha, Math.min(0.85, surfer.stateTime * 0.9));
-  }
-  fadeMat.color.setHex(fadeColor);
-  fadeMat.opacity = fadeAlpha;
-  fade.visible = fadeAlpha > 0.001;
 
   updateBody(dt);
   arms.group.visible = !inXR && surfer.state === STATE.PRONE && game.standBlend < 0.05;
@@ -496,15 +642,66 @@ function frame(time, xrFrame) {
 
   rig.updateMatrixWorld(true);
   camera.getWorldPosition(focus);
-  if (inXR) {
-    // centre detail on the head
-    const xc = renderer.xr.getCamera();
-    xc.getWorldPosition(focus);
-  }
+  if (inXR) renderer.xr.getCamera().getWorldPosition(focus); // centre detail on the head
   ocean.update(focus);
   spray.update(running ? dt : 0, focus);
 
-  // audio: roar from breaking sections near the listener
+  // ---- water around the body, and is the camera under it?
+  const hBoard = model.heightAt(surfer.x, surfer.z);
+  waterUniforms.uWaterY.value = hBoard;
+  waterUniforms.uWaterGrad.value.set(surfer._gx || 0, surfer._gz || 0);
+  waterUniforms.uWaterP.value.set(surfer.x, surfer.z);
+  waterUniforms.uUWTime.value = model.time;
+  const hCam = model.heightAt(focus.x, focus.z);
+  const camDepth = hCam - focus.y;
+  const camUnder = camDepth > 0.03;
+  waterUniforms.uCamUnder.value = camUnder ? 1 : 0;
+  ocean.uniforms.uCamUnder.value = camUnder ? 1 : 0;
+  terrain.visible = !camUnder; // land is only visible through the surface from below
+  const gx = surfer._gx || 0,
+    gz = surfer._gz || 0;
+  const waterY = (x, z) => hBoard + gx * (x - surfer.x) + gz * (z - surfer.z);
+  if (running) emitBubbles(dt, camUnder, camDepth);
+  underwater.update(running ? dt : 0, focus, camUnder, camDepth, focus.y - seabedY(focus.x, focus.z), waterY, model.time);
+  if (camUnder !== game.wasUnder) {
+    game.splash = 0.18; // crossing the surface
+    game.wasUnder = camUnder;
+  }
+
+  // ---- spray off the rail during manoeuvres
+  if (surfer.move && running) {
+    const m = surfer.move;
+    const [fx, fz] = surfer.forward;
+    const L = surfer.board.length;
+    const ox = -fz * m.dir - fx * 0.5,
+      oz = fx * m.dir - fz * 0.5;
+    const n = Math.hypot(ox, oz);
+    const power = m.kind === 'cutback' ? 0.6 : 1;
+    if (m.t < m.dur + m.slide) spray.fan(surfer.x - fx * L * 0.35, surfer.y, surfer.z - fz * L * 0.35, ox / n, oz / n, power, dt);
+  }
+
+  // ---- fades: teleports, whitewater flash on wipeouts, surface crossings
+  let fadeAlpha = 0;
+  let fadeColor = 0x000000;
+  if (game.teleport > 0) {
+    const before = game.teleport;
+    game.teleport -= dt;
+    if (before > 0.7 && game.teleport <= 0.7) respawn(false);
+    fadeAlpha = Math.max(0, 1 - Math.abs(game.teleport - 0.7) / 0.7);
+  }
+  if (surfer.state === STATE.WIPEOUT && fadeAlpha < 0.5) {
+    fadeColor = 0xcdeee9;
+    fadeAlpha = Math.max(fadeAlpha, 0.7 * Math.exp(-surfer.stateTime * 1.6));
+  } else if (game.splash > 0 && fadeAlpha < 0.2) {
+    fadeColor = 0xbfe9e2;
+    fadeAlpha = Math.max(fadeAlpha, game.splash * 2.2);
+  }
+  game.splash = Math.max(0, game.splash - dt);
+  fadeMat.color.setHex(fadeColor);
+  fadeMat.opacity = fadeAlpha;
+  fade.visible = fadeAlpha > 0.001;
+
+  // ---- audio: roar from breaking sections near the listener
   let roar = 0;
   for (const w of model.waves) {
     if (!w.active || w.tau < 0) continue;
@@ -513,11 +710,16 @@ function frame(time, xrFrame) {
     const dz = Math.abs(focus.z - w.crestZ0);
     roar += (w.H / 2.6) * 30 / (30 + dx + dz * 1.5);
   }
-  audio.update(roar, surfer.speed, surfer.state === STATE.WIPEOUT);
+  audio.update(roar, surfer.speed, camUnder);
 
-  // HUD
-  const labels = { prone: 'Paddling', popup: 'Popping up', standing: 'Surfing', wipeout: 'Wipeout!' };
-  const nw = nextWaveInfo();
+  // ---- HUD
+  let stateLabel = { prone: 'Paddling', popup: 'Popping up', standing: 'Surfing', wipeout: 'Wipeout!' }[surfer.state];
+  if (surfer.diving) stateLabel = 'Duck diving';
+  else if (surfer.air) stateLabel = 'Airborne';
+  else if (surfer.state === STATE.STANDING && surfer.crouch > 0.5) stateLabel = 'Surfing · crouched';
+  let warn = '';
+  if (surfer.state === STATE.STANDING && surfer.ceiling < 2.1 && surfer.crouch < 0.65) warn = inXR ? 'Crouch!' : 'Crouch! (Ctrl)';
+  const B = surfer.board;
   let dbg = '';
   if (debug) {
     fpsAcc += dt;
@@ -528,16 +730,19 @@ function frame(time, xrFrame) {
       fpsFrames = 0;
     }
     const s = surfer.s;
-    dbg = `${fps.toFixed(0)} fps | x ${surfer.x.toFixed(1)} z ${surfer.z.toFixed(1)} | un ${s.un?.toFixed(2)} yb ${s.yb?.toFixed(2)} b ${s.b?.toFixed(2)} k ${s.kappa?.toFixed(2)} H ${s.H?.toFixed(2)} | v ${surfer.speed.toFixed(2)}`;
+    dbg = `${fps.toFixed(0)} fps | x ${surfer.x.toFixed(1)} z ${surfer.z.toFixed(1)} | un ${s.un?.toFixed(2)} yb ${s.yb?.toFixed(2)} b ${s.b?.toFixed(2)} k ${s.kappa?.toFixed(2)} H ${s.H?.toFixed(2)} | v ${surfer.speed.toFixed(2)} pitch ${((surfer.effPitch * 180) / Math.PI).toFixed(0)}° ceil ${surfer.ceiling.toFixed(2)}`;
   }
   hud.update(
     dt,
     {
       visible: game.started && !game.paused,
-      stateLabel: labels[surfer.state],
+      stateLabel,
       speed: surfer.speed,
-      waveLabel: nw,
+      waveLabel: nextWaveInfo(),
       inTube: surfer.inTube,
+      warn,
+      paddle: surfer.state === STATE.PRONE && !surfer.diving ? surfer.paddleEffort : null,
+      foot: B.walk && surfer.state === STATE.STANDING ? (surfer.footPos - B.footMin) / (B.footMax - B.footMin) : null,
       debug: dbg,
     },
     inXR,
@@ -546,13 +751,36 @@ function frame(time, xrFrame) {
   renderer.render(scene, camera);
 }
 
+function emitBubbles(dt, camUnder, camDepth) {
+  const R = Math.random;
+  // pushing the board under: bubbles stream off the rails and hands
+  if (surfer.diving && surfer.diveRate > 0.2) {
+    const [fx, fz] = surfer.forward;
+    let n = 70 * dt * surfer.diveRate + R();
+    while (n-- >= 1) {
+      const a = (R() - 0.5) * surfer.board.length;
+      underwater.bubble(surfer.x + fx * a + (R() - 0.5) * 0.5, surfer.y - 0.05, surfer.z + fz * a + (R() - 0.5) * 0.5, (R() - 0.5) * 0.6, 0.2, (R() - 0.5) * 0.6, 0.006 + R() * 0.02, 1 + R());
+    }
+  }
+  // whitewater overhead churns clouds of bubbles down around you
+  if (camUnder) {
+    const s = surfer.s;
+    const churn = s.wave ? s.kappa * smoothstep(-1.5, 0.3, s.un) * smoothstep(3, 1.2, s.un) : 0;
+    let n = (8 + 160 * churn) * dt + R();
+    while (n-- >= 1) {
+      underwater.bubble(focus.x + (R() - 0.5) * 6, focus.y + R() * Math.max(0.2, camDepth) - 0.4 - churn * R() * 1.5, focus.z + (R() - 0.5) * 6, (R() - 0.5) * 0.6, -churn * R() * 1.2, (R() - 0.5) * 0.6, 0.005 + R() * R() * 0.03, 1 + R() * 1.5);
+    }
+  }
+}
+
 function nextWaveInfo() {
   if (surfer.state === STATE.WIPEOUT) return '';
   if (surfer.state !== STATE.PRONE) {
     const r = game.ride;
     return r ? `Ride ${r.time.toFixed(1)} s${r.tube > 0.1 ? ` · barrel ${r.tube.toFixed(1)} s` : ''}` : '';
   }
-  if (surfer.catching) return 'Caught it! Pop up (Space)';
+  if (surfer.diving) return 'Release to surface';
+  if (surfer.catching) return 'Caught it! Pop up (Space) before it goes vertical';
   let best = null;
   for (const w of model.waves) {
     if (!w.active) continue;
@@ -560,12 +788,12 @@ function nextWaveInfo() {
     if (t > 0 && (!best || t < best.t)) best = { t, w };
   }
   if (!best) return '';
-  if (best.t < 3) return 'Paddle! (scroll)';
+  if (best.t < 3) return 'Paddle hard! (scroll fast)';
   return `Next wave ${Math.ceil(best.t)} s · ${best.w.height.toFixed(1)} m ${waveLabelFor(best.w)}`;
 }
 
 renderer.setAnimationLoop(frame);
 
 // test / automation hook
-window.__surf = { THREE, renderer, scene, camera, model, surfer, game, ocean, pc, arms, STATE, respawn, begin };
+window.__surf = { THREE, renderer, scene, camera, model, surfer, game, ocean, pc, arms, xr, underwater, STATE, respawn, begin, setBoardType };
 document.body.classList.add('ready');

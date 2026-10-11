@@ -158,22 +158,17 @@ export class WaveModel {
     return out;
   }
 
-  // Full displaced surface point of wave w (including the curl) for rest coords (x, rowZ).
-  // Returns {dy, dz, lipTip:boolean info}. Used for spray emission.
-  curlPoint(w, x, rowZ, out) {
-    const sc = this.section(w, x);
-    const S = sc.S;
-    const u = rowZ - w.crestZ0;
-    const un = u / S;
-    const yb = baseProfile(un, sc.steep, this._prof);
-    let zn = un;
-    let yn = yb;
+  // Curl a normalised base point (un, yb) of a section with breaking amount b.
+  // Writes the curled normalised position into out.zn / out.yn.
+  curlNorm(un, yb, b, Lf, out) {
+    out.zn = un;
+    out.yn = yb;
     const { rin, yc, ex, sweep, yb0, acoshYc } = CURL;
-    const zc = this._prof.Lf * acoshYc + rin * ex;
+    const zc = Lf * acoshYc + rin * ex;
     const sF = un >= 0 ? clamp((yb - yc) / (1 - yc), 0, 1) : 0;
     const sB = un < 0 ? clamp((yb - yb0) / (1 - yb0), 0, 1) : 0;
     const s = Math.max(sF, sB);
-    if (s > 0 && sc.b > 0) {
+    if (s > 0 && b > 0) {
       const lipThick = 0.04 + 0.42 * Math.pow(1 - s, 1.5);
       const dz = (un - zc) / ex;
       const dy = yb - yc;
@@ -189,13 +184,58 @@ export class WaveModel {
       }
       phiT = mix(phiB, phiT, wgt);
       rT = mix(rB, rT, wgt);
-      const k = smoothstep(0, 1, sc.b * 1.5 - (1 - s) * 0.5);
-      const kr = smoothstep(0, 1, sc.b * 2.4 - (1 - s) * 0.9);
+      const k = smoothstep(0, 1, b * 1.5 - (1 - s) * 0.5);
+      const kr = smoothstep(0, 1, b * 2.4 - (1 - s) * 0.9);
       const phi = mix(phiB, phiT, k);
       const r = mix(rB, rT, kr);
-      zn = zc + ex * r * Math.cos(phi);
-      yn = yc + r * Math.sin(phi);
+      out.zn = zc + ex * r * Math.cos(phi);
+      out.yn = yc + r * Math.sin(phi);
     }
+    return out;
+  }
+
+  // Height (world y) of the underside of the curling lip directly above world point (x, z),
+  // ignoring anything below yMin. Infinity when no lip is overhead.
+  tubeCeiling(w, x, z, yMin) {
+    const sc = this.section(w, x);
+    if (sc.b < 0.25 || sc.H < 0.6) return Infinity;
+    const { S, H, b, steep } = sc;
+    const target = (z - crestOffset(x) - w.crestZ0) / S;
+    baseProfile(0, steep, this._prof);
+    const Lf = this._prof.Lf;
+    const ufc = Lf * CURL.acoshYc;
+    const c = this._cn || (this._cn = { zn: 0, yn: 0 });
+    let best = Infinity,
+      pz = 0,
+      py = 0;
+    const N = 40;
+    for (let i = 0; i <= N; i++) {
+      // walk the inside of the tube from the face (s = 0) to the lip tip (s = 1)
+      const un = ufc * (1 - i / N);
+      const yb = baseProfile(un, steep, this._prof);
+      this.curlNorm(un, yb, b, Lf, c);
+      if (i > 0 && (pz - target) * (c.zn - target) <= 0 && pz !== c.zn) {
+        const t = (target - pz) / (c.zn - pz);
+        const y = (py + (c.yn - py) * t) * H;
+        if (y > yMin && y < best) best = y;
+      }
+      pz = c.zn;
+      py = c.yn;
+    }
+    return best;
+  }
+
+  // Full displaced surface point of wave w (including the curl) for rest coords (x, rowZ).
+  // Used for spray emission.
+  curlPoint(w, x, rowZ, out) {
+    const sc = this.section(w, x);
+    const S = sc.S;
+    const u = rowZ - w.crestZ0;
+    const un = u / S;
+    const yb = baseProfile(un, sc.steep, this._prof);
+    const c = this.curlNorm(un, yb, sc.b, this._prof.Lf, this._cp || (this._cp = { zn: 0, yn: 0 }));
+    const zn = c.zn,
+      yn = c.yn;
     out.x = x;
     out.y = yn * sc.H;
     out.z = rowZ + crestOffset(x) + (zn * S - u);

@@ -33,7 +33,11 @@ export class OceanAudio {
     };
     this.master = ctx.createGain();
     this.master.gain.value = 0.8;
-    this.master.connect(ctx.destination);
+    // muffles everything when your head goes under
+    this.lp = ctx.createBiquadFilter();
+    this.lp.type = 'lowpass';
+    this.lp.frequency.value = 20000;
+    this.master.connect(this.lp).connect(ctx.destination);
 
     // ambient wash
     const amb = loop(brown);
@@ -95,6 +99,45 @@ export class OceanAudio {
     s.stop(t + 0.4);
   }
 
+  // spray sheet off the rail (snaps, cutbacks, tailslides)
+  whoosh(strength = 1) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const s = ctx.createBufferSource();
+    s.buffer = this.whiteBuf;
+    const f = ctx.createBiquadFilter();
+    f.type = 'bandpass';
+    f.Q.value = 0.8;
+    const g = ctx.createGain();
+    const t = ctx.currentTime;
+    f.frequency.setValueAtTime(700, t);
+    f.frequency.linearRampToValueAtTime(2200, t + 0.25);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.45 * strength, t + 0.06);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    s.connect(f).connect(g).connect(this.master);
+    s.start(t, Math.random() * 2);
+    s.stop(t + 0.75);
+  }
+
+  // pushing the board under
+  plunge() {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    const s = ctx.createBufferSource();
+    s.buffer = this.whiteBuf;
+    const f = ctx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = 900;
+    const g = ctx.createGain();
+    const t = ctx.currentTime;
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.6);
+    s.connect(f).connect(g).connect(this.master);
+    s.start(t, Math.random() * 2);
+    s.stop(t + 0.65);
+  }
+
   thud() {
     const ctx = this.ctx;
     if (!ctx) return;
@@ -118,6 +161,7 @@ export class OceanAudio {
     this.roarG.gain.setTargetAtTime(Math.min(1.2, roar) * 0.9, t, 0.15);
     this.windG.gain.setTargetAtTime(Math.min(0.5, speed * speed * 0.004), t, 0.2);
     this.windF.frequency.setTargetAtTime(700 + speed * 90, t, 0.2);
-    this.master.gain.setTargetAtTime(underwater ? 0.35 : 0.8, t, 0.1);
+    this.master.gain.setTargetAtTime(underwater ? 0.55 : 0.8, t, 0.1);
+    this.lp.frequency.setTargetAtTime(underwater ? 420 : 20000, t, 0.05);
   }
 }
