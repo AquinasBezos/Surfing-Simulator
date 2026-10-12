@@ -46,7 +46,11 @@ export const SPOTS = {
     },
     heights: { min: 0.6, max: 3.4, randomMin: 0.8, randomMax: 3.0, default: 2.5, small: 1.5, minScale: 2.2 },
     lineup: { z: -5, side: 4 }, // where you wait: in front of the peak, a little toward the shoulder
+    // the swell comes from the south-west (out to sea, -z), so the sun sets in the west:
+    // 45 degrees to the right of straight out to sea (+x is to the right looking out)
+    sunset: [0.71, -0.71],
     inside: { z: 45, x: 650 }, // drifted past here without a ride: paddle back out
+    fish: 'bait', // silvery baitfish (seen sometimes when you go under)
     // clear, slightly green coastal water. absorb / scatter per metre; sss: light through
     // thin water; deep: the colour of the water around you under the surface; vis: how
     // quickly things fade into it under water (per metre)
@@ -83,6 +87,8 @@ export const SPOTS = {
     },
     heights: { min: 1.0, max: 6.0, randomMin: 1.8, randomMax: 5.4, default: 3.5, small: 1.5, minScale: 2.2 },
     lineup: { z: -13, side: 9 },
+    sunset: [0.71, -0.71], // (south-west swell here too: the sun sets in the west)
+    fish: 'reef', // reef fish
     inside: { z: 95, x: 650 },
     // clear, deep-blue tropical ocean
     water: { absorb: [0.45, 0.07, 0.034], scatter: [0.003, 0.034, 0.088], sss: [0.06, 0.78, 0.95], uwScatter: [0.006, 0.09, 0.2], deep: [0.006, 0.06, 0.15], uwUp: [0.04, 0.3, 0.46], uwGlow: [0.1, 0.38, 0.52], shaft: [0.45, 0.85, 1.0], vis: 0.055 },
@@ -114,6 +120,7 @@ SPOTS.pool = {
     backFall: 6,
     dir: 0,
     mirror: 66, // peaks 66 m either side of the pier, near the outer walls
+    spill: [0.6, 1.1], // (a machine wave stays clean and hollow down to a metre)
     peakSpread: 1.5,
     // a smaller lagoon: waves come out of the machine at the back, break across the middle
     // and die on the beaches, one every 12 s

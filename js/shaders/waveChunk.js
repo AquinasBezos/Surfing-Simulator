@@ -17,6 +17,7 @@ export function createWaveUniforms(model) {
     uPoolA: { value: new THREE.Vector4() },
     uPoolB: { value: new THREE.Vector4() },
     uPoolC: { value: new THREE.Vector4() },
+    uWaveG: { value: new THREE.Vector4() },
     uSwellA: { value: model.swell.map((c) => new THREE.Vector4(c.dx, c.dz, c.amp, c.k)) },
     uSwellB: { value: model.swell.map((c) => new THREE.Vector4(c.horiz, c.omega, c.phase, c.lambda)) },
   };
@@ -32,6 +33,7 @@ export function writeSpotUniforms(u) {
   u.uWaveD.value.set(CURL.sweep, CURL.lfLo, CURL.lfHi, CURL.trough);
   u.uWaveE.value.set(WAVE.breakWidth, WAVE.backWidth, WAVE.peelFlat, WAVE.peelFall);
   u.uWaveF.value.set(WAVE.backFall, CURL.lbLo, CURL.lbHi, CURL.lip);
+  u.uWaveG.value.set(WAVE.spill[0], WAVE.spill[1], 0, 0);
   const P = WAVE.pool;
   if (P) {
     u.uPoolA.value.set(P.back[0], P.back[1], P.back[2], 1);
@@ -55,6 +57,11 @@ uniform vec4 uWaveF;             // fade on the other side, back length (gentle,
 uniform vec4 uPoolA;             // a pool: back walls (n.x, n.z, c), on
 uniform vec4 uPoolB;             // front edges (n.x, n.z, c), pier half-width
 uniform vec4 uPoolC;             // fade toward the walls, fade toward the pier
+uniform vec4 uWaveG;             // smaller than this (m) spills: from, fully
+
+// How much whitewater (m of churning foam) the last oceanPoint() call ran through: the
+// vertex shader roughens the surface by this much.
+float gWhite = 0.0;
 uniform vec4 uSwellA[SWELL_N];   // dir.x, dir.z, amp, k
 uniform vec4 uSwellB[SWELL_N];   // horiz, omega, phase, lambda
 
@@ -114,13 +121,17 @@ vec3 mainWave(int i, float x, float rowZ, inout vec4 info) {
 
   float e = side >= 0.0 ? max(side - uWaveE.z, 0.0) / uWaveE.w : side / uWaveF.x;
   float env = exp(-e * e);
-  float kappa = max(smoothstep(uWaveP.w, uWaveP.w + uWaveQ.x, age), B.w);
+  // small waves spill: a weaker lip, and whitewater sooner
+  float spill = 1.0 - smoothstep(uWaveG.x, uWaveG.y, B.x);
+  float tT = uWaveP.w * (1.0 - 0.7 * spill);
+  float kappa = max(smoothstep(tT, tT + uWaveQ.x * (1.0 - 0.3 * spill), age), B.w);
   float H = B.x * env * (1.0 - 0.5 * kappa) * poolMask(x, rowZ + crestOffset(x));
-  float b = smoothstep(0.0, uWaveP.z, age) * smoothstep(0.05, 0.3, H / S);
+  float b = smoothstep(0.0, uWaveP.z, age) * smoothstep(0.05, 0.3, H / S) * (1.0 - 0.65 * spill);
   float steep = B.z * mix(0.55, 1.0, exp(-max(-age, 0.0) / 5.0));
 
   float Lf, Lb;
-  float yb = baseProfile(un, steep, Lf, Lb);
+  // (tapered to nothing at the ends of the wave's reach: no step between waves)
+  float yb = baseProfile(un, steep, Lf, Lb) * smoothstep(-16.0, -9.0, un) * (1.0 - smoothstep(4.5, 7.0, un));
   float zn = un;
   float yn = yb;
   float zc = Lf * ACOSH_YC + RIN * EX;
@@ -150,7 +161,8 @@ vec3 mainWave(int i, float x, float rowZ, inout vec4 info) {
     float phi = mix(phiB, phiT, k);
     float r = mix(rB, rT, kr);
     zn = zc + EX * r * cos(phi);
-    yn = YC + r * sin(phi);
+    // collapsing: the tube squashes down into a mound of whitewater
+    yn = (YC + r * sin(phi)) * (1.0 - 0.45 * kappa * wgt * kr);
   }
 
   // horizontal thickness of the water body at this height (for light transmission)
@@ -161,8 +173,18 @@ vec3 mainWave(int i, float x, float rowZ, inout vec4 info) {
 
   // foam: lip edge, exploding/collapsed whitewater
   float foam = smoothstep(0.55, 1.0, s) * kr * 0.7;
-  foam += kappa * smoothstep(3.6, 1.0, un) * exp(-max(0.0, -un - 0.3) / (1.0 + 4.0 * kappa)) * 1.25;
+  float bore = kappa * smoothstep(3.6, 1.0, un) * exp(-max(0.0, -un - 0.3) / (1.0 + 4.0 * kappa * (1.0 - 0.5 * spill)));
+  foam += bore * 1.25;
+  // a spilling wave: foam boils over the crest and tumbles down the face
+  float reach = 0.35 + 0.75 * clamp(age, 0.0, 1.6);
+  float cap = spill * smoothstep(0.0, 0.5, age) * smoothstep(-1.0, -0.25, un) * (1.0 - smoothstep(reach - 0.5, reach, un));
+  foam += cap * 0.95;
+  // where the lip lands in front of the barrel, the water churns white
+  float tip = zc + EX * (RIN * 1.22 + 0.04) * cos(W_PI - SWEEP);
+  float impact = b * (1.0 - kappa) * smoothstep(0.7, 1.0, b) * smoothstep(tip - 0.35, tip, un) * (1.0 - smoothstep(tip + 0.25, tip + 1.3, un));
+  foam += impact * 0.9;
   info.y += foam * smoothstep(0.0, 0.4, B.x);
+  gWhite = max(gWhite, max(bore, max(cap, impact * 0.6)) * H);
   info.z = max(info.z, kr * step(0.001, s));
   info.w = max(info.w, clamp(yb, 0.0, 1.2) * smoothstep(0.1, 0.6, H / S));
 

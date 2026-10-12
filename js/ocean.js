@@ -25,7 +25,9 @@ void main() {
   float rz = texelFetch(uGrid, ivec2(int(position.y), 1), 0).r;
   vec4 info = vec4(60.0, 0.0, 0.0, 0.0);
   vec4 dummy = info;
+  gWhite = 0.0;
   vec3 p = oceanPoint(x, rz, uFocus, info);
+  float white = gWhite; // (m of whitewater here)
   float ex = 0.04 + 0.0015 * abs(x - uFocus.x);
   float ez = 0.012 + 0.0015 * abs(rz + crestOffset(x) - uFocus.z);
   vec3 px = oceanPoint(x + ex, rz, uFocus, dummy);
@@ -33,11 +35,14 @@ void main() {
   vec3 n = cross(pz - p, px - p);
   float ln = length(n);
   vNormal = ln > 1e-9 ? n / ln : vec3(0.0, 1.0, 0.0);
-  // churned whitewater gets a lumpy surface
+  // churned whitewater gets a lumpy, boiling surface, rougher the bigger the wave
   float churn = clamp(info.y - 0.6, 0.0, 1.0);
   if (churn > 0.0) {
-    float nz = textureLod(uNoise, vec2(x, p.z) * 0.045 + vec2(0.0, uTime * 0.05), 0.0).a;
-    p += vNormal * churn * (nz - 0.35) * 0.35;
+    vec2 q = vec2(x, p.z);
+    float n1 = textureLod(uNoise, q * 0.045 + vec2(0.0, uTime * 0.05), 0.0).a;
+    float n2 = textureLod(uNoise, q * 0.13 + vec2(uTime * 0.07, -uTime * 0.04) + 0.5, 0.0).a;
+    float amp = clamp(0.14 + 0.24 * white, 0.14, 0.75);
+    p += vNormal * churn * ((n1 - 0.4) * 1.0 + (n2 - 0.45) * 0.45) * amp;
   }
   vWorld = p;
   vInfo = info;
@@ -203,10 +208,24 @@ void main() {
   float fpat = mix(f1 * 0.55 + f2 * 0.45, f0 * 0.6 + f1 * 0.4, near) + (f3 - 0.5) * 0.4;
   float foamMask = smoothstep(1.0 - foamAmt * 0.7, 1.15 - foamAmt * 0.55, fpat + 0.15) * min(foamAmt * 1.4, 1.0);
   foamMask = clamp(foamMask + smoothstep(1.0, 1.7, foamAmt) * 0.7, 0.0, 1.0);
-  float diff = max(dot(N, uSunDir), 0.0);
-  vec3 foamCol = vec3(0.9, 0.95, 0.97) * (uSunColor * (0.35 + 0.65 * diff) + skyAmb * 0.75);
-  foamCol += SSS * thin * 0.25;
-  col = mix(col, foamCol, foamMask);
+  // Foam has body: bumps from its own pattern (screen-space bump mapping), shadowed
+  // crevices where light glows blue-green through thin foam, bright sunlit tops.
+  // (The derivatives are taken everywhere, as they must be; only foam uses them.)
+  float fh = (f1 * 0.6 + f2 * 0.8 + f3 * 0.6) * (0.05 + 0.1 * smoothstep(0.6, 1.6, foamAmt)); // (coarse patterns only: fine ones turn blocky)
+  vec3 dpx = dFdx(vWorld), dpy = dFdy(vWorld);
+  float dhx = dFdx(fh), dhy = dFdy(fh);
+  if (foamMask > 0.002) {
+    vec3 r1 = cross(dpy, N), r2 = cross(N, dpx);
+    float det = dot(dpx, r1);
+    vec3 bn = abs(det) * N - sign(det) * (dhx * r1 + dhy * r2);
+    vec3 Nf = dot(bn, bn) > 1e-14 ? normalize(bn) : N;
+    float ndl = dot(Nf, uSunDir);
+    float lit = mix((ndl * 0.5 + 0.5) * (ndl * 0.5 + 0.5), max(ndl, 0.0), 0.5);
+    float ao = mix(0.5, 1.0, smoothstep(0.25, 0.85, fpat + 0.25 * f0)) * mix(0.82, 1.0, smoothstep(0.0, 0.8, Nf.y));
+    vec3 foamCol = vec3(0.92, 0.96, 0.98) * (uSunColor * (0.22 + 0.78 * lit) + skyAmb * 0.8) * ao;
+    foamCol += SSS * (uSunColor * 0.06 + skyAmb * 0.2) * (1.0 - ao) + SSS * thin * 0.22;
+    col = mix(col, foamCol, foamMask);
+  }
   col += spec * (1.0 - foamMask) * (under ? 0.0 : 1.0);
 
   // ---- aerial perspective ----

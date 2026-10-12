@@ -32,6 +32,7 @@ export const WAVE = {
   backFall: 45, // (and over this distance on the other side)
   dir: 0, // 0: peels either way, 1: always toward +x (a left)
   mirror: 0, // > 0: every wave peaks at both x = +-mirror and peels in toward x = 0 (a pool)
+  spill: [1.0, 1.8], // waves smaller than this (m) spill (crumble from the crest) rather than barrel
   peakSpread: 5,
   shoalFrom: -115,
   shoalBase: 0.5,
@@ -74,11 +75,13 @@ const unit = (v) => {
   const l = Math.hypot(...v);
   return v.map((c) => c / l);
 };
-const sunsetDir = (() => {
-  const h = Math.hypot(SUN_DIR[0], SUN_DIR[2]);
+// The setting sun 4.3 degrees up, toward the horizontal bearing [x, z] (a spot can choose).
+export function sunsetSun(toward = [SUN_DIR[0], SUN_DIR[2]]) {
+  const h = Math.hypot(toward[0], toward[1]);
   const el = (4.3 * Math.PI) / 180;
-  return unit([(SUN_DIR[0] / h) * Math.cos(el), Math.sin(el), (SUN_DIR[2] / h) * Math.cos(el)]);
-})();
+  return unit([(toward[0] / h) * Math.cos(el), Math.sin(el), (toward[1] / h) * Math.cos(el)]);
+}
+const sunsetDir = sunsetSun();
 export const TIMES_OF_DAY = {
   day: {
     sunDir: SUN_DIR,

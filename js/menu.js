@@ -54,6 +54,67 @@ const wavesKey = (spot) => (spot === 'margaret' ? 'lineup.waves' : `lineup.waves
 const TIME_NAMES = { day: 'Midday', sunset: 'Sunset' };
 const spotImage = (id) => `assets/menu/spot-${id}.jpg`;
 
+// The menu backdrop: a faint sea chart, depth contours (every fifth one heavier) over a
+// lat / long grid. Drawn once, when the page is idle.
+function drawChart(w = 960, h = 540) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  c.className = 'chart';
+  const g = c.getContext('2d');
+  // value noise (fbm) on the pixel grid
+  const hash = (x, y) => {
+    const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
+    return s - Math.floor(s);
+  };
+  const noise = (x, y) => {
+    const xi = Math.floor(x),
+      yi = Math.floor(y);
+    let fx = x - xi,
+      fy = y - yi;
+    fx = fx * fx * (3 - 2 * fx);
+    fy = fy * fy * (3 - 2 * fy);
+    const a = hash(xi, yi),
+      b = hash(xi + 1, yi),
+      cc = hash(xi, yi + 1),
+      d = hash(xi + 1, yi + 1);
+    return a + (b - a) * fx + (cc - a) * fy + (a - b - cc + d) * fx * fy;
+  };
+  const n = new Float32Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      let v = 0,
+        amp = 0.5,
+        f = 1 / 210;
+      for (let o = 0; o < 4; o++) {
+        v += amp * noise(x * f + o * 7.1, y * f * 1.25 + o * 3.3);
+        amp *= 0.5;
+        f *= 2.1;
+      }
+      n[y * w + x] = v + y / h / 2.2; // (deeper toward the top: the lines run across)
+    }
+  const img = g.createImageData(w, h);
+  const levels = 26;
+  for (let y = 1; y < h - 1; y++)
+    for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const v = n[i] * levels;
+      const grad = Math.hypot(n[i + 1] - n[i - 1], n[i + w] - n[i - w]) * 0.5 * levels;
+      const f = v - Math.floor(v);
+      const dist = Math.min(f, 1 - f) / Math.max(grad, 1e-4); // pixels from the nearest contour
+      const major = Math.floor(v + 0.5) % 5 === 0;
+      let a = Math.max(0, 1 - dist / (major ? 1.1 : 0.75)) * (major ? 0.34 : 0.16);
+      if (x % 96 === 0 || y % 96 === 0) a = Math.max(a, 0.06); // the grid
+      const k = i * 4;
+      img.data[k] = 150;
+      img.data[k + 1] = 205;
+      img.data[k + 2] = 232;
+      img.data[k + 3] = a * 255;
+    }
+  g.putImageData(img, 0, 0);
+  return c;
+}
+
 // "Crouch (while surfing) is now C" for actions that gave up a key or button
 const moveText = (moved) => moved.map((m) => `${m.label} ${m.now === 'nothing' || m.now === 'Not set' ? 'is now unbound' : `is now ${m.now}`}.`).join(' ');
 
@@ -82,6 +143,11 @@ export class Menu {
     this.look = cleanLook(load('lineup.look', null));
     save('lineup.look', this.look);
     this.preview = new CharacterPreview();
+    this.prompts = document.getElementById('prompts');
+    this.cards = [...this.root.querySelectorAll('.mode-card')];
+    this.sel = this.cards[0];
+    const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 300));
+    idle(() => this.root.querySelector('.menu-bg').appendChild(drawChart()));
 
     this.buildBoardPickers();
     this.buildWavePickers();
@@ -119,11 +185,40 @@ export class Menu {
     if (name === 'main') this.stack = [];
     if (name === 'multi' && this.h.onOpenMulti) this.h.onOpenMulti();
     if (name === 'pause') this.stack = [];
-    // (no card is focused on the main screen: only the hovered one is outlined)
+    // (on the main screen one card is always selected; nothing has the keyboard focus)
     const focusable = this.screens[name].querySelector('[data-resume], .btn.primary, input');
     if (focusable && name !== 'multi' && name !== 'main') setTimeout(() => focusable.focus({ preventScroll: true }), 30);
     else if (name === 'main' && document.activeElement && this.root.contains(document.activeElement)) document.activeElement.blur();
+    if (name === 'main') this.select(this.sel);
+    this.showPrompts(name);
     this.syncPreview();
+  }
+
+  // the main screen's selected card
+  select(card) {
+    if (!card) return;
+    this.sel = card;
+    for (const c of this.cards) c.classList.toggle('sel', c === card);
+  }
+
+  // the key prompts along the bottom, for this screen
+  showPrompts(name) {
+    const list = [];
+    if (name === 'main') {
+      list.push({ key: '\u2190 \u2192', label: 'Choose' });
+      list.push({ key: 'Enter', label: 'Select', cls: 'p-go', act: () => this.sel && this.sel.click() });
+    } else if (name === 'pause') {
+      list.push({ key: 'Esc', label: 'Resume', cls: 'p-back', act: () => this.h.onResume && this.h.onResume() });
+    } else if (name !== 'lobby') {
+      list.push({ key: 'Esc', label: 'Back', cls: 'p-back', act: () => this.back() });
+    }
+    this.prompts.innerHTML = list.map((p, i) => `<button type="button" class="prompt ${p.cls || ''}" data-prompt="${i}" ${p.act ? '' : 'disabled'}><kbd>${esc(p.key)}</kbd>${esc(p.label)}</button>`).join('');
+    this.prompts.onclick = (e) => {
+      const b = e.target.closest('[data-prompt]');
+      const p = b && list[+b.dataset.prompt];
+      if (p && p.act) p.act();
+    };
+    this.prompts.parentElement.hidden = !list.length;
   }
 
   back() {
@@ -159,26 +254,32 @@ export class Menu {
       return;
     }
     if (this.current === 'main' && tag !== 'INPUT') {
-      // arrow keys move the focus (and its blue outline) between the cards
-      const cards = [...this.root.querySelectorAll('.mode-card')];
-      const i = cards.indexOf(document.activeElement);
+      // arrow keys move the selection (and its blue outline) between the cards; Enter picks it
+      const cards = this.cards;
+      const i = cards.indexOf(this.sel);
       let next = -1;
-      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = i < 0 ? 0 : (i + 1) % cards.length;
-      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = i < 0 ? cards.length - 1 : (i + cards.length - 1) % cards.length;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (i + 1) % cards.length;
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (i + cards.length - 1) % cards.length;
       if (next >= 0) {
         e.preventDefault();
+        this.select(cards[next]);
         cards[next].focus({ preventScroll: true });
+      } else if (e.key === 'Enter' && !cards.includes(document.activeElement)) {
+        e.preventDefault();
+        if (this.sel) this.sel.click();
       }
     }
   }
 
   bindMain() {
-    // only one outlined card at a time: the mouse takes over from the keyboard focus
-    for (const card of this.root.querySelectorAll('.mode-card')) {
+    // one card is selected at a time: the mouse or the keyboard moves it
+    for (const card of this.cards) {
       card.addEventListener('mouseenter', () => {
         const f = document.activeElement;
         if (f && f !== card && f.classList.contains('mode-card')) f.blur();
+        this.select(card);
       });
+      card.addEventListener('focus', () => this.select(card));
     }
   }
 

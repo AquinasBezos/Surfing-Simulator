@@ -7,9 +7,9 @@ Paddle into glassy waves, pop up, and race the peeling lip through the barrel, o
 
 - Clear, refractive water with sand, weed and caustics visible underneath, Fresnel sky reflections, sun glints, and light glowing through thin crests and the lip.
 - Breaking waves are built procedurally on the GPU: a swell profile plus a curling lip that pitches, forms a barrel, and collapses into whitewater as the break peels along the wave. Gerstner swell runs underneath.
-- Foam forms on the lip, where the lip lands, and on the broken whitewater, and is left behind on the water after the wave passes. Spray comes off the lip and the crest.
+- Foam forms on the lip, where the lip lands, and on the broken whitewater, and is left behind on the water after the wave passes. Whitewater is lumpy and lit like real foam, with shadowed crevices, and gets rougher the bigger the wave. When a barrel's time is up it closes and squashes down into a mound of whitewater. Small waves don't barrel: they spill, with foam boiling over the crest and tumbling down the face. Spray comes off the lip and the crest.
 - The board, arms and hands stay visible when they dip under the surface, tinted by the water they're seen through.
-- Duck dive under breaking waves. Underwater you get Snell's window, the seabed (at Teahupo'o, the coral reef sloping away into the deep), light shafts and bubbles.
+- Duck dive under breaking waves. Underwater you get Snell's window, the seabed (at Teahupo'o, the coral reef sloping away into the deep), light shafts and bubbles. In the ocean, a school of fish sometimes swims past (silvery baitfish at Margaret River, reef fish at Teahupo'o) and scatters if you get close.
 - Shortboard or longboard. On the longboard you walk to the nose to hang five, or to the tail for tight turns.
 - You can crouch under the lip and spring off the top of the wave for an air. Snaps, cutbacks and tailslides come from flicking your view.
 - Two control schemes: keyboard and mouse on PC, and body movement on Quest (paddle with your arms, stand up to pop up, lean to carve).
@@ -22,6 +22,8 @@ Paddle into glassy waves, pop up, and race the peeling lip through the barrel, o
 There is no build step. Textures, terrain and sound are generated at start-up, and three.js (r169) loads from jsDelivr. The only files besides code are the surfer model (`assets/surfer.glb`) and the menu art in `assets/menu/` (including the location thumbnails), which are screenshots of the game. Firebase and Trystero load only when you open Multiplayer.
 
 ## Controls
+
+In the menus, the arrow keys move between the cards, `Enter` picks one and `Esc` goes back. The prompts along the bottom can be clicked too.
 
 | Action | PC | Meta Quest |
 | :-- | :-- | :-- |
@@ -74,7 +76,7 @@ On PC the game goes fullscreen and locks the keyboard when you start, so `Ctrl` 
   - Near the shore there's a big arch under the pier: paddle through it to surf the other side.
   - Waves are 0.8 m to 2 m, which is what a real wave machine makes. Kick out before the pier: ride into it and you wipe out.
 
-**Time of day** (Singleplayer screen, Create a room, and the singleplayer pause screen) switches between **Midday** and **Sunset**. At sunset the sun sits a few degrees above the horizon out to sea, behind the waves as you paddle out, so it lays a long path of light across the water and shines through the crests and the lip. The sky, the reflections in the water, the fog, the sunlight on the surfers and the light under water all shift to dusk colours.
+**Time of day** (Singleplayer screen, Create a room, and the singleplayer pause screen) switches between **Midday** and **Sunset**. At sunset the sun sits a few degrees above the horizon out to sea. At Margaret River and Teahupo'o the swell comes from the south-west, so the sun sets in the west, a little to the right as you look out. It's behind the waves as you paddle out, so it lays a long path of light across the water and shines through the crests and the lip. The sky, the reflections in the water, the fog, the sunlight on the surfers and the light under water all shift to dusk colours.
 
 In multiplayer the location and the time of day belong to the room. They're set when it's created and are the same for everyone in it.
 
@@ -105,7 +107,8 @@ In the room lobby, pick **Join as drone** instead of Surfer to fly a camera dron
 ### How it works
 
 - The Firebase Realtime Database is only used to find rooms. Each player in a room writes one entry of about 100 bytes, `lineup/rooms/<room>/<player>`, with `onDisconnect().remove()`. The entry includes the room's location and time of day, so the room list can show them. A room is nothing more than its players' entries, so it disappears as soon as the last player leaves or closes the tab. There is no cleanup job and nothing is left behind.
-- Players connect to each other directly over WebRTC using [Trystero](https://github.com/dmotz/trystero). Trystero uses the same database for the brief connection handshake and deletes those records itself. Positions and where each player is looking (15 times a second, 64 bytes each), events and clock sync all go peer-to-peer and never touch Firebase.
+- Players connect to each other directly over WebRTC using [Trystero](https://github.com/dmotz/trystero). Trystero uses the same database for the brief connection handshake and deletes those records itself. Positions and where each player is looking (15 times a second, 76 bytes each), events and clock sync all go peer-to-peer and never touch Firebase.
+- Other players are shown where they are now, not where they were when their last update left: each update carries their velocity, so their position is predicted ahead and eased toward each new update. It also carries their height above the water, and their board is placed that far above your own copy of the wave, so it can't sink into the wave when an update is late.
 - Waves aren't sent over the network at all. Each room has a random seed, a shared clock, a location and a wave-size setting, and every player generates the same sets from them. A player who joins takes the clock of whoever has been in the room longest. A change to the wave size carries the wave number it starts from, so everyone switches on the same wave.
 - In a private room the passcode is the key Trystero encrypts the handshake with, so players without it can't connect. The room list stores only a short hash of it so that a wrong passcode is rejected straight away.
 

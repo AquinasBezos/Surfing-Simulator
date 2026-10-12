@@ -175,6 +175,12 @@ export function peelSide(w, x) {
   return w.dir === 0 ? w.peakX - Math.abs(x) : (x - w.peakX) * w.dir;
 }
 
+// A wave's reach: its long back slope and its front taper smoothly to nothing (cut off
+// hard, the water would step down along a line between waves).
+export function profileWindow(un) {
+  return smoothstep(-16, -9, un) * (1 - smoothstep(4.5, 7, un));
+}
+
 // How long ago the section at dx (along the crest from the peak; side = dx * dir) started
 // breaking, given the time since the peak did. A wide first section pitches all at once.
 export function sectionAge(tau, dx, side) {
@@ -366,19 +372,24 @@ export class WaveModel {
     const age = sectionAge(w.tau, dx, side);
     const e = side >= 0 ? Math.max(side - WAVE.peelFlat, 0) / WAVE.peelFall : side / WAVE.backFall;
     const env = Math.exp(-e * e);
-    const kappa = Math.max(smoothstep(WAVE.tTube, WAVE.tTube + WAVE.tCollapse, age), w.collapseG);
+    // small waves spill: a weaker lip, and whitewater sooner
+    const spill = 1 - smoothstep(WAVE.spill[0], WAVE.spill[1], w.H);
+    const tT = WAVE.tTube * (1 - 0.7 * spill);
+    const kappa = Math.max(smoothstep(tT, tT + WAVE.tCollapse * (1 - 0.3 * spill), age), w.collapseG);
     out.H = w.H * env * (1 - 0.5 * kappa) * poolMask(x, z);
     out.S = w.S;
-    out.b = smoothstep(0, WAVE.tThrow, age) * smoothstep(0.05, 0.3, out.H / out.S);
+    out.b = smoothstep(0, WAVE.tThrow, age) * smoothstep(0.05, 0.3, out.H / out.S) * (1 - 0.65 * spill);
+    out.spill = spill;
     out.kappa = kappa;
     out.steep = w.steepG * mix(0.55, 1, Math.exp(-Math.max(-age, 0) / 5));
     out.age = age;
     return out;
   }
 
-  // Curl a normalised base point (un, yb) of a section with breaking amount b.
+  // Curl a normalised base point (un, yb) of a section with breaking amount b; as it
+  // collapses (c 0 -> 1) the tube is squashed down into a low mound of whitewater.
   // Writes the curled normalised position into out.zn / out.yn.
-  curlNorm(un, yb, b, Lf, out) {
+  curlNorm(un, yb, b, Lf, out, c = 0) {
     out.zn = un;
     out.yn = yb;
     const { rin, yc, ex, sweep, yb0, acoshYc } = CURL;
@@ -407,7 +418,7 @@ export class WaveModel {
       const phi = mix(phiB, phiT, k);
       const r = mix(rB, rT, kr);
       out.zn = zc + ex * r * Math.cos(phi);
-      out.yn = yc + r * Math.sin(phi);
+      out.yn = (yc + r * Math.sin(phi)) * (1 - 0.45 * c * wgt * kr);
     }
     return out;
   }
@@ -431,7 +442,7 @@ export class WaveModel {
       // walk the inside of the tube from the face (s = 0) to the lip tip (s = 1)
       const un = ufc * (1 - i / N);
       const yb = baseProfile(un, steep, this._prof);
-      this.curlNorm(un, yb, b, Lf, c);
+      this.curlNorm(un, yb, b, Lf, c, sc.kappa);
       if (i > 0 && (pz - target) * (c.zn - target) <= 0 && pz !== c.zn) {
         const t = (target - pz) / (c.zn - pz);
         const y = (py + (c.yn - py) * t) * H;
@@ -451,7 +462,7 @@ export class WaveModel {
     const u = rowZ - w.crestZ0;
     const un = u / S;
     const yb = baseProfile(un, sc.steep, this._prof);
-    const c = this.curlNorm(un, yb, sc.b, this._prof.Lf, this._cp || (this._cp = { zn: 0, yn: 0 }));
+    const c = this.curlNorm(un, yb, sc.b, this._prof.Lf, this._cp || (this._cp = { zn: 0, yn: 0 }), sc.kappa);
     const zn = c.zn,
       yn = c.yn;
     out.x = x;
@@ -509,7 +520,7 @@ export class WaveModel {
       const u = rowZ - w.crestZ0;
       const un = u / sc.S;
       if (un < -16 || un > 7) continue;
-      const yb = baseProfile(un, sc.steep, this._prof);
+      const yb = baseProfile(un, sc.steep, this._prof) * profileWindow(un);
       const y = yb * sc.H;
       h += y;
       const hn = sc.H / sc.S;

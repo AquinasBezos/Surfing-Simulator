@@ -50,24 +50,25 @@
       <div class="menu-bg" aria-hidden="true"></div>
       <div class="menu-inner">
         <header class="brand">
-          <h1 class="logo" aria-label="LINEUP"><span class="logo-text">LINEUP</span><span class="logo-reflect" aria-hidden="true">LINEUP</span></h1>
+          <h1 class="logo" aria-label="LINEUP"><span class="logo-text">LINEUP</span></h1>
           <p class="crumb" id="crumb"></p>
         </header>
+        <div class="rule" aria-hidden="true"></div>
 
         <!-- main -->
         <section class="screen" data-screen="main">
           <nav class="mode-cards" aria-label="Game modes">
             <button type="button" class="mode-card" data-go="single">
-              <span class="mode-head">Singleplayer</span>
               <span class="mode-shot"><img src="assets/menu/singleplayer.jpg" alt="Riding through a barrel" /></span>
+              <span class="mode-head">Singleplayer</span>
             </button>
             <button type="button" class="mode-card" data-go="multi">
-              <span class="mode-head">Multiplayer</span>
               <span class="mode-shot"><img src="assets/menu/multiplayer.jpg" alt="Other surfers in the lineup" /></span>
+              <span class="mode-head">Multiplayer</span>
             </button>
             <button type="button" class="mode-card" data-go="settings">
-              <span class="mode-head">Controls and settings</span>
               <span class="mode-shot"><img src="assets/menu/settings.jpg" alt="A shortboard and a longboard" /></span>
+              <span class="mode-head">Controls and settings</span>
             </button>
           </nav>
         </section>
@@ -265,6 +266,8 @@
             </div>
           </div>
         </section>
+
+        <footer class="menu-foot"><span class="prompts" id="prompts"></span></footer>
 
         <div class="dialog" id="pass-dialog" role="dialog" aria-modal="true" aria-labelledby="pass-title" hidden>
           <form class="panel narrow" id="pass-form">

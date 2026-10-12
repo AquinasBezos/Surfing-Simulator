@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { QUALITY, SUN_DIR, SUN_COLOR, EYE, WAVE, BOARDS, CROUCH_DROP, MULTIPLAYER, TIMES_OF_DAY } from './config.js';
+import { QUALITY, SUN_DIR, SUN_COLOR, EYE, WAVE, BOARDS, CROUCH_DROP, MULTIPLAYER, TIMES_OF_DAY, sunsetSun } from './config.js';
 import { WaveModel, smoothstep, clamp, crestOffset, waveScale, applySpotWave, peelPoints } from './wave.js';
 import { Ocean } from './ocean.js';
 import { createSky } from './sky.js';
@@ -22,6 +22,7 @@ import { VRMenu } from './vrmenu.js';
 import { controls } from './bindings.js';
 import { Drone, createDroneModel, animateDrone } from './drone.js';
 import { loadSurferModel, randomLook } from './character.js';
+import { Fish } from './fish.js';
 
 const params = new URLSearchParams(location.search);
 const isMobileXR = /OculusBrowser|Quest|Pico/i.test(navigator.userAgent);
@@ -74,6 +75,8 @@ const ocean = new Ocean(model, sky.cube, normalTex, noiseTex, quality);
 scene.add(ocean.mesh);
 const underwater = new UnderwaterEnv(noiseTex, SUN_DIR, qualityName);
 scene.add(underwater.group);
+const fish = new Fish(); // (sometimes, when you go under in the ocean)
+scene.add(fish.mesh);
 
 // ---------------------------------------------------------------- surf spot
 // The spot being played: its wave, seabed, water and land. Each spot's land is built the
@@ -97,8 +100,10 @@ function applySpot(id) {
   terrain = lands[id] ||= buildLand(id);
   scene.add(terrain);
   surfer.collide = spotCollider(); // (a pool's walls and pier)
+  fish.setKind(spot.fish);
   if (terrain.userData.underwater) scene.add(terrain.userData.underwater);
   if (!model.schedule) model.reset(-62);
+  applyTimeOfDay(timeOfDay); // (the sunset is somewhere else here)
   game.warmup = Math.max(game.warmup, 4); // compile the new shaders behind the menu
 }
 // Build the other spots' land while the player is still in the menus, so picking one (or
@@ -135,7 +140,7 @@ const eyeSit = new THREE.Vector3(...EYE.sitting);
 
 const spray = new Spray(model, quality.particles);
 scene.add(spray.points);
-const remote = new RemotePlayers(scene);
+const remote = new RemotePlayers(scene, model);
 loadSurferModel().catch(() => {}); // fetch the character early (other players, the menu preview)
 
 // spectator camera drone (multiplayer): the flight model, and the body you see if you look up
@@ -228,12 +233,17 @@ const inRoom = () => !!(net && net.room);
 
 // Midday or sunset: a new sky (background, reflections and image-based light), then the
 // sun, the light from the sky, haze and exposure, and the water, underwater and spray.
-let timeOfDay = 'day'; // what the scene was built with
+// (The sunset's bearing belongs to the spot: called again when the spot changes.)
+let timeOfDay = 'day'; // the time of day being shown...
+let skyKey = `day:${SUN_DIR.map((v) => v.toFixed(3))}`; // ...and what the scene was built with
 function applyTimeOfDay(name) {
   if (!TIMES_OF_DAY[name]) name = 'day';
-  if (name === timeOfDay) return;
   timeOfDay = name;
-  const T = TIMES_OF_DAY[name];
+  let T = TIMES_OF_DAY[name];
+  if (name === 'sunset' && spot && spot.sunset) T = { ...T, sunDir: sunsetSun(spot.sunset) };
+  const key = `${name}:${T.sunDir.map((v) => v.toFixed(3))}`;
+  if (key === skyKey) return;
+  skyKey = key;
   sunDir.set(...T.sunDir);
   const old = sky;
   sky = createSky(renderer, T.sunDir, quality.cubeSize, T.sunset);
@@ -809,13 +819,14 @@ function sendEvent(e) {
 }
 
 const STATE_CODE = { prone: POSE.PRONE, popup: POSE.POPUP, standing: POSE.STANDING, wipeout: POSE.WIPEOUT, sitting: POSE.SITTING };
-// t, position, orientation, state, crouch, foot, lean, effort, dive, look yaw / pitch
-const poseBuf = new Float32Array(16);
+// t, position, orientation, state, crouch, foot, lean, effort, dive, look yaw / pitch,
+// height above the water, velocity x / z (so others can show you where you are now)
+const poseBuf = new Float32Array(19);
 function sendPose() {
   if (game.role === 'drone') {
     // same packet; crouch carries the gimbal pitch and effort the throttle
     const q = drone.quat;
-    poseBuf.set([net.now(), drone.pos.x, drone.pos.y, drone.pos.z, q.x, q.y, q.z, q.w, POSE.DRONE, drone.camPitch, 0, 0, drone.throttle, 0, 0, 0]);
+    poseBuf.set([net.now(), drone.pos.x, drone.pos.y, drone.pos.z, q.x, q.y, q.z, q.w, POSE.DRONE, drone.camPitch, 0, 0, drone.throttle, 0, 0, 0, 0, drone.vel.x, drone.vel.z]);
     net.sendPose(poseBuf);
     return;
   }
@@ -838,12 +849,16 @@ function sendPose() {
   const vr = renderer.xr.isPresenting;
   poseBuf[14] = vr ? xr.lookYaw || 0 : game.look.yaw;
   poseBuf[15] = vr ? xr.lookPitch || 0 : game.look.pitch;
+  poseBuf[16] = surfer.y - model.heightAt(surfer.x, surfer.z);
+  poseBuf[17] = surfer.vx;
+  poseBuf[18] = surfer.vz;
   net.sendPose(poseBuf);
 }
 
 function decodePose(f) {
-  const look = f.length >= 16; // (older clients send 14 values)
-  return { t: f[0], x: f[1], y: f[2], z: f[3], qx: f[4], qy: f[5], qz: f[6], qw: f[7], state: Math.round(f[8]), crouch: f[9], foot: f[10], lean: f[11], effort: f[12], dive: f[13], lookYaw: look ? f[14] : 0, lookPitch: look ? f[15] : 0 };
+  const look = f.length >= 16; // (older clients send 14 or 16 values)
+  const pred = f.length >= 19;
+  return { t: f[0], x: f[1], y: f[2], z: f[3], qx: f[4], qy: f[5], qz: f[6], qw: f[7], state: Math.round(f[8]), crouch: f[9], foot: f[10], lean: f[11], effort: f[12], dive: f[13], lookYaw: look ? f[14] : 0, lookPitch: look ? f[15] : 0, heave: pred ? f[16] : NaN, vx: pred ? f[17] : NaN, vz: pred ? f[18] : NaN };
 }
 
 function onRemoteEvent(id, e) {
@@ -1147,7 +1162,7 @@ function updateBots() {
     _be.set(Math.atan(gz) * 0.8 + (state === POSE.SITTING ? 0.2 : 0.03), b.yaw, -Math.atan(gx) * 0.8, 'YXZ');
     _bq.setFromEuler(_be);
     const t = model.time + b.x;
-    remote.push(b.id, { t: model.time, x: b.x, y: y - (state === POSE.SITTING ? 0.07 : 0), z: b.z, qx: _bq.x, qy: _bq.y, qz: _bq.z, qw: _bq.w, state, crouch: 0.2, foot: 0, lean: 0, effort: b.effort, dive: 0, lookYaw: state === POSE.PRONE ? 0 : Math.sin(t * 0.35) * 1.4, lookPitch: Math.sin(t * 0.21) * 0.25 });
+    remote.push(b.id, { t: model.time, x: b.x, y: y - (state === POSE.SITTING ? 0.07 : 0), z: b.z, qx: _bq.x, qy: _bq.y, qz: _bq.z, qw: _bq.w, state, crouch: 0.2, foot: 0, lean: 0, effort: b.effort, dive: 0, lookYaw: state === POSE.PRONE ? 0 : Math.sin(t * 0.35) * 1.4, lookPitch: Math.sin(t * 0.21) * 0.25, heave: state === POSE.SITTING ? -0.07 : 0, vx: 0, vz: 0 });
   }
 }
 
@@ -1355,6 +1370,8 @@ function frame(time, xrFrame) {
     gz = surfer._gz || 0;
   const waterY = (x, z) => hBoard + gx * (x - surfer.x) + gz * (z - surfer.z);
   if (running) emitBubbles(dt, camUnder, camDepth);
+  camera.getWorldDirection(_v);
+  fish.update(running ? dt : 0, camUnder, focus, _v, (x, z) => model.heightAt(x, z), seabedY);
   underwater.update(running ? dt : 0, focus, camUnder, camDepth, focus.y - seabedY(focus.x, focus.z), waterY, model.time);
   if (camUnder !== game.wasUnder) {
     game.splash = 0.18; // crossing the surface
@@ -1530,6 +1547,7 @@ window.__surf = {
     return spot;
   },
   applySpot,
+  fish,
   WAVE,
   peelPoints,
   begin: () => startGame('single', 'pc'),

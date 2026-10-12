@@ -1,7 +1,9 @@
 // Other players. Surfers are the rigged character (character.js) on a board in their own
 // colours, posed from a few numbers per snapshot (state, crouch, lean, stance position,
 // paddling effort). Spectators flying camera drones send a DRONE pose instead and show up
-// as a quadcopter. Network snapshots are buffered and interpolated on the shared room clock.
+// as a quadcopter. Network snapshots are buffered on the shared room clock: how they're
+// posed is interpolated a moment behind (smooth), but where they are is predicted for now,
+// so a surfer shows up where they are on the wave rather than where they were.
 import * as THREE from 'three';
 import { createBoard } from './board.js';
 import { BOARDS } from './config.js';
@@ -11,7 +13,12 @@ import { SurferCharacter, loadSurferModel, cleanLook } from './character.js';
 // for a DRONE pose the snapshot's crouch is the gimbal pitch and effort the throttle
 export const POSE = { PRONE: 0, POPUP: 1, STANDING: 2, WIPEOUT: 3, DRONE: 4, SITTING: 5 };
 const MAX_PLAYERS = 16;
-const DELAY = 0.15; // render this far behind the newest snapshot (s)
+const DELAY = 0.15; // pose this far behind the newest snapshot (s)
+const _q2 = new THREE.Quaternion();
+const _Y = new THREE.Vector3(0, 1, 0);
+const _ea = new THREE.Euler(0, 0, 0, 'YXZ'),
+  _eb = new THREE.Euler(0, 0, 0, 'YXZ');
+const wrapAngle = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
 const ACCENTS = ['#2f80c8', '#d2553a', '#e3b23c', '#1aa59a', '#8b5cc4', '#e06b9a', '#4caf50', '#f08a24'].map((c) => new THREE.Color(c));
 const _q = new THREE.Quaternion();
@@ -167,6 +174,48 @@ class Avatar {
     return true;
   }
 
+  // Where they are now (not DELAY ago): dead-reckoned from their newest snapshot with the
+  // velocity it carries, easing toward each new snapshot rather than jumping to it. A surfer
+  // sits the height above the water they sent above our own copy of the wave, so the board
+  // can't sink into it (or float off it) while the estimate catches up. heightAt(x, z): our
+  // water height there. Writes x, y, z and q into this.cur.
+  predict(now, dt, heightAt) {
+    const a = this.snaps;
+    const last = a[a.length - 1];
+    const prev = a.length > 1 ? a[a.length - 2] : last;
+    const span = Math.max(1e-3, last.t - prev.t);
+    const vx = Number.isFinite(last.vx) ? last.vx : (last.x - prev.x) / span;
+    const vz = Number.isFinite(last.vz) ? last.vz : (last.z - prev.z) / span;
+    const vy = (last.y - prev.y) / span;
+    const lead = Math.min(Math.max(now - last.t, 0), 0.5);
+    const tx = last.x + vx * lead,
+      tz = last.z + vz * lead,
+      ty = last.y + vy * lead;
+    // heading: carried on at the rate it was turning
+    _ea.setFromQuaternion(_q.set(last.qx, last.qy, last.qz, last.qw));
+    _eb.setFromQuaternion(_q2.set(prev.qx, prev.qy, prev.qz, prev.qw));
+    const yawRate = a.length > 1 ? Math.max(-4, Math.min(4, wrapAngle(_ea.y - _eb.y) / span)) : 0;
+    _q.premultiply(_q2.setFromAxisAngle(_Y, yawRate * lead));
+    const P = this.pred || (this.pred = { x: tx, y: ty, z: tz, heave: 0, q: new THREE.Quaternion().copy(_q), on: false });
+    if (!P.on || Math.hypot(tx - P.x, tz - P.z) > 4 || Math.abs(ty - P.y) > 6) {
+      // first sight, or they teleported (back to the lineup): no gliding across
+      Object.assign(P, { x: tx, y: ty, z: tz, heave: last.heave || 0, on: true });
+      P.q.copy(_q);
+    } else {
+      const k = 1 - Math.exp(-dt * 6);
+      P.x += vx * dt + (tx - P.x) * k;
+      P.z += vz * dt + (tz - P.z) * k;
+      P.y += vy * dt + (ty - P.y) * k;
+      P.heave += ((last.heave || 0) - P.heave) * (1 - Math.exp(-dt * 12));
+      P.q.slerp(_q, 1 - Math.exp(-dt * 10));
+    }
+    const c = this.cur;
+    c.x = P.x;
+    c.z = P.z;
+    c.y = Number.isFinite(last.heave) && last.state !== POSE.DRONE ? heightAt(P.x, P.z) + P.heave : P.y;
+    c.q.copy(P.q);
+  }
+
   dispose() {
     if (this.board) this.board.traverse((o) => o.geometry && o.geometry.dispose());
     this.root.parent.remove(this.root);
@@ -179,7 +228,9 @@ class Avatar {
 }
 
 export class RemotePlayers {
-  constructor(scene) {
+  // model: the waves (for sitting surfers on our copy of them)
+  constructor(scene, model = null) {
+    this.model = model;
     this.group = new THREE.Group();
     scene.add(this.group);
     this.avatars = new Map();
@@ -214,7 +265,8 @@ export class RemotePlayers {
     if (board && BOARDS[board]) a.setBoard(board);
   }
 
-  // snapshot: {t, x, y, z, qx, qy, qz, qw, state, crouch, foot, lean, effort, dive, lookYaw, lookPitch}
+  // snapshot: {t, x, y, z, qx, qy, qz, qw, state, crouch, foot, lean, effort, dive, lookYaw, lookPitch,
+  //            heave (height above the water), vx, vz} (the last three from newer clients)
   push(id, snap) {
     const a = this.ensure(id);
     if (a) a.push(snap);
@@ -260,6 +312,7 @@ export class RemotePlayers {
       a.root.visible = ok;
       if (a.tag) a.tag.visible = ok;
       if (!ok) continue;
+      if (this.model) a.predict(now, dt, this.heightAt || (this.heightAt = (x, z) => this.model.heightAt(x, z)));
       const c = a.cur;
       a.root.position.set(c.x, c.y, c.z);
       a.root.quaternion.copy(c.q);
