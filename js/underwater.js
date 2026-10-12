@@ -20,10 +20,12 @@ export const waterUniforms = {
   uUWTime: { value: 0 },
   uUWNoise: { value: null },
   uUWLight: { value: new THREE.Vector3(1, 1, 1) }, // overall light under the water (time of day)
+  uUWAbsorb: { value: new THREE.Vector3(0.46, 0.088, 0.105) }, // the spot's water (per metre)
+  uUWScatter: { value: new THREE.Vector3(0.009, 0.16, 0.15) },
 };
 
-const ABSORB = 'vec3(0.46, 0.088, 0.105)';
-const SCATTER = 'vec3(0.009, 0.16, 0.15)';
+const ABSORB = 'uUWAbsorb';
+const SCATTER = 'uUWScatter';
 
 const PARS = /* glsl */ `
 uniform float uWaterY;
@@ -33,6 +35,8 @@ uniform float uCamUnder;
 uniform float uUWTime;
 uniform sampler2D uUWNoise;
 uniform vec3 uUWLight;
+uniform vec3 uUWAbsorb;
+uniform vec3 uUWScatter;
 varying vec3 vUWPos;
 `;
 
@@ -100,6 +104,11 @@ function throughWaterMaterial(src) {
 // Give every mesh under root a "seen through the water" copy and underwater fog.
 // (Not skinned meshes: a plain copy wouldn't follow the skeleton. The first-person legs
 // only show while you're standing, above the water.)
+// Just the underwater fog (for things only seen from under the water, like a reef).
+export function addUnderwaterFog(material) {
+  patch(material, false);
+}
+
 export function addUnderwaterPass(root) {
   const meshes = [];
   root.traverse((o) => {
@@ -149,15 +158,20 @@ uniform vec3 uSunDir; // the sun's light under the water (already refracted)
 uniform vec3 uLight;
 uniform float uTime;
 uniform sampler2D uNoise;
+uniform vec3 uMid;    // the spot's water colour around you...
+uniform vec3 uUp;     // ...looking up toward the light...
+uniform vec3 uGlow;   // ...and toward the sun
+uniform vec3 uAbsorb;
+uniform vec3 uBedTint;
 varying vec3 vDir;
 void main() {
   vec3 d = normalize(vDir);
-  vec3 deep = vec3(0.003, 0.03, 0.04);
-  vec3 mid = vec3(0.01, 0.12, 0.12);
-  vec3 up = vec3(0.05, 0.36, 0.34);
+  vec3 deep = uMid * vec3(0.3, 0.25, 0.33);
+  vec3 mid = uMid;
+  vec3 up = uUp;
   vec3 col = d.y > 0.0 ? mix(mid, up, pow(d.y, 0.7)) : mix(mid, deep, pow(-d.y, 0.6));
   col *= exp(-uCamDepth * 0.1);
-  col += vec3(0.12, 0.42, 0.38) * pow(max(dot(d, -uSunDir), 0.0), 6.0) * 0.5;
+  col += uGlow * pow(max(dot(d, -uSunDir), 0.0), 6.0) * 0.5;
   if (d.y < -0.02) {
     float t = uBedDepth / -d.y;
     if (t < 90.0) {
@@ -166,14 +180,14 @@ void main() {
       float s2 = texture2D(uNoise, p.xz * 0.13 + 0.37).b;
       float patches = texture2D(uNoise, p.xz * 0.0042 + 0.11).a;
       vec3 sand = vec3(0.62, 0.5, 0.33) * (0.72 + 0.42 * s1) * (0.88 + 0.22 * s2);
-      sand = mix(sand, vec3(0.17, 0.16, 0.09), smoothstep(0.56, 0.68, patches + 0.25 * s1) * 0.75);
+      sand = mix(sand, vec3(0.17, 0.16, 0.09), smoothstep(0.56, 0.68, patches + 0.25 * s1) * 0.75) * uBedTint;
       float ca = texture2D(uNoise, p.xz * 0.16 + vec2(uTime * 0.021, uTime * 0.013)).g;
       float cb = texture2D(uNoise, p.xz * 0.13 + vec2(-uTime * 0.017, uTime * 0.025) + 0.5).g;
       float caus = min(ca, cb) * 2.2 + (ca + cb) * 0.25;
       float bedD = uCamDepth + uBedDepth;
-      vec3 light = (vec3(1.8, 1.72, 1.55) * (0.32 + caus * 0.9) + vec3(0.11, 0.17, 0.22)) * exp(-vec3(0.46, 0.088, 0.105) * bedD * 1.3);
+      vec3 light = (vec3(1.8, 1.72, 1.55) * (0.32 + caus * 0.9) + vec3(0.11, 0.17, 0.22)) * exp(-uAbsorb * bedD * 1.3);
       vec3 bed = sand * light;
-      col = mix(col, bed * exp(-vec3(0.46, 0.088, 0.105) * t), exp(-t * 0.07));
+      col = mix(col, bed * exp(-uAbsorb * t), exp(-t * 0.07));
     }
   }
   gl_FragColor = vec4(col * uLight, 1.0);
@@ -262,7 +276,14 @@ export class UnderwaterEnv {
       uLight: { value: new THREE.Vector3(1, 1, 1) },
       uTime: { value: 0 },
       uNoise: { value: noiseTex },
+      uMid: { value: new THREE.Vector3(0.01, 0.12, 0.12) },
+      uUp: { value: new THREE.Vector3(0.05, 0.36, 0.34) },
+      uGlow: { value: new THREE.Vector3(0.12, 0.42, 0.38) },
+      uAbsorb: { value: new THREE.Vector3(0.46, 0.088, 0.105) },
+      uBedTint: { value: new THREE.Vector3(1, 1, 1) },
     };
+    this.shaftBase = new THREE.Vector3(0.45, 0.95, 0.85);
+    this.light = new THREE.Vector3(1, 1, 1);
     this.dome = new THREE.Mesh(
       new THREE.SphereGeometry(60, 32, 16),
       new THREE.ShaderMaterial({ uniforms: this.domeUniforms, vertexShader: DOME_VERT, fragmentShader: DOME_FRAG, side: THREE.BackSide, depthWrite: false, depthTest: false }),
@@ -362,7 +383,22 @@ export class UnderwaterEnv {
     this.domeUniforms.uSunDir.value.copy(down);
     this.shaftUniforms.uAxis.value.copy(down);
     this.domeUniforms.uLight.value.set(...light);
-    this.shaftUniforms.uColor.value.set(0.45, 0.95, 0.85).multiply(new THREE.Vector3(...light));
+    this.light.set(...light);
+    this.shaftUniforms.uColor.value.copy(this.shaftBase).multiply(this.light);
+  }
+
+  // The spot's water. bedTint: the colour of the bottom far below (sand is white).
+  setWater(w, bedTint = [1, 1, 1]) {
+    const du = this.domeUniforms;
+    du.uMid.value.set(...w.deep);
+    du.uUp.value.set(...w.uwUp);
+    du.uGlow.value.set(...w.uwGlow);
+    du.uAbsorb.value.set(...w.absorb);
+    du.uBedTint.value.set(...bedTint);
+    this.shaftBase.set(...w.shaft);
+    this.shaftUniforms.uColor.value.copy(this.shaftBase).multiply(this.light);
+    waterUniforms.uUWAbsorb.value.set(...w.absorb);
+    waterUniforms.uUWScatter.value.set(...w.uwScatter);
   }
 
   clearBubbles() {

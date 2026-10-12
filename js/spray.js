@@ -1,7 +1,7 @@
 // Lightweight spray: mist off the pitching lip, bursts where the lip lands, and offshore
 // spray blown back off the steep crest. Simulated on the CPU, drawn as soft points.
 import * as THREE from 'three';
-import { WAVE } from './config.js';
+import { peelPoints } from './wave.js';
 import { createSoftDotTexture } from './textures.js';
 
 const VERT = /* glsl */ `
@@ -114,8 +114,7 @@ export class Spray {
       const near = Math.abs(w.crestZ0 - camPos.z) < 140;
       if (!near) continue;
       const tau = Math.max(w.tau, 0);
-      const peelX = w.peakX + w.dir * WAVE.peelSpeed * tau;
-      const backX = w.peakX - w.dir * WAVE.backSpeed * tau;
+      const [peelX, backX] = peelPoints(w, tau);
       // 1) lip mist + impact bursts along the broken section near the camera
       if (w.tau > 0) {
         const lo = Math.min(peelX, backX),

@@ -1,7 +1,11 @@
-// Coastline: sandy beach with dunes and wooded hills, a forested headland and an offshore
-// island. The seabed function is mirrored in GLSL so the water shader knows the depth.
+// The land and the seabed of each surf spot, and the switch between them. Margaret River
+// (here): a sandy beach with dunes and wooded hills, a forested headland and an offshore
+// island. Teahupo'o: teahupoo.js. A spot's seabed function is mirrored in GLSL (with the
+// colour of the bottom) so the water shader knows the depth and what it sees through it.
 import * as THREE from 'three';
 import { smoothstep, mix } from './wave.js';
+import { smax, segDist, fbm, marchCoords, buildLandMesh, lcg } from './landkit.js';
+import * as teahupoo from './teahupoo.js';
 
 const HEAD_A = [840, 330];
 const HEAD_B = [1260, -620];
@@ -9,20 +13,6 @@ const ISLAND = [-1750, -2950];
 
 export function shoreZ(x) {
   return 252 + 14 * Math.sin(0.0037 * x) + 6 * Math.sin(0.011 * x + 1.3);
-}
-
-function smax(a, b, k) {
-  const h = Math.max(k - Math.abs(a - b), 0) / k;
-  return Math.max(a, b) + h * h * k * 0.25;
-}
-
-function segDist(x, z, a, b) {
-  const px = x - a[0],
-    pz = z - a[1];
-  const bx = b[0] - a[0],
-    bz = b[1] - a[1];
-  const t = Math.max(0, Math.min(1, (px * bx + pz * bz) / (bx * bx + bz * bz)));
-  return Math.hypot(px - bx * t, pz - bz * t);
 }
 
 export function headlandH(x, z) {
@@ -33,7 +23,7 @@ export function islandH(x, z) {
   return 75 * (1 - Math.hypot(x - ISLAND[0], z - ISLAND[1]) / 290) - 16;
 }
 
-export function seabedY(x, z) {
+function margaretSeabed(x, z) {
   let d = mix(-16, -4.4, smoothstep(-320, -30, z));
   d = mix(d, -3.0, smoothstep(-30, 110, z));
   const beach = (z - shoreZ(x)) * 0.035;
@@ -43,7 +33,7 @@ export function seabedY(x, z) {
   return d;
 }
 
-export const SEABED_GLSL = /* glsl */ `
+const MARGARET_GLSL = /* glsl */ `
 float smaxk(float a, float b, float k) {
   float h = max(k - abs(a - b), 0.0) / k;
   return max(a, b) + h * h * k * 0.25;
@@ -62,41 +52,23 @@ float seabedY(vec2 p) {
   d = max(d, 75.0 * (1.0 - length(p - vec2(${ISLAND[0]}.0, ${ISLAND[1]}.0)) / 290.0) - 16.0);
   return d;
 }
+// the bottom: sand with darker weed and rock patches
+vec3 bedColor(vec2 p) {
+  float s1 = texture(uNoise, p * 0.021).b;
+  float s2 = texture(uNoise, p * 0.13 + 0.37).b;
+  float patches = texture(uNoise, p * 0.0042 + 0.11).a;
+  vec3 sand = vec3(0.62, 0.5, 0.33) * (0.72 + 0.42 * s1) * (0.88 + 0.22 * s2);
+  vec3 weed = vec3(0.17, 0.16, 0.09);
+  float wm = smoothstep(0.56, 0.68, patches + 0.25 * s1);
+  return mix(sand, weed, wm * 0.75);
+}
+float bedFoam(vec2 p) { return 0.0; } // (no reef breaking away from the wave)
 `;
 
 // --- land detail (JS only; applied well above the waterline) ---------------------------
-function hash2(x, z) {
-  const s = Math.sin(x * 127.1 + z * 311.7) * 43758.5453;
-  return s - Math.floor(s);
-}
-function vnoise(x, z) {
-  const xi = Math.floor(x),
-    zi = Math.floor(z);
-  let fx = x - xi,
-    fz = z - zi;
-  fx = fx * fx * (3 - 2 * fx);
-  fz = fz * fz * (3 - 2 * fz);
-  const a = hash2(xi, zi),
-    b = hash2(xi + 1, zi),
-    c = hash2(xi, zi + 1),
-    d = hash2(xi + 1, zi + 1);
-  return a + (b - a) * fx + (c - a) * fz + (a - b - c + d) * fx * fz;
-}
-function fbm(x, z, oct = 5) {
-  let s = 0,
-    a = 0.5,
-    f = 1;
-  for (let i = 0; i < oct; i++) {
-    s += a * vnoise(x * f, z * f);
-    f *= 2.03;
-    a *= 0.5;
-  }
-  return s;
-}
-
 // Returns { h, veg } where veg in [0,1] marks vegetated ground.
 function landSample(x, z, out) {
-  const base = seabedY(x, z);
+  const base = margaretSeabed(x, z);
   const s = z - shoreZ(x);
   let h = base;
   let veg = 0;
@@ -128,23 +100,6 @@ function landSample(x, z, out) {
   return out;
 }
 
-function marchCoords(lo, hi, centre, s0, growth) {
-  const pts = [];
-  let x = centre;
-  while (x > lo) {
-    pts.unshift(x);
-    x -= s0 + growth * Math.abs(x - centre);
-  }
-  pts.unshift(lo);
-  x = centre + s0;
-  while (x < hi) {
-    pts.push(x);
-    x += s0 + growth * Math.abs(x - centre);
-  }
-  pts.push(hi);
-  return pts;
-}
-
 const SAND_DRY = new THREE.Color('#e3cfa4');
 const SAND_WET = new THREE.Color('#ad9670');
 const VEG_A = new THREE.Color('#1c3319');
@@ -152,72 +107,20 @@ const VEG_B = new THREE.Color('#34502a');
 const ROCK = new THREE.Color('#6f675e');
 const GRASS = new THREE.Color('#7f8a52');
 
-function buildMesh(xs, zs, material) {
-  const nx = xs.length,
-    nz = zs.length;
-  const pos = new Float32Array(nx * nz * 3);
-  const col = new Float32Array(nx * nz * 3);
-  const hs = new Float32Array(nx * nz);
-  const tmp = {};
-  const c = new THREE.Color();
-  for (let j = 0; j < nz; j++)
-    for (let i = 0; i < nx; i++) {
-      const k = j * nx + i;
-      const x = xs[i],
-        z = zs[j];
-      landSample(x, z, tmp);
-      hs[k] = tmp.h;
-      pos[k * 3] = x;
-      pos[k * 3 + 1] = Math.max(tmp.h, -8);
-      pos[k * 3 + 2] = z;
-    }
-  // colours need slope -> second pass
-  for (let j = 0; j < nz; j++)
-    for (let i = 0; i < nx; i++) {
-      const k = j * nx + i;
-      const x = xs[i],
-        z = zs[j];
-      const h = hs[k];
-      const i0 = Math.max(i - 1, 0),
-        i1 = Math.min(i + 1, nx - 1);
-      const j0 = Math.max(j - 1, 0),
-        j1 = Math.min(j + 1, nz - 1);
-      const sx = (hs[j * nx + i1] - hs[j * nx + i0]) / (xs[i1] - xs[i0]);
-      const sz = (hs[j1 * nx + i] - hs[j0 * nx + i]) / (zs[j1] - zs[j0]);
-      const slope = Math.hypot(sx, sz);
-      landSample(x, z, tmp);
-      const n = fbm(x * 0.05, z * 0.05, 3);
-      c.copy(SAND_WET).lerp(SAND_DRY, smoothstep(0.1, 0.9, h));
-      c.lerp(GRASS, smoothstep(3.5, 6, h) * smoothstep(40, 80, tmp.s) * 0.6);
-      const veg = tmp.veg * (1 - smoothstep(0.75, 1.1, slope));
-      const vc = VEG_A.clone().lerp(VEG_B, n);
-      c.lerp(vc, veg);
-      c.lerp(ROCK, smoothstep(0.55, 0.95, slope) * smoothstep(0.5, 3, h));
-      const shade = 0.88 + 0.24 * n;
-      col[k * 3] = c.r * shade;
-      col[k * 3 + 1] = c.g * shade;
-      col[k * 3 + 2] = c.b * shade;
-    }
-  const idx = [];
-  for (let j = 0; j < nz - 1; j++)
-    for (let i = 0; i < nx - 1; i++) {
-      const a = j * nx + i,
-        b = a + 1,
-        cc = a + nx,
-        d = cc + 1;
-      const hmax = Math.max(hs[a], hs[b], hs[cc], hs[d]);
-      if (hmax < -1.2) continue; // fully underwater: hidden by the opaque ocean
-      idx.push(a, cc, b, b, cc, d);
-    }
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  geo.setIndex(idx);
-  geo.computeVertexNormals();
-  return new THREE.Mesh(geo, material);
+function paint(x, z, h, slope, tmp, c) {
+  const n = fbm(x * 0.05, z * 0.05, 3);
+  c.copy(SAND_WET).lerp(SAND_DRY, smoothstep(0.1, 0.9, h));
+  c.lerp(GRASS, smoothstep(3.5, 6, h) * smoothstep(40, 80, tmp.s) * 0.6);
+  const veg = tmp.veg * (1 - smoothstep(0.75, 1.1, slope));
+  const vc = VEG_A.clone().lerp(VEG_B, n);
+  c.lerp(vc, veg);
+  c.lerp(ROCK, smoothstep(0.55, 0.95, slope) * smoothstep(0.5, 3, h));
+  c.multiplyScalar(0.88 + 0.24 * n);
 }
 
-export function createTerrain(quality) {
+const buildMesh = (xs, zs, material) => buildLandMesh(xs, zs, material, landSample, paint);
+
+function createMargaret(quality) {
   const group = new THREE.Group();
   const material = new THREE.MeshLambertMaterial({ vertexColors: true });
   const coarse = quality === 'low' ? 1.8 : 1;
@@ -243,10 +146,7 @@ export function createTerrain(quality) {
   const tmp = {};
   let placed = 0,
     tries = 0;
-  const rand = (() => {
-    let s = 4242;
-    return () => ((s = (s * 16807) % 2147483647) / 2147483647);
-  })();
+  const rand = lcg(4242);
   while (placed < count && tries < count * 40) {
     tries++;
     let x, z;
@@ -280,4 +180,31 @@ export function createTerrain(quality) {
   if (trees.instanceColor) trees.instanceColor.needsUpdate = true;
   group.add(trees);
   return group;
+}
+
+// ---------------------------------------------------------------- the spots
+const LAND = {
+  margaret: { seabedY: margaretSeabed, glsl: MARGARET_GLSL, create: createMargaret },
+  teahupoo: { seabedY: teahupoo.seabedY, glsl: teahupoo.SEABED_GLSL, create: teahupoo.createLand },
+};
+let active = LAND.margaret;
+
+// The spot being played (for seabedY).
+export function setLandSpot(id) {
+  active = LAND[id] || LAND.margaret;
+}
+
+// Height of the bottom (negative under water) at the spot being played.
+export function seabedY(x, z) {
+  return active.seabedY(x, z);
+}
+
+// GLSL: float seabedY(vec2 p) and vec3 bedColor(vec2 p) for a spot.
+export function seabedGLSL(id) {
+  return (LAND[id] || LAND.margaret).glsl;
+}
+
+// The land (and anything else the spot needs) as one group.
+export function createTerrain(id, quality) {
+  return (LAND[id] || LAND.margaret).create(quality);
 }

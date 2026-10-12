@@ -1,9 +1,11 @@
 import * as THREE from 'three';
-import { QUALITY, SUN_DIR, SUN_COLOR, EYE, LINEUP_Z, WAVE, BOARDS, CROUCH_DROP, MULTIPLAYER, TIMES_OF_DAY } from './config.js';
-import { WaveModel, smoothstep, clamp, crestOffset, waveScale } from './wave.js';
+import { QUALITY, SUN_DIR, SUN_COLOR, EYE, WAVE, BOARDS, CROUCH_DROP, MULTIPLAYER, TIMES_OF_DAY } from './config.js';
+import { WaveModel, smoothstep, clamp, crestOffset, waveScale, applySpotWave, peelPoints } from './wave.js';
 import { Ocean } from './ocean.js';
 import { createSky } from './sky.js';
-import { createTerrain, seabedY } from './terrain.js';
+import { createTerrain, seabedY, setLandSpot } from './terrain.js';
+import { SPOTS, cleanSpot } from './spots.js';
+import { reefTexture } from './teahupoo.js';
 import { createWaterNormalTexture, createNoiseTexture } from './textures.js';
 import { createBoard } from './board.js';
 import { Arms, setSkinColor } from './body.js';
@@ -13,7 +15,7 @@ import { PCInput } from './input.js';
 import { XRControls } from './xr.js';
 import { OceanAudio } from './audio.js';
 import { Hud } from './hud.js';
-import { waterUniforms, addUnderwaterPass, UnderwaterEnv } from './underwater.js';
+import { waterUniforms, addUnderwaterPass, addUnderwaterFog, UnderwaterEnv } from './underwater.js';
 import { Menu } from './menu.js';
 import { RemotePlayers, POSE } from './remote.js';
 import { VRMenu } from './vrmenu.js';
@@ -70,10 +72,55 @@ const noiseTex = createNoiseTexture(512);
 waterUniforms.uUWNoise.value = noiseTex;
 const ocean = new Ocean(model, sky.cube, normalTex, noiseTex, quality);
 scene.add(ocean.mesh);
-const terrain = createTerrain(qualityName);
-scene.add(terrain);
 const underwater = new UnderwaterEnv(noiseTex, SUN_DIR, qualityName);
 scene.add(underwater.group);
+
+// ---------------------------------------------------------------- surf spot
+// The spot being played: its wave, seabed, water and land. Each spot's land is built the
+// first time it's needed and kept.
+let spot = null;
+let terrain = null;
+const lands = {};
+function applySpot(id) {
+  id = cleanSpot(id);
+  if (spot && spot.id === id) return;
+  spot = SPOTS[id];
+  applySpotWave(spot);
+  setLandSpot(id);
+  const reef = id === 'teahupoo' ? reefTexture().texture : null;
+  ocean.setSpot(id, reef);
+  // (the bottom far below: sand, or coral and rubble)
+  underwater.setWater(spot.water, reef ? [0.55, 0.5, 0.42] : [1, 1, 1]);
+  if (terrain) {
+    scene.remove(terrain);
+    if (terrain.userData.underwater) scene.remove(terrain.userData.underwater);
+  }
+  terrain = lands[id] ||= buildLand(id);
+  scene.add(terrain);
+  if (terrain.userData.underwater) scene.add(terrain.userData.underwater);
+  if (!model.schedule) model.reset(-62);
+  game.warmup = Math.max(game.warmup, 4); // compile the new shaders behind the menu
+}
+// Build the other spots' land while the player is still in the menus, so picking one (or
+// joining a room there) doesn't stall.
+function prebuildLands() {
+  const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 200));
+  for (const id of Object.keys(SPOTS))
+    idle(() => {
+      if (!lands[id] && !game.started) lands[id] = buildLand(id);
+    });
+}
+setTimeout(prebuildLands, 4000);
+
+function buildLand(id) {
+  const g = createTerrain(id, qualityName);
+  const under = g.userData.underwater; // seen only from under the water
+  if (under) {
+    addUnderwaterFog(under.material);
+    under.visible = false;
+  }
+  return g;
+}
 
 // board + body share the board frame
 const bodyFrame = new THREE.Group();
@@ -145,6 +192,10 @@ const menu = new Menu({
   onBoard: (type) => setBoardType(type),
   onRole: (role) => net && net.setRole(role),
   onLook: (look) => applyLook(look),
+  onSpot: (id) => {
+    // (after the menu has shown the choice: the first visit builds the scene)
+    setTimeout(() => !inRoom() && applySpot(menu.spot), 30);
+  },
   onWaves: (cfg) => {
     if (net && net.room) net.setWaves(cfg); // the room's waves, for everyone
     else model.setHeights(cfg);
@@ -168,12 +219,12 @@ const menu = new Menu({
   onQuit: () => quitToMenu(),
 });
 let settings = menu.settings;
-model.setHeights(menu.waves);
 function applySettings(s) {
   settings = s;
   audio.setVolume(s.volume);
-  applyTimeOfDay(s.time);
+  applyTimeOfDay(inRoom() ? net.time : s.time); // a room's time of day is the same for everyone
 }
+const inRoom = () => !!(net && net.room);
 
 // Midday or sunset: a new sky (background, reflections and image-based light), then the
 // sun, the light from the sky, haze and exposure, and the water, underwater and spray.
@@ -209,6 +260,9 @@ function applyTimeOfDay(name) {
   spray.material.uniforms.uColor.value.setRGB(...T.spray);
 }
 applySettings(settings);
+if (params.has('spot')) menu.setSpot(params.get('spot')); // (?spot=teahupoo: testing, not saved)
+applySpot(menu.spot);
+model.setHeights(menu.waves);
 
 // your look: skin tone on your first-person arms, board colour, and what others see
 function applyLook(look) {
@@ -318,10 +372,11 @@ function enterVR() {
 // ---------------------------------------------------------------- game flow
 function lineupSpot() {
   // in front of the next wave's peak, slightly toward the shoulder
+  const L = spot.lineup;
   let w = null;
-  for (const c of model.waves) if (c.active && c.crestZ0 < LINEUP_Z - 6 && (!w || c.crestZ0 > w.crestZ0)) w = c;
-  const x = w ? w.peakX + w.dir * 4 : 0;
-  return { x, z: LINEUP_Z, yaw: 0 };
+  for (const c of model.waves) if (c.active && c.crestZ0 < L.z - 6 && (!w || c.crestZ0 > w.crestZ0)) w = c;
+  const x = w ? w.peakX + w.dir * L.side : 0;
+  return { x, z: L.z, yaw: 0 };
 }
 
 function respawn(fadeOut = true) {
@@ -358,6 +413,7 @@ function startGame(mode, platform) {
     model.setSchedule(net.seed, () => net.now(), net.waves);
     net.setPlaying(true);
   } else {
+    applySpot(menu.spot);
     model.clearSchedule();
     model.setHeights(menu.waves);
     model.reset(-62);
@@ -578,7 +634,7 @@ function updateGame(dt) {
   if (surfer.state === STATE.WIPEOUT && surfer.stateTime > 2.4 && game.teleport <= 0) respawn(true);
 
   // drifted inside or far away without a ride: paddle back out automatically
-  const inside = surfer.z > 45 || Math.abs(surfer.x) > 650 || surfer.z < -260;
+  const inside = surfer.z > spot.inside.z || Math.abs(surfer.x) > spot.inside.x || surfer.z < -260;
   const idle = surfer.state === STATE.PRONE && !surfer.riding;
   if (inside && idle && game.teleport <= 0) {
     game.missTimer += dt;
@@ -625,6 +681,7 @@ function wireNet(n) {
   n.on('pose', (id, f) => remote.push(id, decodePose(f)));
   n.on('event', (id, e) => onRemoteEvent(id, e));
   n.on('timeline', () => {
+    roomSettings(n); // (the room's first player may have picked a different spot or time)
     menu.setWaves(n.waves);
     if (game.mode === 'multi') {
       model.setSchedule(n.seed, () => n.now(), n.waves);
@@ -656,6 +713,10 @@ function wireNet(n) {
     failedPeer = null;
     remote.clear();
     menu.leftRoom();
+    // back to your own spot and time of day
+    applySpot(menu.spot);
+    applyTimeOfDay(settings.time);
+    if (!game.started) model.setHeights(menu.waves);
   });
 }
 
@@ -675,10 +736,19 @@ async function openMultiplayer() {
   }
 }
 
+// Where the room surfs and at what time of day, for everyone in it.
+function roomSettings(n) {
+  if (!n.room) return;
+  applySpot(n.spot);
+  menu.enterRoom(n.roomInfo);
+  applyTimeOfDay(n.time);
+}
+
 async function createRoom(opts) {
   try {
     const n = await ensureNet();
     await n.createRoom(opts);
+    roomSettings(n);
     menu.setWaves(n.waves);
     menu.setCreateStatus('');
     menu.show('lobby', { push: false });
@@ -692,7 +762,8 @@ async function joinRoom(room, passcode) {
   const n = await ensureNet();
   if (room.count >= MULTIPLAYER.maxPlayers) return menu.renderRooms(menu.rooms, null, MULTIPLAYER.maxPlayers);
   try {
-    await n.joinRoom({ id: room.id, name: room.name, isPrivate: room.isPrivate, passcode, hash: room.hash, waves: menu.waves });
+    await n.joinRoom({ id: room.id, name: room.name, isPrivate: room.isPrivate, passcode, hash: room.hash, waves: menu.waves, spot: room.spot, time: room.time });
+    roomSettings(n);
     menu.setWaves(n.waves);
     menu.closePass();
     menu.show('lobby', { push: false });
@@ -941,7 +1012,7 @@ xr.onStroke = (side, effort) => audio.splash(0.5 + 0.5 * effort);
 
 // ---------------------------------------------------------------- start state
 model.reset(-62);
-surfer.reset(0, LINEUP_Z, 0);
+surfer.reset(0, spot.lineup.z, 0);
 if (params.has('shot')) applyShot(params.get('shot'));
 
 function applyShot(name) {
@@ -967,10 +1038,10 @@ function applyShot(name) {
   if (params.has('tau')) setTau(parseFloat(params.get('tau')));
   if (name === 'lineup') {
     if (!params.has('tau')) setTau(-6.5);
-    surfer.reset(4, LINEUP_Z, 0);
+    surfer.reset(spot.lineup.side, spot.lineup.z, 0);
   } else if (name === 'barrel') {
     setTau(4.2);
-    const x = WAVE.peelSpeed * 4.2 - 9;
+    const x = peelPoints(w)[0] - 9;
     surfer.reset(x, zAt(x, 0.78), -Math.PI / 2 + 0.12);
     surfer.setState(STATE.STANDING);
     surfer.crouch = surfer.legCrouch = 0.6;
@@ -978,7 +1049,7 @@ function applyShot(name) {
     surfer.vx = 8;
   } else if (name === 'shoulder') {
     setTau(4.0);
-    const x = WAVE.peelSpeed * 4.0 + 22;
+    const x = peelPoints(w)[0] + 22;
     surfer.reset(x, zAt(x, 1.6), Math.PI / 2 - 0.35);
     game.look.pitch = 0.05;
   } else if (name === 'behind') {
@@ -986,7 +1057,7 @@ function applyShot(name) {
     surfer.reset(14, zAt(14, -9), Math.PI + 0.25);
   } else if (name === 'paddle') {
     setTau(-2.2);
-    surfer.reset(4, LINEUP_Z + 2, Math.PI + 0.3);
+    surfer.reset(spot.lineup.side, spot.lineup.z + 2, Math.PI + 0.3);
   } else if (name === 'duckdive') {
     // facing an incoming broken wave
     setTau(2.2);
@@ -1271,6 +1342,7 @@ function frame(time, xrFrame) {
   waterUniforms.uCamUnder.value = camUnder ? 1 : 0;
   ocean.uniforms.uCamUnder.value = camUnder ? 1 : 0;
   terrain.visible = !camUnder; // land is only visible through the surface from below
+  if (terrain.userData.underwater) terrain.userData.underwater.visible = camUnder;
   const gx = surfer._gx || 0,
     gz = surfer._gz || 0;
   const waterY = (x, z) => hBoard + gx * (x - surfer.x) + gz * (z - surfer.z);
@@ -1318,8 +1390,8 @@ function frame(time, xrFrame) {
   let roar = 0;
   for (const w of model.waves) {
     if (!w.active || w.tau < 0) continue;
-    const peelX = w.peakX + w.dir * WAVE.peelSpeed * w.tau;
-    const dx = Math.max(0, Math.abs(focus.x - peelX) - 15);
+    const [peelX, backX] = peelPoints(w);
+    const dx = Math.max(0, Math.min(Math.abs(focus.x - peelX), Math.abs(focus.x - (peelX + backX) / 2)) - 15);
     const dz = Math.abs(focus.z - w.crestZ0);
     roar += (w.H / 2.6) * 30 / (30 + dx + dz * 1.5);
   }
@@ -1445,6 +1517,12 @@ window.__surf = {
   get net() {
     return net;
   },
+  get spot() {
+    return spot;
+  },
+  applySpot,
+  WAVE,
+  peelPoints,
   begin: () => startGame('single', 'pc'),
 };
 document.body.classList.add('ready');

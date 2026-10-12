@@ -1,7 +1,8 @@
 // Multiplayer networking (loaded on demand when the player opens Multiplayer).
 //
 // Matchmaking uses a Firebase Realtime Database, written so it costs almost nothing:
-//   lineup/rooms/<roomId>/<peerId> = { n: name, r: room name, p: private, h: passcode hash, t: joined }
+//   lineup/rooms/<roomId>/<peerId> = { n: name, r: room name, p: private, h: passcode hash, t: joined,
+//                                      l: surf spot, d: time of day }
 // Each player only writes their own small presence entry, with onDisconnect().remove().
 // A room is nothing more than its players' entries, so when the last player leaves
 // (or their connection drops) the whole room disappears from the database: no cleanup
@@ -12,7 +13,8 @@
 import { initializeApp } from 'firebase/app';
 import { getDatabase, ref, get, onValue, set, update, remove, onDisconnect, goOffline, goOnline } from 'firebase/database';
 import { joinRoom, selfId } from '@trystero-p2p/firebase';
-import { MULTIPLAYER as MP, WAVE, WAVE_HEIGHTS } from './config.js';
+import { MULTIPLAYER as MP, WAVE } from './config.js';
+import { SPOTS, cleanSpot } from './spots.js';
 
 const app = initializeApp({ databaseURL: MP.databaseURL }, 'lineup');
 const db = getDatabase(app);
@@ -65,9 +67,10 @@ async function relayServers() {
 
 // A room's wave size: { mode: 'set' | 'random', height, fromK, prev, rev }. A change takes
 // effect from wave fromK (the next one to appear) so the waves already rolling in stay as
-// they are for everyone; rev orders changes.
-function cleanWaves(w) {
-  const one = (x) => ({ mode: x && x.mode === 'random' ? 'random' : 'set', height: Math.min(WAVE_HEIGHTS.max, Math.max(WAVE_HEIGHTS.min, Number(x && x.height) || WAVE_HEIGHTS.default)) });
+// they are for everyone; rev orders changes. Heights are kept to the room's spot's range.
+function cleanWaves(w, spot) {
+  const R = SPOTS[cleanSpot(spot)].heights;
+  const one = (x) => ({ mode: x && x.mode === 'random' ? 'random' : 'set', height: Math.min(R.max, Math.max(R.min, Number(x && x.height) || R.default)) });
   if (!w || typeof w !== 'object') return { ...one(null), fromK: null, prev: null, rev: 0 };
   return { ...one(w), fromK: Number.isInteger(w.fromK) ? w.fromK : null, prev: w.prev ? one(w.prev) : null, rev: Number.isInteger(w.rev) ? w.rev : 0 };
 }
@@ -80,6 +83,8 @@ function cleanLook(l) {
   for (const k of ['skin', 'hair', 'board']) if (typeof l[k] === 'string' && HEX.test(l[k])) out[k] = l[k];
   return out;
 }
+
+const cleanTime = (t) => (t === 'sunset' ? 'sunset' : 'day');
 
 const olderTimeline = (a, b) => a.created < b.created || (a.created === b.created && a.origin < b.origin);
 const clean = (s, n) => String(s || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
@@ -153,7 +158,7 @@ export class Net {
           if (!list.length) continue;
           list.sort((a, b) => (a.t || 0) - (b.t || 0));
           const first = list[0];
-          rooms.push({ id, name: first.r, isPrivate: !!first.p, hash: first.h || '', count: list.length, players: list.map((p) => p.n), created: first.t || 0 });
+          rooms.push({ id, name: first.r, isPrivate: !!first.p, hash: first.h || '', count: list.length, players: list.map((p) => p.n), created: first.t || 0, spot: cleanSpot(first.l), time: cleanTime(first.d) });
         }
         rooms.sort((a, b) => b.count - a.count || a.created - b.created);
         cb(rooms, null);
@@ -169,14 +174,15 @@ export class Net {
     }
   }
 
-  async createRoom({ roomName, isPrivate, passcode, waves }) {
+  // spot, time: where the room surfs and at what time of day (the same for everyone)
+  async createRoom({ roomName, isPrivate, passcode, waves, spot, time }) {
     const id = randomId();
     const hash = isPrivate ? await hashPasscode(id, passcode) : '';
-    await this.joinRoom({ id, name: roomName, isPrivate, passcode, hash, waves, creating: true });
+    await this.joinRoom({ id, name: roomName, isPrivate, passcode, hash, waves, spot, time, creating: true });
     return id;
   }
 
-  async joinRoom({ id, name, isPrivate, passcode, hash, waves = null, creating = false }) {
+  async joinRoom({ id, name, isPrivate, passcode, hash, waves = null, spot, time, creating = false }) {
     if (this.room) await this.leave();
     if (isPrivate) {
       if (!passcode) throw new Error('This room needs a passcode');
@@ -186,17 +192,19 @@ export class Net {
     this.online();
     this.stopWatching();
     const roomName = clean(name, 40) || 'Lineup';
-    this.roomInfo = { id, name: roomName, isPrivate: !!isPrivate, hash: hash || '' };
+    spot = cleanSpot(spot);
+    time = cleanTime(time);
+    this.roomInfo = { id, name: roomName, isPrivate: !!isPrivate, hash: hash || '', spot, time };
     this.peers.clear();
     // a fresh timeline; replaced by the room's oldest one as soon as we meet a peer
-    this.timeline = { seed: crypto.getRandomValues(new Uint32Array(1))[0], origin: selfId, created: Date.now(), waves: cleanWaves(waves) };
+    this.timeline = { seed: crypto.getRandomValues(new Uint32Array(1))[0], origin: selfId, created: Date.now(), waves: cleanWaves(waves, spot), spot, time };
     this.offset = PERIOD * 0.55 - perfNow();
 
     const relays = relayServers();
     // presence in the room list (removed automatically if we vanish)
     this.presenceRef = ref(db, `${MP.roomsPath}/${id}/${selfId}`);
     await onDisconnect(this.presenceRef).remove();
-    await set(this.presenceRef, { n: this.name, r: roomName, p: !!isPrivate, h: hash || '', t: Date.now() });
+    await this._writePresence();
 
     const turn = await relays;
     this.hasRelay = turn.length > 0;
@@ -238,6 +246,22 @@ export class Net {
     this._resync = setInterval(() => this._refreshClock(), 30000);
     this.emit('joined', this.roomInfo, creating);
     this.emit('timeline');
+  }
+
+  // Our entry in the room list. Databases still on the original rules only accept the
+  // first five fields: then the spot and time of day travel with the timeline alone.
+  async _writePresence() {
+    const r = this.roomInfo;
+    const entry = { n: this.name, r: r.name, p: r.isPrivate, h: r.hash, t: Date.now() };
+    if (!this.oldRules) {
+      try {
+        return await set(this.presenceRef, { ...entry, l: r.spot, d: r.time });
+      } catch (e) {
+        this.oldRules = true;
+        console.warn('LINEUP: the database rules are out of date (see database.rules.json); rooms will list as Margaret River at midday', e);
+      }
+    }
+    return set(this.presenceRef, entry);
   }
 
   async leave() {
@@ -307,17 +331,26 @@ export class Net {
   // Change the room's wave size (anyone in the room can). Applies from the next wave.
   setWaves(cfg) {
     if (!this.room || !this.timeline) return;
-    const cur = cleanWaves(this.timeline.waves);
+    const cur = cleanWaves(this.timeline.waves, this.spot);
     const kNext = Math.floor(this.now() / PERIOD) + 1;
     const active = cur.prev && cur.fromK != null && kNext - 1 < cur.fromK ? cur.prev : cur;
-    const waves = cleanWaves({ ...cfg, fromK: kNext, prev: active, rev: cur.rev + 1 });
+    const waves = cleanWaves({ ...cfg, fromK: kNext, prev: active, rev: cur.rev + 1 }, this.spot);
     this.timeline = { ...this.timeline, waves };
     this.aHello.send(this._hello());
     this.emit('waves', waves, null);
   }
 
   get waves() {
-    return cleanWaves(this.timeline && this.timeline.waves);
+    return cleanWaves(this.timeline && this.timeline.waves, this.spot);
+  }
+
+  // where the room surfs, and when
+  get spot() {
+    return this.roomInfo ? this.roomInfo.spot : 'margaret';
+  }
+
+  get time() {
+    return this.roomInfo ? this.roomInfo.time : 'day';
   }
 
   _hello() {
@@ -343,8 +376,8 @@ export class Net {
     if (msg.v !== MP.protocol) this.emit('warn', `${p.name} is on a different version of the game`);
     // someone changed the room's waves (same timeline, newer revision)
     if (msg.tl && this.timeline && msg.tl.origin === this.timeline.origin && msg.tl.seed === this.timeline.seed) {
-      const theirs = cleanWaves(msg.tl.waves);
-      if (theirs.rev > cleanWaves(this.timeline.waves).rev) {
+      const theirs = cleanWaves(msg.tl.waves, this.spot);
+      if (theirs.rev > cleanWaves(this.timeline.waves, this.spot).rev) {
         this.timeline = { ...this.timeline, waves: theirs };
         this.emit('waves', theirs, p.name);
       }
@@ -367,9 +400,17 @@ export class Net {
         if (res && res.tl && (!best || rtt < best.rtt)) best = { rtt, offset: res.now + rtt / 2 - t1, tl: res.tl };
       }
       if (!best || !this.room) return;
-      const changed = !this.timeline || best.tl.origin !== this.timeline.origin || best.tl.seed !== this.timeline.seed;
+      let changed = !this.timeline || best.tl.origin !== this.timeline.origin || best.tl.seed !== this.timeline.seed;
       this.timeline = best.tl;
       this.offset = best.offset;
+      // the room's spot and time of day are whatever its first player chose
+      const spot = cleanSpot(best.tl.spot),
+        time = cleanTime(best.tl.time);
+      if (spot !== this.roomInfo.spot || time !== this.roomInfo.time) {
+        Object.assign(this.roomInfo, { spot, time });
+        this._writePresence().catch(() => {});
+        changed = true;
+      }
       this.aHello.send(this._hello());
       if (changed) this.emit('timeline');
     } catch (e) {

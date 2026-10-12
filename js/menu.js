@@ -2,7 +2,7 @@
 // multiplayer room browser and lobby, and the in-game pause screen. Pure DOM; the game
 // is driven through the handler callbacks passed to the constructor.
 import { controls, PC_ACTIONS, QUEST_ACTIONS, QUEST_OPTIONS, RESERVED_KEYS, keyLabel, questLabel } from './bindings.js';
-import { WAVE_HEIGHTS } from './config.js';
+import { SPOTS, SPOT_IDS, cleanSpot } from './spots.js';
 import { SKIN_TONES, HAIR_COLORS, BOARD_COLORS, cleanLook, randomLook } from './character.js';
 import { CharacterPreview } from './preview.js';
 
@@ -39,11 +39,20 @@ function save(key, value) {
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-const cleanWaves = (w) => ({
-  mode: w && w.mode === 'random' ? 'random' : 'set',
-  height: Math.round(Math.min(WAVE_HEIGHTS.max, Math.max(WAVE_HEIGHTS.min, Number(w && w.height) || WAVE_HEIGHTS.default)) * 10) / 10,
-});
-const waveWords = (h) => (h < 0.9 ? 'knee to waist high' : h < 1.3 ? 'waist to chest high' : h < 1.8 ? 'about head high' : h < 2.5 ? 'overhead' : 'well overhead');
+// a wave setting, kept to the spot's range of sizes
+const cleanWaves = (w, spot) => {
+  const R = SPOTS[cleanSpot(spot)].heights;
+  return {
+    mode: w && w.mode === 'random' ? 'random' : 'set',
+    height: Math.round(Math.min(R.max, Math.max(R.min, Number(w && w.height) || R.default)) * 10) / 10,
+  };
+};
+const waveWords = (h) =>
+  h < 0.9 ? 'knee to waist high' : h < 1.3 ? 'waist to chest high' : h < 1.8 ? 'about head high' : h < 2.5 ? 'overhead' : h < 3.6 ? 'well overhead' : h < 4.8 ? 'double overhead' : 'triple overhead, and heavy';
+// your wave size is remembered for each spot (Margaret River's under the original key)
+const wavesKey = (spot) => (spot === 'margaret' ? 'lineup.waves' : `lineup.waves.${spot}`);
+const TIME_NAMES = { day: 'Midday', sunset: 'Sunset' };
+const spotImage = (id) => `assets/menu/spot-${id}.jpg`;
 
 // "Crouch (while surfing) is now C" for actions that gave up a key or button
 const moveText = (moved) => moved.map((m) => `${m.label} ${m.now === 'nothing' || m.now === 'Not set' ? 'is now unbound' : `is now ${m.now}`}.`).join(' ');
@@ -64,7 +73,11 @@ export class Menu {
     this.privacy = 'public';
     this.role = load('lineup.role', 'surfer') === 'drone' ? 'drone' : 'surfer';
     this.vrSupported = false;
-    this.waves = cleanWaves(load('lineup.waves', null));
+    // where you surf (singleplayer, and the rooms you create); in a room, the room's spot
+    // sets the wave sizes on offer
+    this.spot = cleanSpot(load('lineup.spot', null));
+    this.waveSpot = this.spot;
+    this.waves = cleanWaves(load(wavesKey(this.spot), null), this.spot);
     // your look: random the first time (so everyone looks different), then remembered
     this.look = cleanLook(load('lineup.look', null));
     save('lineup.look', this.look);
@@ -72,6 +85,7 @@ export class Menu {
 
     this.buildBoardPickers();
     this.buildWavePickers();
+    this.buildSpotPickers();
     this.buildTimePickers();
     this.buildLookPickers();
     this.bindMain();
@@ -242,6 +256,37 @@ export class Menu {
     } else this.preview.stop();
   }
 
+  // ---------------------------------------------------------------- surf spot
+  buildSpotPickers() {
+    for (const el of this.root.querySelectorAll('.spot-pick')) {
+      const opts = SPOT_IDS.map((id) => {
+        const S = SPOTS[id];
+        return `<button type="button" class="spot-opt" role="radio" data-spot="${id}" aria-checked="false"><img src="${spotImage(id)}" alt="" /><b>${esc(S.name)}</b><small>${esc(S.place)} · ${esc(S.blurb)}</small></button>`;
+      }).join('');
+      el.innerHTML = `<div class="wave-row"><span class="wave-label">Location</span></div><div class="spot-opts" role="radiogroup" aria-label="Location">${opts}</div>`;
+      el.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-spot]');
+        if (b) this.setSpot(b.dataset.spot, true);
+      });
+    }
+    this.setSpot(this.spot);
+  }
+
+  // Your spot (singleplayer, and rooms you create). Its wave sizes come with it.
+  setSpot(id, fromUser = false) {
+    this.spot = cleanSpot(id);
+    for (const b of this.root.querySelectorAll('[data-spot]')) b.setAttribute('aria-checked', String(b.dataset.spot === this.spot));
+    if (!this.inRoom) {
+      this.waveSpot = this.spot;
+      this.setWaves(load(wavesKey(this.spot), null));
+    }
+    if (fromUser) {
+      save('lineup.spot', this.spot);
+      if (this.h.onSpot) this.h.onSpot(this.spot);
+      if (this.h.onWaves && !this.inRoom) this.h.onWaves(this.waves);
+    }
+  }
+
   // ---------------------------------------------------------------- time of day
   buildTimePickers() {
     for (const el of this.root.querySelectorAll('.tod-pick')) {
@@ -269,9 +314,8 @@ export class Menu {
 
   // ---------------------------------------------------------------- wave size
   buildWavePickers() {
-    const { min, max } = WAVE_HEIGHTS;
     for (const el of this.root.querySelectorAll('.wave-pick')) {
-      el.innerHTML = `<div class="wave-row"><span class="wave-label">Waves</span><div class="seg" role="radiogroup" aria-label="Wave size"><button type="button" role="radio" data-wmode="set">Set height</button><button type="button" role="radio" data-wmode="random">Random</button></div></div><input type="range" min="${min}" max="${max}" step="0.1" aria-label="Wave height" /><p class="wave-desc"></p>`;
+      el.innerHTML = `<div class="wave-row"><span class="wave-label">Waves</span><div class="seg" role="radiogroup" aria-label="Wave size"><button type="button" role="radio" data-wmode="set">Set height</button><button type="button" role="radio" data-wmode="random">Random</button></div></div><input type="range" step="0.1" aria-label="Wave height" /><p class="wave-desc"></p>`;
       el.addEventListener('click', (e) => {
         const b = e.target.closest('[data-wmode]');
         if (b) this.setWaves({ ...this.waves, mode: b.dataset.wmode }, true);
@@ -286,20 +330,24 @@ export class Menu {
 
   // Show a wave setting (the room's while you're in one). fromUser: the player changed it.
   setWaves(cfg, fromUser = false) {
-    this.waves = cleanWaves(cfg);
+    this.waves = cleanWaves(cfg, this.waveSpot);
     const { mode, height } = this.waves;
+    const R = SPOTS[this.waveSpot].heights;
     for (const el of this.root.querySelectorAll('.wave-pick')) {
       for (const b of el.querySelectorAll('[data-wmode]')) {
         b.classList.toggle('on', b.dataset.wmode === mode);
         b.setAttribute('aria-checked', String(b.dataset.wmode === mode));
       }
       const range = el.querySelector('input');
+      range.min = R.min;
+      range.max = R.max;
       if (document.activeElement !== range) range.value = height;
       range.disabled = mode === 'random';
-      el.querySelector('.wave-desc').textContent = mode === 'random' ? 'Sets build and fade over a few minutes, from knee high to well overhead.' : `${height.toFixed(1)} m · ${waveWords(height)}`;
+      el.querySelector('.wave-desc').textContent =
+        mode === 'random' ? `Sets build and fade over a few minutes, from ${R.randomMin.toFixed(1)} m to ${R.randomMax.toFixed(1)} m.` : `${height.toFixed(1)} m · ${waveWords(height)}`;
     }
     if (fromUser) {
-      save('lineup.waves', { mode, height });
+      save(wavesKey(this.waveSpot), { mode, height });
       if (this.h.onWaves) this.h.onWaves(this.waves);
     }
   }
@@ -592,7 +640,7 @@ export class Menu {
         return;
       }
       status.textContent = 'Creating room…';
-      if (this.h.onCreateRoom) this.h.onCreateRoom({ roomName: name, isPrivate: this.privacy === 'private', passcode: pass, waves: this.waves });
+      if (this.h.onCreateRoom) this.h.onCreateRoom({ roomName: name, isPrivate: this.privacy === 'private', passcode: pass, waves: this.waves, spot: this.spot, time: this.settings.time });
     });
     document.getElementById('room-list').addEventListener('click', (e) => {
       const b = e.target.closest('[data-join]');
@@ -640,13 +688,26 @@ export class Menu {
       .map((r) => {
         const full = r.count >= maxPlayers;
         const who = r.players.slice(0, 4).join(', ') + (r.players.length > 4 ? '…' : '');
-        return `<li><span class="room-name"><b>${r.isPrivate ? '<span class="lock" title="Private">🔒</span>' : ''}${esc(r.name)}</b><small>${esc(who)}</small></span><span class="room-count">${r.count}/${maxPlayers}</span><button type="button" class="btn" data-join="${esc(r.id)}" ${full ? 'disabled' : ''}>${full ? 'Full' : 'Join'}</button></li>`;
+        const where = `${SPOTS[cleanSpot(r.spot)].name} · ${TIME_NAMES[r.time] || TIME_NAMES.day}`;
+        return `<li><span class="room-name"><b>${r.isPrivate ? '<span class="lock" title="Private">🔒</span>' : ''}${esc(r.name)}</b><small>${esc(where)} · ${esc(who)}</small></span><span class="room-count">${r.count}/${maxPlayers}</span><button type="button" class="btn" data-join="${esc(r.id)}" ${full ? 'disabled' : ''}>${full ? 'Full' : 'Join'}</button></li>`;
       })
       .join('');
     status.textContent = rooms.length === 0 ? 'No rooms yet. Create one and invite your friends.' : shown.length === 0 ? `No rooms match “${q}”.` : '';
   }
 
-  // room: {id, name, isPrivate}, players: [{name, playing, me}]
+  // You're in a room (or its spot or time of day just changed): its wave sizes and where it
+  // surfs. The time of day is the room's, so it isn't on the pause screen.
+  enterRoom(room) {
+    this.inRoom = true;
+    this.waveSpot = cleanSpot(room.spot);
+    const S = SPOTS[this.waveSpot];
+    const where = document.getElementById('lobby-where');
+    where.hidden = false;
+    where.innerHTML = `<img src="${spotImage(this.waveSpot)}" alt="" /><span><b>${esc(S.name)}</b><small>${esc(S.place)} · ${TIME_NAMES[room.time] || TIME_NAMES.day} · the same for everyone in the room</small></span>`;
+    for (const el of this.root.querySelectorAll('.pause-tod')) el.hidden = true;
+  }
+
+  // room: {id, name, isPrivate, spot, time}, players: [{name, playing, me}]
   renderLobby(room, players) {
     this.inRoom = !!room;
     if (!room) return;
@@ -657,7 +718,7 @@ export class Menu {
       .join('');
     const pr = document.getElementById('pause-room');
     pr.hidden = false;
-    pr.textContent = `${room.name} · ${players.length} player${players.length === 1 ? '' : 's'}`;
+    pr.textContent = `${room.name} · ${SPOTS[cleanSpot(room.spot)].name} · ${players.length} player${players.length === 1 ? '' : 's'}`;
     this.root.querySelector('.pause-name').hidden = false;
     document.querySelector('[data-quit]').textContent = 'Leave room';
   }
@@ -669,7 +730,11 @@ export class Menu {
   leftRoom() {
     this.inRoom = false;
     this.setLobbyStatus('');
-    this.setWaves(load('lineup.waves', null)); // back to your own setting
+    // back to your own spot and wave size
+    this.waveSpot = this.spot;
+    this.setWaves(load(wavesKey(this.spot), null));
+    document.getElementById('lobby-where').hidden = true;
+    for (const el of this.root.querySelectorAll('.pause-tod')) el.hidden = false;
     document.getElementById('pause-room').hidden = true;
     this.root.querySelector('.pause-name').hidden = true;
     document.querySelector('[data-quit]').textContent = 'Main menu';

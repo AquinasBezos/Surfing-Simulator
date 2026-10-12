@@ -7,7 +7,7 @@
 // airs, walking on a longboard, and snap / cutback / tailslide manoeuvres.
 import * as THREE from 'three';
 import { GRAVITY, LINEUP_Z, WAVE, WAVE_HEIGHTS, BOARDS } from './config.js';
-import { clamp, smoothstep, mix } from './wave.js';
+import { clamp, smoothstep, mix, CURL } from './wave.js';
 
 export const STATE = { PRONE: 'prone', POPUP: 'popup', STANDING: 'standing', WIPEOUT: 'wipeout', SITTING: 'sitting' };
 
@@ -508,6 +508,8 @@ export class Surfer {
       return;
     }
     const un = s.un;
+    // a wider barrel (some spots) lands its lip further out in front
+    const tip = CURL.tipShift;
     // small waves: the lip and the whitewater haven't the power to knock you off, so you can
     // keep riding the foam after the wave breaks
     const small = s.H < WAVE_HEIGHTS.small;
@@ -515,7 +517,7 @@ export class Surfer {
       // over the falls: sucked up the face of a pitching section
       if (s.H > 1.0 && s.yb > 0.8 && s.b > 0.3 && un > -0.3 && un < 0.65) return this.wipeout('Over the falls!');
       // the lip lands on you
-      if (!small && s.b > 0.55 && un > 1.2 && un < 1.75 && s.kappa < 0.95) return this.wipeout('Smashed by the lip!');
+      if (!small && s.b > 0.55 && un > 1.2 + tip && un < 1.75 + tip && s.kappa < 0.95) return this.wipeout('Smashed by the lip!');
     }
     this.onWhitewater = false;
     if (st === STATE.STANDING) {
@@ -526,12 +528,12 @@ export class Surfer {
         this.emit('closeout', {});
         return;
       }
-      if (s.kappa > 0.5 && un > -0.3 && un < 2.4) {
+      if (s.kappa > 0.5 && un > -0.3 && un < 2.4 + tip) {
         if (!small) return this.wipeout('Caught inside the whitewater');
         this.onWhitewater = true;
       }
       // the lip overhead: crouch to fit under it (a small wave's lip only hits your legs)
-      if (!small && s.b > 0.25 && un > 0.2 && un < 1.7) {
+      if (!small && s.b > 0.25 && un > 0.2 && un < 1.7 + tip) {
         const c = this.model.tubeCeiling(s.wave, this.x, this.z, this.y + 0.35);
         this.ceiling = c - this.y;
         const head = mix(1.8, 1.05, this.crouch);
@@ -540,12 +542,12 @@ export class Surfer {
           if (this.lipT > 0.08) return this.wipeout('Clipped by the lip! Crouch under it');
         } else this.lipT = 0;
       } else this.lipT = 0;
-      this.inTube = s.b > 0.6 && s.kappa < 0.35 && un > 0.38 && un < 1.25 && s.H > 1.2;
+      this.inTube = s.b > 0.6 && s.kappa < 0.35 && un > 0.38 && un < 1.25 + tip && s.H > 1.2;
       this.riding = un > -0.7 && un < 3 && this.speed > 2.2;
     } else {
       this.riding = false;
       // sitting in the impact zone: a big wave's whitewater washes you off the board
-      if (st === STATE.SITTING && !small && s.kappa > 0.5 && un > -0.3 && un < 2.0) return this.wipeout('Caught inside the whitewater');
+      if (st === STATE.SITTING && !small && s.kappa > 0.5 && un > -0.3 && un < 2.0 + tip) return this.wipeout('Caught inside the whitewater');
     }
   }
 

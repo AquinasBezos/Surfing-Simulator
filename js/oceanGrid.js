@@ -5,7 +5,7 @@
 // while the ocean still reaches the horizon.
 import * as THREE from 'three';
 import { WAVE, WORLD_RADIUS } from './config.js';
-import { crestOffset } from './wave.js';
+import { crestOffset, peelPoints } from './wave.js';
 
 function distribute(out, n, lo, hi, spacing) {
   // Find a scale so that marching lo -> hi with step scale*spacing(p) takes exactly n-1 steps.
@@ -93,10 +93,11 @@ export class OceanGrid {
       const d = Math.max(0, Math.abs(camRow - w.crestZ0) - 3 * S);
       cores.push({ c: w.crestZ0, S, k: 1 + d / 35 });
       if (w.tau > -2) {
-        const px = w.peakX + w.dir * WAVE.peelSpeed * Math.max(w.tau, 0);
-        const bx = w.peakX - w.dir * WAVE.backSpeed * Math.max(w.tau, 0);
+        const [px, bx] = peelPoints(w);
         const near = 1 + Math.max(0, Math.abs(camRow - w.crestZ0) - 3 * S) / 30;
         peels.push({ x: px, k: near }, { x: bx, k: near * 1.5 });
+        // a wide first section pitches all at once: detail across all of it
+        if (WAVE.breakWidth > 0) for (let f = 0.25; f < 1; f += 0.25) peels.push({ x: bx + (px - bx) * f, k: near * 1.5 });
       }
     }
     const rowSpacing = (z) => {

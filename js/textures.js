@@ -228,6 +228,111 @@ export function createNoiseTexture(size = 512) {
   return tex;
 }
 
+// brown, purple-brown, pale (dead) and grey-green coral; sand
+const REEF_KINDS = [
+  [0.3, 0.2, 0.08],
+  [0.36, 0.25, 0.11],
+  [0.3, 0.15, 0.17],
+  [0.6, 0.55, 0.42],
+  [0.22, 0.27, 0.15],
+  [0.46, 0.36, 0.2],
+];
+const REEF_SAND = [0.7, 0.64, 0.48];
+
+// Coral reef (Teahupo'o), tileable. RGB: colour (linear) of coral colonies of a few kinds
+// with dark cracks between and sand in the gaps; A: relief (how high the coral stands).
+// Returns the texture, a bump map (R: relief plus rough detail) and relief(u, v) for
+// building the reef's shape.
+export function createReefTexture(size = 512) {
+  const rand = rng(4242);
+  const fine = fbmFactory(32, 3, rand);
+  const rough = fbmFactory(64, 2, rand);
+  const broad = fbmFactory(4, 4, rand);
+  // Worley cells that also say which cell (for a colour per colony)
+  const cellsA = 15;
+  const ptsA = Float32Array.from({ length: cellsA * cellsA * 3 }, rand);
+  const worleyA = (u, v) => {
+    const x = u * cellsA,
+      y = v * cellsA;
+    const xi = Math.floor(x),
+      yi = Math.floor(y);
+    let f1 = 9,
+      f2 = 9,
+      id = 0;
+    for (let j = -1; j <= 1; j++)
+      for (let i = -1; i <= 1; i++) {
+        const wx = (((xi + i) % cellsA) + cellsA) % cellsA,
+          wy = (((yi + j) % cellsA) + cellsA) % cellsA;
+        const k = (wy * cellsA + wx) * 3;
+        const d = Math.hypot(xi + i + ptsA[k] - x, yi + j + ptsA[k + 1] - y);
+        if (d < f1) {
+          f2 = f1;
+          f1 = d;
+          id = ptsA[k + 2];
+        } else if (d < f2) f2 = d;
+      }
+    return [f1, f2, id];
+  };
+  const worleyB = worleyFactory(44, rand);
+  const relief = new Float32Array(size * size);
+  const data = new Uint8Array(size * size * 4);
+  const bump = new Uint8Array(size * size * 4);
+  const sat = (x) => Math.max(0, Math.min(1, x));
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++) {
+      const u = x / size,
+        v = y / size;
+      const [a1, , id] = worleyA(u, v);
+      const [b1, b2] = worleyB(u, v);
+      const crackB = sat((b2 - b1) / 0.14);
+      const fn = fine(u, v);
+      const rg = rough(u, v);
+      // soft mounds (colonies), knobbly heads on them and between
+      const dome = Math.pow(sat(1 - a1 / (0.75 + 0.35 * fn)), 0.8);
+      const heads = sat(1 - b1 * 1.6) * crackB;
+      const n = broad(u, v);
+      const r = sat(0.5 * dome + 0.4 * heads + 0.22 * (rg - 0.5) - 0.1 * (1 - n));
+      relief[y * size + x] = r;
+      const sand = sat((n - 0.58) / 0.12) * sat(1 - r * 2.2);
+      // patches of a few kinds of coral, blending into each other
+      const kt = sat(fn * 1.25 - 0.12 + 0.35 * (id - 0.5)) * (REEF_KINDS.length - 1);
+      const k0 = Math.floor(kt);
+      const kf = kt - k0;
+      const ka = REEF_KINDS[k0],
+        kb = REEF_KINDS[Math.min(k0 + 1, REEF_KINDS.length - 1)];
+      const shade = (0.5 + 0.6 * heads + 0.25 * dome) * (0.8 + 0.4 * rg);
+      const i = (y * size + x) * 4;
+      for (let ch = 0; ch < 3; ch++) data[i + ch] = sat((ka[ch] + (kb[ch] - ka[ch]) * kf) * shade * (1 - sand) + REEF_SAND[ch] * (0.85 + 0.3 * rg) * sand) * 255;
+      data[i + 3] = r * 255;
+      bump[i] = bump[i + 1] = bump[i + 2] = sat(r * 0.75 + rg * 0.35) * 255;
+      bump[i + 3] = 255;
+    }
+  const make = (d) => {
+    const t = new THREE.DataTexture(d, size, size, THREE.RGBAFormat);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.magFilter = THREE.LinearFilter;
+    t.minFilter = THREE.LinearMipmapLinearFilter;
+    t.generateMipmaps = true;
+    t.anisotropy = 8;
+    t.needsUpdate = true;
+    return t;
+  };
+  const tex = make(data);
+  const bumpTex = make(bump);
+  const at = (ix, iy) => relief[(((iy % size) + size) % size) * size + (((ix % size) + size) % size)];
+  // bilinear, tiling
+  const sample = (u, v) => {
+    const fx = u * size - 0.5,
+      fy = v * size - 0.5;
+    const ix = Math.floor(fx),
+      iy = Math.floor(fy);
+    const tx = fx - ix,
+      ty = fy - iy;
+    return (at(ix, iy) * (1 - tx) + at(ix + 1, iy) * tx) * (1 - ty) + (at(ix, iy + 1) * (1 - tx) + at(ix + 1, iy + 1) * tx) * ty;
+  };
+  return { texture: tex, bump: bumpTex, relief: sample };
+}
+
 // Deck graphics for the board: u along the length (tail -> nose), v across.
 // color: the deck / bottom colour (#rrggbb); the default is the classic white (or cream).
 export function createBoardTexture(type = 'shortboard', color = null) {

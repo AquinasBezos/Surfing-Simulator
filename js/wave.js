@@ -46,12 +46,13 @@ export function waveScale(height) {
 //   random : a slow random walk (smoothed value noise over the wave number, a new target
 //            every 12 waves, about four and a half minutes), so the swell builds and fades
 //            gradually and never throws up a freak wave
-// Deterministic in (seed, k), so every player in a room gets the same waves.
-export function waveHeight(seed, k, cfg) {
+// Deterministic in (seed, k), so every player in a room gets the same waves. range: the
+// spot's wave sizes (the one being played by default).
+export function waveHeight(seed, k, cfg, range = WAVE_HEIGHTS) {
   const jitter = 1 + 0.06 * (hash01(seed, k) * 2 - 1);
   if (!cfg || cfg.mode !== 'random') {
-    const h = cfg && Number.isFinite(cfg.height) ? cfg.height : WAVE_HEIGHTS.default;
-    return clamp(h, WAVE_HEIGHTS.min, WAVE_HEIGHTS.max) * jitter;
+    const h = cfg && Number.isFinite(cfg.height) ? cfg.height : range.default;
+    return clamp(h, range.min, range.max) * jitter;
   }
   const span = 12;
   const i = Math.floor(k / span);
@@ -59,10 +60,10 @@ export function waveHeight(seed, k, cfg) {
   const a = hash01(seed ^ 0x51ed27, i);
   const b = hash01(seed ^ 0x51ed27, i + 1);
   const n = a + (b - a) * f * f * (3 - 2 * f);
-  return mix(WAVE_HEIGHTS.randomMin, WAVE_HEIGHTS.randomMax, n) * jitter;
+  return mix(range.randomMin, range.randomMax, n) * jitter;
 }
 
-// Curl (barrel) constants, normalised by the wave scale.
+// Curl (barrel) shape, normalised by the wave scale: the spot's (see applySpotWave).
 export const CURL = {
   rin: 0.4, // tube radius
   yc: 0.4, // tube centre height
@@ -70,7 +71,46 @@ export const CURL = {
   sweep: 3.92699, // 225 degrees of lip rotation
   yb0: 0.45, // back-side height where the lip's outer surface starts
   acoshYc: 1.03172, // acosh(1/sqrt(yc))
+  lfLo: 1.25, // face length, gentle .. steep
+  lfHi: 0.55,
+  lbLo: 2.2, // back length, gentle .. steep
+  lbHi: 1.6,
+  trough: 0, // water drawn down in front of the wave (a reef sucking dry)
+  lip: 0.42, // lip thickness
+  tip: 0, // where the lip lands (normalised distance ahead of the crest)...
+  tipShift: 0, // ...and how much further than at Margaret River (the rules are tuned there)
 };
+
+// Where the falling lip lands, for the curl shape c.
+function lipTip(c) {
+  const zc = c.lfHi * c.acoshYc + c.rin * c.ex;
+  return zc + c.ex * (c.rin * 1.22 + 0.04) * Math.cos(Math.PI - c.sweep);
+}
+const TIP0 = lipTip(CURL);
+CURL.tip = TIP0;
+
+// Make `spot` the one being played: its wave goes into WAVE, WAVE_HEIGHTS and CURL, which
+// the physics, the ocean grid and (through writeSpotUniforms) the shaders read.
+export function applySpotWave(spot) {
+  const { curl, ...wave } = spot.wave;
+  Object.assign(WAVE, wave);
+  Object.assign(WAVE_HEIGHTS, spot.heights);
+  Object.assign(CURL, {
+    rin: curl.rin,
+    yc: curl.yc,
+    ex: curl.ex,
+    sweep: curl.sweep,
+    acoshYc: Math.acosh(1 / Math.sqrt(curl.yc)),
+    lfLo: curl.lf[0],
+    lfHi: curl.lf[1],
+    lbLo: curl.lb[0],
+    lbHi: curl.lb[1],
+    trough: curl.trough,
+    lip: curl.lip,
+  });
+  CURL.tip = lipTip(CURL);
+  CURL.tipShift = CURL.tip - TIP0;
+}
 
 export function crestOffset(x) {
   return -Math.min(WAVE.curveMax, WAVE.curveK * x * x);
@@ -78,15 +118,32 @@ export function crestOffset(x) {
 
 // Normalised base (unbroken) profile. Returns normalised height; writes Lf/Lb into out.
 export function baseProfile(un, steep, out) {
-  const Lf = mix(1.25, 0.55, steep);
-  const Lb = mix(2.2, 1.6, steep);
+  const Lf = mix(CURL.lfLo, CURL.lfHi, steep);
+  const Lb = mix(CURL.lbLo, CURL.lbHi, steep);
   out.Lf = Lf;
   out.Lb = Lb;
   if (un >= 0) {
     const t = (un - 2.2 * Lf) / (1.3 * Lf);
-    return sech2(un / Lf) - 0.13 * steep * Math.exp(-t * t) * smoothstep(0, Lf, un);
+    let y = sech2(un / Lf) - 0.13 * steep * Math.exp(-t * t) * smoothstep(0, Lf, un);
+    if (CURL.trough > 0) {
+      const d = (un - 1.7 * Lf) / (1.2 * Lf);
+      y -= CURL.trough * steep * Math.exp(-d * d) * smoothstep(0, Lf, un);
+    }
+    return y;
   }
   return 0.8 * sech2(un / Lb) + 0.2 * sech2(un / (3.5 * Lb));
+}
+
+// How long ago the section at dx (along the crest from the peak; side = dx * dir) started
+// breaking, given the time since the peak did. A wide first section pitches all at once.
+export function sectionAge(tau, dx, side) {
+  return side >= 0 ? tau - Math.max(side - WAVE.breakWidth, 0) / WAVE.peelSpeed : tau - Math.max(-side - WAVE.backWidth, 0) / WAVE.backSpeed;
+}
+
+// Where the breaking point has got to on the peel side, and on the other side.
+export function peelPoints(w, tau = Math.max(w.tau, 0)) {
+  const d = w.dir;
+  return [w.peakX + d * (WAVE.breakWidth + WAVE.peelSpeed * tau), w.peakX - d * (WAVE.backWidth + WAVE.backSpeed * tau)];
 }
 
 class Wave {
@@ -154,8 +211,9 @@ export class WaveModel {
     slot.active = true;
     slot.id = this.nextId++;
     slot.crestZ0 = z;
-    slot.peakX = (Math.random() * 2 - 1) * 5;
+    slot.peakX = (Math.random() * 2 - 1) * WAVE.peakSpread;
     slot.dir = Math.random() < 0.5 ? 1 : -1;
+    if (WAVE.dir) slot.dir = WAVE.dir;
     slot.height = waveHeight(this.seed, this.nextId, this.heights);
     slot.S = waveScale(slot.height);
     this._derive(slot);
@@ -173,9 +231,9 @@ export class WaveModel {
     const c = w.crestZ0;
     w.tau = (c - WAVE.breakZ) / WAVE.speed;
     w.fade = smoothstep(WAVE.spawnZ, WAVE.spawnZ + 25, c) * (1 - smoothstep(WAVE.dieStartZ, WAVE.dieEndZ, c));
-    const shoal = smoothstep(WAVE.spawnZ, WAVE.breakZ, c);
-    w.H = w.height * (0.5 + 0.5 * shoal) * w.fade;
-    w.steepG = smoothstep(WAVE.spawnZ + 15, WAVE.breakZ - 4, c);
+    const shoal = smoothstep(WAVE.shoalFrom, WAVE.breakZ, c);
+    w.H = w.height * (WAVE.shoalBase + (1 - WAVE.shoalBase) * shoal) * w.fade;
+    w.steepG = smoothstep(WAVE.steepFrom, WAVE.breakZ - 4, c);
     w.collapseG = smoothstep(WAVE.dieStartZ - 25, WAVE.dieStartZ + 12, c);
   }
 
@@ -216,8 +274,9 @@ export class WaveModel {
       if (w.id !== `s${k}`) {
         const r = seededRandom(seed ^ Math.imul(k, 0x9e3779b1));
         w.id = `s${k}`;
-        w.peakX = (r() * 2 - 1) * 5;
+        w.peakX = (r() * 2 - 1) * WAVE.peakSpread;
         w.dir = r() < 0.5 ? 1 : -1;
+        if (WAVE.dir) w.dir = WAVE.dir;
         const hs = this.schedule.heights;
         w.height = waveHeight(seed, k, hs && hs.prev && hs.fromK != null && k < hs.fromK ? hs.prev : hs);
         w.S = waveScale(w.height);
@@ -249,9 +308,8 @@ export class WaveModel {
   section(w, x, out = this._sec) {
     const dx = x - w.peakX;
     const side = dx * w.dir;
-    const v = side >= 0 ? WAVE.peelSpeed : WAVE.backSpeed;
-    const age = w.tau - Math.abs(dx) / v;
-    const e = side >= 0 ? Math.max(side - 40, 0) / 260 : side / 45;
+    const age = sectionAge(w.tau, dx, side);
+    const e = side >= 0 ? Math.max(side - WAVE.peelFlat, 0) / WAVE.peelFall : side / WAVE.backFall;
     const env = Math.exp(-e * e);
     const kappa = Math.max(smoothstep(WAVE.tTube, WAVE.tTube + WAVE.tCollapse, age), w.collapseG);
     out.H = w.H * env * (1 - 0.5 * kappa);
@@ -274,7 +332,7 @@ export class WaveModel {
     const sB = un < 0 ? clamp((yb - yb0) / (1 - yb0), 0, 1) : 0;
     const s = Math.max(sF, sB);
     if (s > 0 && b > 0) {
-      const lipThick = 0.04 + 0.42 * Math.pow(1 - s, 1.5);
+      const lipThick = 0.04 + CURL.lip * Math.pow(1 - s, 1.5);
       const dz = (un - zc) / ex;
       const dy = yb - yc;
       const phiB = Math.atan2(dy, dz);

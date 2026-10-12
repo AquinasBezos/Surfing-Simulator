@@ -1,10 +1,12 @@
 // Ocean surface: adaptive grid + custom water shader (refraction through clear water onto
-// a sandy, caustic-lit seabed, Fresnel sky reflection, sun glints, light transmission and
-// sub-surface glow through thin crests and the barrel's lip, procedural foam).
+// a caustic-lit seabed, Fresnel sky reflection, sun glints, light transmission and
+// sub-surface glow through thin crests and the barrel's lip, procedural foam). The seabed,
+// what it looks like and the colour of the water belong to the surf spot.
 import * as THREE from 'three';
 import { OceanGrid } from './oceanGrid.js';
-import { WAVE_GLSL, createWaveUniforms } from './shaders/waveChunk.js';
-import { SEABED_GLSL } from './terrain.js';
+import { WAVE_GLSL, createWaveUniforms, writeSpotUniforms } from './shaders/waveChunk.js';
+import { seabedGLSL } from './terrain.js';
+import { SPOTS } from './spots.js';
 import { SUN_DIR, SUN_COLOR } from './config.js';
 import { markOceanStencil } from './underwater.js';
 
@@ -43,7 +45,7 @@ void main() {
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }`;
 
-const FRAG = /* glsl */ `
+const FRAG = (seabed) => /* glsl */ `
 uniform float uTime;
 uniform samplerCube uEnv;
 uniform sampler2D uNormalTex;
@@ -55,27 +57,20 @@ uniform vec3 uUWLight;  // overall light under the water (white at midday)
 uniform float uRipple;
 uniform float uHQ;
 uniform float uCamUnder;
+uniform vec3 uAbsorb;   // per metre
+uniform vec3 uScatter;  // in-scattered body colour
+uniform vec3 uSSS;      // light through thin water
+uniform vec3 uDeep;     // the water around you when you're under
 varying vec3 vWorld;
 varying vec3 vNormal;
 varying vec4 vInfo;
 varying vec2 vRest;
 
-${SEABED_GLSL}
+${seabed}
 
-const vec3 ABSORB = vec3(0.46, 0.088, 0.105);   // per metre: clear, slightly green coastal water
-const vec3 SCATTER = vec3(0.004, 0.072, 0.066);  // in-scattered body colour
-const vec3 SSS = vec3(0.05, 0.85, 0.62);
-
-vec3 sandColor(vec2 p) {
-  float s1 = texture(uNoise, p * 0.021).b;
-  float s2 = texture(uNoise, p * 0.13 + 0.37).b;
-  float patches = texture(uNoise, p * 0.0042 + 0.11).a;
-  vec3 sand = vec3(0.62, 0.5, 0.33) * (0.72 + 0.42 * s1) * (0.88 + 0.22 * s2);
-  // darker weed / rock patches
-  vec3 weed = vec3(0.17, 0.16, 0.09);
-  float wm = smoothstep(0.56, 0.68, patches + 0.25 * s1);
-  return mix(sand, weed, wm * 0.75);
-}
+#define ABSORB uAbsorb
+#define SCATTER uScatter
+#define SSS uSSS
 
 float caustics(vec2 p) {
   float a = texture(uNoise, p * 0.16 + vec2(uTime * 0.021, uTime * 0.013)).g;
@@ -93,7 +88,15 @@ void main() {
   vec3 V = toCam / dist;
 
   float bedY = seabedY(vWorld.xz);
-  if (bedY > vWorld.y + 0.03) discard;
+  if (bedY > vWorld.y + 0.03) {
+    if (bedY > -0.5) discard; // land: drawn by the terrain
+    // a reef left bare as a big wave draws the water off it
+    vec3 wet = bedColor(vWorld.xz) * (uSunColor * max(uSunDir.y, 0.0) * 0.28 + uSkyAmb * 0.9);
+    gl_FragColor = vec4(wet, 1.0);
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+    return;
+  }
   float depth = max(vWorld.y - bedY, 0.0);
 
   // ---- small-scale ripples (glassy conditions) ----
@@ -123,7 +126,7 @@ void main() {
     vec3 Tu = refract(-V, N, 1.333);
     // outside the window the surface mirrors the water below; ripples make it shimmer
     vec3 Rd = reflect(-V, N);
-    vec3 below = mix(vec3(0.014, 0.14, 0.14), vec3(0.003, 0.035, 0.045), pow(clamp(-Rd.y, 0.0, 1.0), 0.6)) * uUWLight;
+    vec3 below = mix(uDeep * 1.17, uDeep * 0.32, pow(clamp(-Rd.y, 0.0, 1.0), 0.6)) * uUWLight;
     vec3 ucol;
     if (dot(Tu, Tu) < 1e-4) {
       ucol = below;
@@ -138,7 +141,7 @@ void main() {
     float fp = texture(uNoise, fuvU * 0.16 + vec2(0.0, -uTime * 0.03)).r * 0.6 + texture(uNoise, fuvU * 0.047 + 0.3).r * 0.4;
     float fm = smoothstep(1.0 - fa * 0.7, 1.15 - fa * 0.55, fp + 0.15) * min(fa * 1.4, 1.0);
     ucol = mix(ucol, vec3(0.75, 0.95, 0.95) * 1.4 * uUWLight, clamp(fm + smoothstep(1.0, 1.7, fa) * 0.7, 0.0, 1.0));
-    ucol = mix(ucol, vec3(0.01, 0.12, 0.12) * uUWLight, 1.0 - exp(-dist * 0.085));
+    ucol = mix(ucol, uDeep * uUWLight, 1.0 - exp(-dist * 0.085));
     gl_FragColor = vec4(ucol, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -171,7 +174,7 @@ void main() {
   vec3 sunDown = uSunColor * uSunDir.y;
   vec3 skyAmb = uSkyAmb;
   vec3 bedLight = (sunDown * (0.32 + caustics(bedP.xz) * smoothstep(14.0, 1.5, depth) * 0.9) + skyAmb * 0.35) * exp(-ABSORB * depth * 1.3);
-  vec3 bedCol = sandColor(bedP.xz) * bedLight;
+  vec3 bedCol = bedColor(bedP.xz) * bedLight;
   vec3 through = textureLod(uEnv, normalize(mix(T, -V, 0.5)), 2.0).rgb;
   vec3 behind = mix(bedCol, through, exitW);
   vec3 trans = exp(-ABSORB * tPath);
@@ -188,7 +191,7 @@ void main() {
 
   // ---- foam ----
   float shore = smoothstep(0.55, 0.02, depth) * (0.55 + 0.45 * sin(uTime * 0.9 + vWorld.x * 0.07 + vWorld.z * 0.4));
-  float foamAmt = clamp(foamIn + shore * 0.8, 0.0, 1.6);
+  float foamAmt = clamp(foamIn + shore * 0.8 + bedFoam(vWorld.xz), 0.0, 1.6);
   vec2 fuv = vec2(vWorld.x, vWorld.z + vWorld.y * 0.9);
   float f1 = texture(uNoise, fuv * 0.16 + vec2(0.0, -uTime * 0.03)).r;
   float f2 = texture(uNoise, fuv * 0.047 + 0.3).r;
@@ -210,7 +213,7 @@ void main() {
   vec3 haze = textureLod(uEnv, hzDir, 3.0).rgb;
   col = mix(col, haze, 1.0 - exp(-dist * 0.00024));
 
-  if (under) col = mix(col, vec3(0.02, 0.2, 0.2) * uUWLight, 0.35);
+  if (under) col = mix(col, uDeep * 1.7 * uUWLight, 0.35);
 
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
@@ -235,13 +238,20 @@ export class Ocean {
       uRipple: { value: 0.14 },
       uHQ: { value: 1 },
       uCamUnder: { value: 0 },
+      uAbsorb: { value: new THREE.Vector3() },
+      uScatter: { value: new THREE.Vector3() },
+      uSSS: { value: new THREE.Vector3() },
+      uDeep: { value: new THREE.Vector3() },
+      uReefTex: { value: null },
     };
+    this.spot = 'margaret';
     this.material = new THREE.ShaderMaterial({
       uniforms: this.uniforms,
       vertexShader: VERT,
-      fragmentShader: FRAG,
+      fragmentShader: FRAG(seabedGLSL(this.spot)),
       side: THREE.DoubleSide,
     });
+    this.setWater(SPOTS.margaret.water);
     markOceanStencil(this.material);
     this.mesh = new THREE.Mesh(this.grid.geometry, this.material);
     this.mesh.frustumCulled = false;
@@ -256,6 +266,25 @@ export class Ocean {
     this.uniforms.uHQ.value = hq ? 1 : 0;
     old.geometry.dispose();
     old.texture.dispose();
+  }
+
+  // A surf spot: its wave, seabed and water. reefTex: the coral texture, where there's a reef.
+  setSpot(id, reefTex = null) {
+    writeSpotUniforms(this.uniforms);
+    this.setWater(SPOTS[id].water);
+    this.uniforms.uReefTex.value = reefTex;
+    if (id === this.spot) return;
+    this.spot = id;
+    this.material.fragmentShader = FRAG(seabedGLSL(id));
+    this.material.needsUpdate = true;
+  }
+
+  setWater(w) {
+    const u = this.uniforms;
+    u.uAbsorb.value.set(...w.absorb);
+    u.uScatter.value.set(...w.scatter);
+    u.uSSS.value.set(...w.sss);
+    u.uDeep.value.set(...w.deep);
   }
 
   update(focus) {

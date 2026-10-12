@@ -12,6 +12,8 @@
             "p": { ".validate": "newData.isBoolean()" },
             "h": { ".validate": "newData.isString() && newData.val().length <= 16" },
             "t": { ".validate": "newData.isNumber()" },
+            "l": { ".validate": "newData.isString() && newData.val().length <= 16" },
+            "d": { ".validate": "newData.isString() && newData.val().length <= 8" },
             "$other": { ".validate": false }
           }
         }

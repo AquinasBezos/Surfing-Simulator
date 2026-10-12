@@ -5,7 +5,9 @@ export const QUALITY = {
   low: { rows: 232, cols: 196, cubeSize: 512, particles: 600, trees: 500, pixelRatio: 1 },
 };
 
-// Breaking wave behaviour. The wave travels toward the beach (+z).
+// Breaking wave behaviour. The wave travels toward the beach (+z). The timing below is the
+// same everywhere; how the wave breaks belongs to the surf spot (spots.js) and is copied in
+// here for the spot being played (applySpotWave in wave.js).
 export const WAVE = {
   slots: 2, // waves alive at once (must match shader)
   speed: 5.2, // crest celerity
@@ -14,18 +16,30 @@ export const WAVE = {
   dieStartZ: 82, // the wave turns to whitewater and fades out here...
   dieEndZ: 118, // ...and is gone here
   spacing: 118, // distance between consecutive crests in a set
+  // the spot's (Margaret River's until another is chosen):
   peelSpeed: 6.6, // speed the breaking point travels along the crest (main direction)
   backSpeed: 2.4, // speed the break spreads the other way from the peak
+  breakWidth: 0, // how much of the crest pitches at once when the wave first breaks...
+  backWidth: 0, // ...and on the other side of the peak
   tThrow: 1.5, // seconds for the lip to pitch fully after a section starts breaking
   tTube: 3.6, // seconds a section stays an open barrel
   tCollapse: 1.7, // seconds for the barrel to collapse into whitewater
   curveK: 0.00028, // crest line curvature (sections away from the reef lag behind)
   curveMax: 24,
+  peelFlat: 40, // the wave fades out this far along the crest from the peak...
+  peelFall: 260, // ...over this distance
+  backFall: 45, // (and over this distance on the other side)
+  dir: 0, // 0: peels either way, 1: always toward +x (a left)
+  peakSpread: 5,
+  shoalFrom: -115,
+  shoalBase: 0.5,
+  steepFrom: -100,
 };
 
 // Wave heights you can pick (m), the range the 'random' setting wanders through, the size
 // below which a broken wave is gentle enough to ride the whitewater, and the shortest
-// horizontal scale a wave gets (smaller waves are relatively longer and gentler).
+// horizontal scale a wave gets (smaller waves are relatively longer and gentler). The
+// spot's: each spot has its own range (spots.js).
 export const WAVE_HEIGHTS = { min: 0.6, max: 3.4, randomMin: 0.8, randomMax: 3.0, default: 2.5, small: 1.5, minScale: 2.2 };
 
 // Gerstner swell components: [direction (deg, 0 = toward the beach), wavelength, amplitude, steepness]
@@ -96,7 +110,7 @@ export const TIMES_OF_DAY = {
   },
 };
 
-export const LINEUP_Z = -5;
+export const LINEUP_Z = -5; // (Margaret River's; each spot has its own lineup)
 
 export const BOARD = { length: 1.86, width: 0.5 };
 
@@ -148,7 +162,7 @@ export const MULTIPLAYER = {
   roomsPath: 'lineup/rooms',
   maxPlayers: 8,
   poseHz: 15,
-  protocol: 1,
+  protocol: 2, // 2: rooms have a surf spot and a time of day
   // TURN relay. Players connect directly when they can, but strict NATs and many
   // university, office and mobile networks block that; those players need a relay or
   // they can't see each other ("could not connect to peer ... after exchanging SDP").

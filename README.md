@@ -1,13 +1,15 @@
 # LINEUP
 
 A first-person surfing game for the browser and Meta Quest, built with Three.js and WebXR.
-Paddle into glassy turquoise waves, pop up, and race the peeling lip through the barrel, on your own or with friends in the same lineup.
+Paddle into glassy waves, pop up, and race the peeling lip through the barrel, on your own or with friends in the same lineup.
+
+- Two surf spots. **Margaret River**: peaky rights and lefts over sand and rock in clear green-blue water, with a beach, wooded hills and an island offshore. **Teahupo'o**: a heavy left that comes out of deep blue ocean onto a shallow coral reef and wraps round it. A wide section pitches all at once, the lip is thick and the barrel round and wide, with waves up to 6 m. Behind it are a turquoise lagoon, a palm-lined shore and steep green peaks, and the rest of the island fades into the haze across the bay.
 
 - Clear, refractive water with sand, weed and caustics visible underneath, Fresnel sky reflections, sun glints, and light glowing through thin crests and the lip.
 - Breaking waves are built procedurally on the GPU: a swell profile plus a curling lip that pitches, forms a barrel, and collapses into whitewater as the break peels along the wave. Gerstner swell runs underneath.
 - Foam forms on the lip, where the lip lands, and on the broken whitewater, and is left behind on the water after the wave passes. Spray comes off the lip and the crest.
 - The board, arms and hands stay visible when they dip under the surface, tinted by the water they're seen through.
-- Duck dive under breaking waves. Underwater you get Snell's window, the seabed, light shafts and bubbles.
+- Duck dive under breaking waves. Underwater you get Snell's window, the seabed (at Teahupo'o, the coral reef and its wall dropping into the deep), light shafts and bubbles.
 - Shortboard or longboard. On the longboard you walk to the nose to hang five, or to the tail for tight turns.
 - You can crouch under the lip and spring off the top of the wave for an air. Snaps, cutbacks and tailslides come from flicking your view.
 - Two control schemes: keyboard and mouse on PC, and body movement on Quest (paddle with your arms, stand up to pop up, lean to carve).
@@ -17,7 +19,7 @@ Paddle into glassy turquoise waves, pop up, and race the peeling lip through the
 - Surf at midday or at sunset: a low gold sun with a long path of light across the water, a dusk sky in the reflections, backlit crests and dimmer, warmer light under water.
 - Multiplayer: create or find a room, public or private with a passcode, and surf the same waves as up to seven other players, or join as a camera drone and film them from above. PC and Quest players can share a room.
 
-There is no build step. Textures, terrain and sound are generated at start-up, and three.js (r169) loads from jsDelivr. The only files besides code are the surfer model (`assets/surfer.glb`) and the menu art in `assets/menu/`, which are screenshots of the game. Firebase and Trystero load only when you open Multiplayer.
+There is no build step. Textures, terrain and sound are generated at start-up, and three.js (r169) loads from jsDelivr. The only files besides code are the surfer model (`assets/surfer.glb`) and the menu art in `assets/menu/` (including the location thumbnails), which are screenshots of the game. Firebase and Trystero load only when you open Multiplayer.
 
 ## Controls
 
@@ -54,11 +56,23 @@ On PC the game goes fullscreen and locks the keyboard when you start, so `Ctrl` 
 7. If you're caught inside with a wave about to land on you, duck dive under it.
 8. You wipe out if you get sucked up the face of a pitching section (over the falls), the lip lands on you or clips your head in the barrel, or the whitewater catches you while you're standing. Waves under 1.5 m don't have that power: there you can ride the whitewater all the way in.
 
-### Waves, time of day and your surfer
+### Location, time of day, waves and your surfer
 
-**Time of day** (Singleplayer screen, room lobby and pause screen) switches between **Midday** and **Sunset**. At sunset the sun sits a few degrees above the horizon out to sea, behind the waves as you paddle out, so it lays a long path of light across the water and shines through the crests and the lip. The sky, the reflections in the water, the fog, the sunlight on the surfers and the light under water all shift to dusk colours. It's your own setting, so in a room each player can pick their own.
+**Location** is chosen on the Singleplayer screen, or when you create a room.
 
-The **Waves** setting is on the Singleplayer screen, in Create a room, in the room lobby, and on the pause screen. **Set height** picks a size from 0.6 m to 3.4 m, and each wave varies a few percent around it. **Random** lets the size drift between about 0.8 m and 3 m, building and fading over a few minutes, with no wave much bigger than the last. A change applies from the next wave, so the ones already rolling in keep their size. Small waves are relatively longer and gentler, more like mushy beginner waves, so they can still be caught at the game's fixed wave speed.
+- **Margaret River** peaks in a slightly different place each time and breaks either way, so you get rights and lefts.
+- **Teahupo'o** is only a left: the reef past the peak just closes out, so go left. It comes out of deep water and jacks up late on the edge of the reef. A wide section throws at once, so you take off under the lip and race it, and the breaking point peels fast round the curve of the reef toward the deep channel.
+  - The barrel is bigger and rounder, and it lands further out in front.
+  - The water draws off the reef in front of the wave, and in the deepest troughs the reef can show.
+  - Wait in the deep water just off the reef edge, a little toward the channel.
+  - Duck dive or wipe out and you'll see the coral beneath you. From the lineup, under water, the reef wall rises out of the blue.
+  - Look left from the lineup (facing the island) to see the coast run away across the bay to the rest of the island.
+
+**Time of day** (Singleplayer screen, Create a room, and the singleplayer pause screen) switches between **Midday** and **Sunset**. At sunset the sun sits a few degrees above the horizon out to sea, behind the waves as you paddle out, so it lays a long path of light across the water and shines through the crests and the lip. The sky, the reflections in the water, the fog, the sunlight on the surfers and the light under water all shift to dusk colours.
+
+In multiplayer the location and the time of day belong to the room. They're set when it's created and are the same for everyone in it.
+
+The **Waves** setting is on the Singleplayer screen, in Create a room, in the room lobby, and on the pause screen. **Set height** picks a size, and each wave varies a few percent around it: 0.6 m to 3.4 m at Margaret River, 1 m to 6 m at Teahupo'o. **Random** lets the size drift (about 0.8 m to 3 m at Margaret River, 1.8 m to 5.4 m at Teahupo'o), building and fading over a few minutes, with no wave much bigger than the last. Your choice is remembered for each location. A change applies from the next wave, so the ones already rolling in keep their size. Small waves are relatively longer and gentler, more like mushy beginner waves, so they can still be caught at the game's fixed wave speed.
 
 **Your surfer** (Singleplayer screen and the room lobby) sets your skin tone, hair colour and board colour. You start with a random look, so everyone looks different, and it's remembered. Your first-person arms and board follow it, and other players see the full character.
 
@@ -66,7 +80,7 @@ The **Waves** setting is on the Singleplayer screen, in Create a room, in the ro
 
 1. Choose **Multiplayer**, then set your name and board. Your look and the wave size are set in the room lobby.
 2. **Find a room** lists the open rooms and who's in them; type to search by name. Rooms marked 🔒 are private and ask for the passcode.
-3. Or **Create a room**: give it a name and make it public, or private with a passcode of at least 3 characters.
+3. Or **Create a room**: give it a name and make it public, or private with a passcode of at least 3 characters. Then pick the location and the time of day, which are fixed for the room, and the wave size, which anyone can change later. The room list shows each room's location and time of day.
 4. In the room, choose **Play on PC** or **Play in VR**. Everyone in the room gets the same waves at the same moment. Other surfers appear with name tags, and a feed shows who paddled out, got barrelled or wiped out. You can see where they're looking: their heads turn with their view while they paddle or sit, and their upper bodies twist with it on a wave. You can change your name, and anyone can change the room's wave size, from the pause menu.
 
 ### Join as drone
@@ -84,9 +98,9 @@ In the room lobby, pick **Join as drone** instead of Surfer to fly a camera dron
 
 ### How it works
 
-- The Firebase Realtime Database is only used to find rooms. Each player in a room writes one entry of about 100 bytes, `lineup/rooms/<room>/<player>`, with `onDisconnect().remove()`. A room is nothing more than its players' entries, so it disappears as soon as the last player leaves or closes the tab. There is no cleanup job and nothing is left behind.
+- The Firebase Realtime Database is only used to find rooms. Each player in a room writes one entry of about 100 bytes, `lineup/rooms/<room>/<player>`, with `onDisconnect().remove()`. The entry includes the room's location and time of day, so the room list can show them. A room is nothing more than its players' entries, so it disappears as soon as the last player leaves or closes the tab. There is no cleanup job and nothing is left behind.
 - Players connect to each other directly over WebRTC using [Trystero](https://github.com/dmotz/trystero). Trystero uses the same database for the brief connection handshake and deletes those records itself. Positions and where each player is looking (15 times a second, 64 bytes each), events and clock sync all go peer-to-peer and never touch Firebase.
-- Waves aren't sent over the network at all. Each room has a random seed, a shared clock and a wave-size setting, and every player generates the same sets from them. A player who joins takes the clock of whoever has been in the room longest. A change to the wave size carries the wave number it starts from, so everyone switches on the same wave.
+- Waves aren't sent over the network at all. Each room has a random seed, a shared clock, a location and a wave-size setting, and every player generates the same sets from them. A player who joins takes the clock of whoever has been in the room longest. A change to the wave size carries the wave number it starts from, so everyone switches on the same wave.
 - In a private room the passcode is the key Trystero encrypts the handshake with, so players without it can't connect. The room list stores only a short hash of it so that a wrong passcode is rejected straight away.
 
 ### Firebase free plan
@@ -100,7 +114,7 @@ The Spark plan allows 100 simultaneous connections, 1 GB of storage and 10 GB of
 
 ### Database rules
 
-Test-mode rules expire after 30 days and leave the whole database open until then. Paste [database.rules.json](database.rules.json) into **Realtime Database → Rules** in the Firebase console. The rules allow only the room list and Trystero's handshake data, and limit each player entry to the fields and sizes the game writes.
+Test-mode rules expire after 30 days and leave the whole database open until then. Paste [database.rules.json](database.rules.json) into **Realtime Database → Rules** in the Firebase console. The rules allow only the room list and Trystero's handshake data, and limit each player entry to the fields and sizes the game writes. If you pasted them before locations were added, paste them again: with the old rules rooms still work, but the room list shows every room as Margaret River at midday. Players pick up the room's real location and time of day once they're connected.
 
 To use your own Firebase project instead, create a Realtime Database, paste in the rules, and set `MULTIPLAYER.databaseURL` in `js/config.js`.
 
@@ -132,7 +146,8 @@ To check the relay works, open the game with `?relay` on two devices and join th
 | `js/character.js` | The rigged surfer from `assets/surfer.glb`: per-player clone and colours, Paddle / Surf clips, crouch and lean with leg IK |
 | `js/preview.js` | Turntable preview of your surfer in the menus |
 | `js/drone.js` | Camera drone: flight model, crash rules, and the quadcopter model |
-| `js/config.js` | Tunables: wave sizes and timing, swell spectrum, sun, quality presets, board types, multiplayer settings |
+| `js/config.js` | Tunables: wave timing (and the active spot's wave), swell spectrum, sun, times of day, quality presets, board types, multiplayer settings |
+| `js/spots.js` | The surf spots: how each one's wave breaks, the barrel shape, wave sizes, lineup, water colour |
 | `js/wave.js` | Wave model: set lifecycle, peeling and collapse, swell, and the seeded wave schedule used in multiplayer rooms. Also the JS copy of the wave maths used by the physics and spray |
 | `js/shaders/waveChunk.js` | GLSL copy of the wave maths (profile, curling lip, Gerstner swell). Must stay identical to `wave.js` |
 | `js/ocean.js` | Water shader: refraction to the seabed, absorption and scattering, light through thin water, Fresnel reflection, foam, haze |
@@ -141,7 +156,10 @@ To check the relay works, open the game with `?relay` on two devices and join th
 | `js/underwater.js` | Shows the body through the water (a stencil-masked second pass), plus the underwater view: seabed dome, light shafts, bubbles |
 | `js/input.js`, `js/xr.js` | PC input; Quest head/hand gesture input with calibration |
 | `js/body.js`, `js/board.js` | First-person arms (IK paddling), VR hands, parametric shortboard and longboard |
-| `js/sky.js`, `js/terrain.js` | Procedural HDR sky (rendered once into a cube map), beach, headland, island, trees |
+| `js/sky.js` | Procedural HDR sky (rendered once into a cube map), midday and sunset |
+| `js/terrain.js` | Each spot's land and seabed (and its GLSL copy for the water shader); Margaret River's beach, headland, island and trees |
+| `js/teahupoo.js` | Teahupo'o: the reef (its edge follows the line where the wave breaks), lagoon, pass, mountains, the far side of the island, palms and houses, and the 3D reef seen under water |
+| `js/landkit.js` | Shared pieces for building land: noise, ridges, the land mesh |
 | `js/spray.js`, `js/audio.js`, `js/hud.js`, `js/textures.js` | Spray particles, procedural sound, HUD, generated textures |
 | `assets/surfer.glb` | The surfer: 19-bone rig with Idle, Walk, Run, Surf and Paddle clips |
 | `assets/menu/` | Menu art, rendered from the game with the debug views below |
@@ -160,6 +178,7 @@ Breaking starts at the peak and spreads along the wave at the peel speed. Each s
 - `?q=low` / `?q=high`: quality preset. Quest defaults to `low`.
 - `?debug`: shows FPS and wave state for the board's position.
 - `?board=shortboard|longboard`: choose the board (otherwise the last one picked in the menu).
+- `?spot=margaret|teahupoo`: choose the location (not saved), e.g. with the preset scenes below.
 - `?shot=lineup|barrel|shoulder|behind|paddle|duckdive|beach|boards`: jumps to a preset scene, skipping the menu. Add `&freeze` to stop time.
 - Extra preset options: `&stand`, `&crouch=0..1`, `&dive=depth` (e.g. `&dive=1.1` to look around under water), `&foot=-1..1.2` (longboard stance), `&pitch=` / `&lookyaw=` (radians), `&tau=` (seconds since the wave started breaking; negative is before).
 - `&bots=N`: puts N stand-in surfers around you, to check how other players look. They sit and look around, or paddle; `&botpose=prone|sit|stand` puts them all in one pose. `&wave2=z`: adds a second wave of the set with its crest at `z`. `&waveh=1.0`: the preset wave's height in metres.
