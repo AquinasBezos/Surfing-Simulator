@@ -9,7 +9,7 @@ Paddle into glassy waves, pop up, and race the peeling lip through the barrel, o
 - Breaking waves are built procedurally on the GPU: a swell profile plus a curling lip that pitches, forms a barrel, and collapses into whitewater as the break peels along the wave. Gerstner swell runs underneath.
 - Foam forms on the lip, where the lip lands, and on the broken whitewater, and is left behind on the water after the wave passes. Spray comes off the lip and the crest.
 - The board, arms and hands stay visible when they dip under the surface, tinted by the water they're seen through.
-- Duck dive under breaking waves. Underwater you get Snell's window, the seabed (at Teahupo'o, the coral reef and its wall dropping into the deep), light shafts and bubbles.
+- Duck dive under breaking waves. Underwater you get Snell's window, the seabed (at Teahupo'o, the coral reef sloping away into the deep), light shafts and bubbles.
 - Shortboard or longboard. On the longboard you walk to the nose to hang five, or to the tail for tight turns.
 - You can crouch under the lip and spring off the top of the wave for an air. Snaps, cutbacks and tailslides come from flicking your view.
 - Two control schemes: keyboard and mouse on PC, and body movement on Quest (paddle with your arms, stand up to pop up, lean to carve).
@@ -65,7 +65,7 @@ On PC the game goes fullscreen and locks the keyboard when you start, so `Ctrl` 
   - The barrel is bigger and rounder, and it lands further out in front.
   - The water draws off the reef in front of the wave, and in the deepest troughs the reef can show.
   - Wait in the deep water just off the reef edge, a little toward the channel.
-  - Duck dive or wipe out and you'll see the coral beneath you. From the lineup, under water, the reef wall rises out of the blue.
+  - Duck dive or wipe out and you'll see the coral beneath you. From the lineup, under water, the reef slopes up out of the blue, with spurs and grooves running down it.
   - Look left from the lineup (facing the island) to see the coast run away across the bay to the rest of the island.
 
 **Time of day** (Singleplayer screen, Create a room, and the singleplayer pause screen) switches between **Midday** and **Sunset**. At sunset the sun sits a few degrees above the horizon out to sea, behind the waves as you paddle out, so it lays a long path of light across the water and shines through the crests and the lip. The sky, the reflections in the water, the fog, the sunlight on the surfers and the light under water all shift to dusk colours.

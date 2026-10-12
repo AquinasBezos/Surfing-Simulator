@@ -22,6 +22,14 @@ export const waterUniforms = {
   uUWLight: { value: new THREE.Vector3(1, 1, 1) }, // overall light under the water (time of day)
   uUWAbsorb: { value: new THREE.Vector3(0.46, 0.088, 0.105) }, // the spot's water (per metre)
   uUWScatter: { value: new THREE.Vector3(0.009, 0.16, 0.15) },
+  // with the camera under: the water around you (as the underwater dome draws it), so
+  // anything far away fades into exactly the same colour
+  uUWMid: { value: new THREE.Vector3(0.01, 0.12, 0.12) },
+  uUWUp: { value: new THREE.Vector3(0.05, 0.36, 0.34) },
+  uUWGlow: { value: new THREE.Vector3(0.12, 0.42, 0.38) },
+  uUWSun: { value: new THREE.Vector3(0, -1, 0) },
+  uUWDepth: { value: 0 },
+  uUWFog: { value: 0.13 }, // how thick (per metre): how far you can see
 };
 
 const ABSORB = 'uUWAbsorb';
@@ -37,6 +45,12 @@ uniform sampler2D uUWNoise;
 uniform vec3 uUWLight;
 uniform vec3 uUWAbsorb;
 uniform vec3 uUWScatter;
+uniform vec3 uUWMid;
+uniform vec3 uUWUp;
+uniform vec3 uUWGlow;
+uniform vec3 uUWSun;
+uniform float uUWDepth;
+uniform float uUWFog;
 varying vec3 vUWPos;
 `;
 
@@ -57,7 +71,15 @@ const FRAG = /* glsl */ `
     float dl = max(depthW, 0.0);
     float ca = texture2D(uUWNoise, vUWPos.xz * 0.16 + vec2(uUWTime * 0.021, uUWTime * 0.013)).g;
     vec3 lit = gl_FragColor.rgb * exp(-${ABSORB} * dl * 1.2) * (dl > 0.0 ? 0.8 + ca * 1.1 : 1.0);
-    gl_FragColor.rgb = lit * exp(-${ABSORB} * path) + ${SCATTER} * uUWLight * (1.0 - exp(-path * 0.32));
+    if (uCamUnder > 0.5) {
+      // fade into the water beyond, the same colour the dome shows in that direction
+      vec3 dir = -Vd;
+      vec3 bg = dir.y > 0.0 ? mix(uUWMid, uUWUp, pow(dir.y, 0.7)) : mix(uUWMid, uUWMid * vec3(0.3, 0.25, 0.33), pow(-dir.y, 0.6));
+      bg = (bg * exp(-uUWDepth * 0.1) + uUWGlow * pow(max(dot(dir, -uUWSun), 0.0), 6.0) * 0.5) * uUWLight;
+      gl_FragColor.rgb = mix(lit * exp(-${ABSORB} * path), bg, 1.0 - exp(-path * uUWFog));
+    } else {
+      gl_FragColor.rgb = lit * exp(-${ABSORB} * path) + ${SCATTER} * uUWLight * (1.0 - exp(-path * 0.32));
+    }
     #ifdef UW_PASS
       vec3 Nw = normalize(vec3(-uWaterGrad.x, 1.0, -uWaterGrad.y));
       float F = 0.02 + 0.98 * pow(1.0 - abs(dot(Vd, Nw)), 5.0);
@@ -162,7 +184,7 @@ uniform vec3 uMid;    // the spot's water colour around you...
 uniform vec3 uUp;     // ...looking up toward the light...
 uniform vec3 uGlow;   // ...and toward the sun
 uniform vec3 uAbsorb;
-uniform vec3 uBedTint;
+uniform float uBedOn;
 varying vec3 vDir;
 void main() {
   vec3 d = normalize(vDir);
@@ -172,7 +194,7 @@ void main() {
   vec3 col = d.y > 0.0 ? mix(mid, up, pow(d.y, 0.7)) : mix(mid, deep, pow(-d.y, 0.6));
   col *= exp(-uCamDepth * 0.1);
   col += uGlow * pow(max(dot(d, -uSunDir), 0.0), 6.0) * 0.5;
-  if (d.y < -0.02) {
+  if (d.y < -0.02 && uBedOn > 0.5) {
     float t = uBedDepth / -d.y;
     if (t < 90.0) {
       vec3 p = uCamPos + d * t;
@@ -180,7 +202,7 @@ void main() {
       float s2 = texture2D(uNoise, p.xz * 0.13 + 0.37).b;
       float patches = texture2D(uNoise, p.xz * 0.0042 + 0.11).a;
       vec3 sand = vec3(0.62, 0.5, 0.33) * (0.72 + 0.42 * s1) * (0.88 + 0.22 * s2);
-      sand = mix(sand, vec3(0.17, 0.16, 0.09), smoothstep(0.56, 0.68, patches + 0.25 * s1) * 0.75) * uBedTint;
+      sand = mix(sand, vec3(0.17, 0.16, 0.09), smoothstep(0.56, 0.68, patches + 0.25 * s1) * 0.75);
       float ca = texture2D(uNoise, p.xz * 0.16 + vec2(uTime * 0.021, uTime * 0.013)).g;
       float cb = texture2D(uNoise, p.xz * 0.13 + vec2(-uTime * 0.017, uTime * 0.025) + 0.5).g;
       float caus = min(ca, cb) * 2.2 + (ca + cb) * 0.25;
@@ -280,7 +302,7 @@ export class UnderwaterEnv {
       uUp: { value: new THREE.Vector3(0.05, 0.36, 0.34) },
       uGlow: { value: new THREE.Vector3(0.12, 0.42, 0.38) },
       uAbsorb: { value: new THREE.Vector3(0.46, 0.088, 0.105) },
-      uBedTint: { value: new THREE.Vector3(1, 1, 1) },
+      uBedOn: { value: 1 },
     };
     this.shaftBase = new THREE.Vector3(0.45, 0.95, 0.85);
     this.light = new THREE.Vector3(1, 1, 1);
@@ -381,20 +403,26 @@ export class UnderwaterEnv {
     const cosT = Math.sqrt(1 - sinT * sinT);
     const down = new THREE.Vector3((-x / h) * sinT, -cosT, (-z / h) * sinT); // the way the light travels
     this.domeUniforms.uSunDir.value.copy(down);
+    waterUniforms.uUWSun.value.copy(down);
     this.shaftUniforms.uAxis.value.copy(down);
     this.domeUniforms.uLight.value.set(...light);
     this.light.set(...light);
     this.shaftUniforms.uColor.value.copy(this.shaftBase).multiply(this.light);
   }
 
-  // The spot's water. bedTint: the colour of the bottom far below (sand is white).
-  setWater(w, bedTint = [1, 1, 1]) {
+  // The spot's water. seabed: the spot has a 3D seabed of its own (a reef), so the dome
+  // shouldn't paint a flat sandy bottom under it.
+  setWater(w, seabed = false) {
     const du = this.domeUniforms;
     du.uMid.value.set(...w.deep);
     du.uUp.value.set(...w.uwUp);
     du.uGlow.value.set(...w.uwGlow);
     du.uAbsorb.value.set(...w.absorb);
-    du.uBedTint.value.set(...bedTint);
+    du.uBedOn.value = seabed ? 0 : 1;
+    waterUniforms.uUWMid.value.set(...w.deep);
+    waterUniforms.uUWUp.value.set(...w.uwUp);
+    waterUniforms.uUWGlow.value.set(...w.uwGlow);
+    waterUniforms.uUWFog.value = w.vis;
     this.shaftBase.set(...w.shaft);
     this.shaftUniforms.uColor.value.copy(this.shaftBase).multiply(this.light);
     waterUniforms.uUWAbsorb.value.set(...w.absorb);
@@ -435,6 +463,7 @@ export class UnderwaterEnv {
     this.dome.position.copy(camPos);
     const du = this.domeUniforms;
     du.uCamDepth.value = Math.max(0, camDepth);
+    waterUniforms.uUWDepth.value = du.uCamDepth.value;
     du.uBedDepth.value = Math.max(0.3, bedDepth);
     du.uCamPos.value.copy(camPos);
     du.uTime.value = time;

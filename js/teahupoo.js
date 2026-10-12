@@ -10,7 +10,7 @@ import * as THREE from 'three';
 import { WAVE } from './config.js';
 import { SPOTS } from './spots.js';
 import { smoothstep, mix, clamp } from './wave.js';
-import { smax, fbm, ridged, marchCoords, buildLandMesh, lcg } from './landkit.js';
+import { smax, hash2, fbm, ridged, marchCoords, buildLandMesh, lcg } from './landkit.js';
 import { createReefTexture } from './textures.js';
 
 const W = SPOTS.teahupoo.wave;
@@ -23,11 +23,11 @@ function breakLine(x) {
   return SPEED * t - Math.min(W.curveMax, W.curveK * x * x);
 }
 
-// The seaward edge of the reef (z) at x: just inside the break line along the wave, then
-// curving away; past the end of the wave a deep pass runs through to the lagoon, and the
-// next reef starts beyond it.
+// The seaward edge of the reef (z) at x: just inside the break line along the wave (wavering
+// a little, as a real reef does), then curving away; past the end of the wave a deep pass runs
+// through to the lagoon, and the next reef starts beyond it.
 export function reefEdge(x) {
-  let e = breakLine(clamp(x, -60, 135)) - 2;
+  let e = breakLine(clamp(x, -60, 135)) - 2 + 3.2 * Math.sin(0.071 * x + 1.3) + 2 * Math.sin(0.153 * x + 0.4) + 1.1 * Math.sin(0.31 * x + 2.2);
   if (x < -60) e += Math.min(70, 0.3 * (-60 - x));
   const next = 62 + Math.min(80, 0.0011 * (x - 330) * (x - 330)) + 0.85 * Math.max(0, x - 950);
   e = mix(e, next, smoothstep(190, 245, x));
@@ -47,11 +47,17 @@ function isleIn(x, z) {
   return 2400 + 220 * Math.sin(3 * a + 1) + 120 * Math.sin(7 * a + 2.3) - Math.hypot(dx, dz);
 }
 
+// The reef top is 2.5 m down, deepening across the lagoon. Seaward of the edge the fore-reef
+// rounds over, is steepest just below the crest (about 45 degrees) and eases out into the deep.
 export function seabedY(x, z) {
   const d = z - reefEdge(x);
   const floor = mix(-38, -14, smoothstep(-60, 460, z));
-  const lagoon = -2.5 - 0.7 * smoothstep(15, 110, d) - 2.4 * smoothstep(130, 330, d);
-  let y = mix(floor, lagoon, smoothstep(-15, -1, d));
+  let y;
+  if (d >= 0) y = -2.5 - 0.7 * smoothstep(15, 110, d) - 2.4 * smoothstep(130, 330, d);
+  else {
+    const e = Math.sqrt(d * d + 9) - 3;
+    y = smax(floor, -2.5 - 36 * (1 - Math.exp(-e / 36)), 3);
+  }
   y = smax(y, (z - shoreZ(x)) * 0.05, 1.5);
   return Math.max(y, isleIn(x, z) * 0.05);
 }
@@ -68,7 +74,7 @@ float breakLine(float x) {
   return ${f(SPEED)} * t - min(${f(W.curveMax)}, ${f(W.curveK)} * x * x);
 }
 float reefEdge(float x) {
-  float e = breakLine(clamp(x, -60.0, 135.0)) - 2.0;
+  float e = breakLine(clamp(x, -60.0, 135.0)) - 2.0 + 3.2 * sin(0.071 * x + 1.3) + 2.0 * sin(0.153 * x + 0.4) + 1.1 * sin(0.31 * x + 2.2);
   if (x < -60.0) e += min(70.0, 0.3 * (-60.0 - x));
   float nxt = 62.0 + min(80.0, 0.0011 * (x - 330.0) * (x - 330.0)) + 0.85 * max(0.0, x - 950.0);
   e = mix(e, nxt, smoothstep(190.0, 245.0, x));
@@ -84,8 +90,12 @@ float isleIn(vec2 p) {
 float seabedY(vec2 p) {
   float d = p.y - reefEdge(p.x);
   float floorY = mix(-38.0, -14.0, smoothstep(-60.0, 460.0, p.y));
-  float lagoon = -2.5 - 0.7 * smoothstep(15.0, 110.0, d) - 2.4 * smoothstep(130.0, 330.0, d);
-  float y = mix(floorY, lagoon, smoothstep(-15.0, -1.0, d));
+  float y;
+  if (d >= 0.0) y = -2.5 - 0.7 * smoothstep(15.0, 110.0, d) - 2.4 * smoothstep(130.0, 330.0, d);
+  else {
+    float e = sqrt(d * d + 9.0) - 3.0;
+    y = smaxk(floorY, -2.5 - 36.0 * (1.0 - exp(-e / 36.0)), 3.0);
+  }
   y = smaxk(y, (p.y - shoreZ(p.x)) * 0.05, 1.5);
   return max(y, isleIn(p) * 0.05);
 }
@@ -103,9 +113,9 @@ vec3 bedColor(vec2 p) {
   vec3 sand = vec3(0.7, 0.64, 0.48) * (0.85 + 0.3 * grain);
   // coral thins out across the lagoon into sand with scattered heads; sand pockets on the reef
   float pockets = smoothstep(0.56, 0.68, mottle + 0.15 * grain) * 0.7;
-  float reef = smoothstep(-16.0, -6.0, d) * (1.0 - max(smoothstep(60.0, 260.0, d) * smoothstep(0.42, 0.62, broad + 0.25 * grain), pockets));
+  float reef = smoothstep(-34.0, -8.0, d) * (1.0 - max(smoothstep(60.0, 260.0, d) * smoothstep(0.42, 0.62, broad + 0.25 * grain), pockets));
   vec3 deep = vec3(0.32, 0.3, 0.26) * (0.7 + 0.5 * broad);
-  vec3 col = mix(deep, sand, smoothstep(-10.0, 30.0, d) * 0.6 + 0.4 * smoothstep(0.5, 0.7, broad));
+  vec3 col = mix(deep, sand, smoothstep(-20.0, 30.0, d) * 0.6 + 0.4 * smoothstep(0.5, 0.7, broad));
   return mix(col, coral, reef);
 }
 // whitewater where the smaller swells break along the rest of the reef (not on the wave
@@ -132,12 +142,62 @@ const SAND_WET = new THREE.Color('#7f7564');
 const SAND_DRY = new THREE.Color('#b6a888');
 const GARDEN = new THREE.Color('#5d8a35');
 const FOREST_DARK = new THREE.Color('#142f10');
-const FOREST = new THREE.Color('#25501a');
-const FOREST_LIGHT = new THREE.Color('#467426');
+const FOREST = new THREE.Color('#2b5a1c');
+const FOREST_LIGHT = new THREE.Color('#548a2c');
 const ROCK = new THREE.Color('#57564a');
 const _c = new THREE.Color();
 
 // height (and how far inland) at x, z
+// Peaks: one per cell of a jittered grid (u along the coast, v inland), each a pyramid with
+// straight flanks and a slightly softened top; where two meet they make a V-shaped valley.
+// height(pu, pv, rnd) gives a peak's height (0 for none). Cached per cell.
+function peakField(cellU, cellV, offV, height, salt) {
+  const cache = new Map();
+  const peak = (i, j) => {
+    const key = i * 4096 + j;
+    let p = cache.get(key);
+    if (!p) {
+      const r1 = hash2(i * 1.7 + salt, j * 2.3 + 11.1),
+        r2 = hash2(i * 3.1 + 5.2, j * 0.7 + salt),
+        r3 = hash2(i + 9.4 + salt, j * 5.3);
+      const pu = (i + 0.2 + 0.6 * r1) * cellU,
+        pv = (j + 0.25 + 0.5 * r2) * cellV + offV;
+      const H = height(pu, pv, r3);
+      // (no wider than the cells searched below, or it would end in a cliff)
+      p = { pu, pv, H, R: Math.min(H * (1.05 + 0.3 * r2), 1.95 * Math.min(cellU, cellV)) };
+      cache.set(key, p);
+    }
+    return p;
+  };
+  return (u, v) => {
+    const ci = Math.floor(u / cellU),
+      cj = Math.floor((v - offV) / cellV);
+    let best = 0;
+    for (let j = cj - 2; j <= cj + 2; j++)
+      for (let i = ci - 2; i <= ci + 2; i++) {
+        const p = peak(i, j);
+        if (p.H <= 0) continue;
+        const d = Math.hypot(u - p.pu, v - p.pv);
+        if (d >= p.R) continue;
+        // (softened top; reaches the ground exactly at R)
+        const r0 = 0.04 * p.R;
+        const t = (Math.sqrt(d * d + r0 * r0) - r0) / (Math.sqrt(p.R * p.R + r0 * r0) - r0);
+        const h = p.H * Math.max(0, 1 - t);
+        if (h > best) best = h;
+      }
+    return best;
+  };
+}
+// Tahiti Iti: a first row of peaks rising straight behind the coastal flat, bigger ones
+// behind, up to the high middle of the island (x along the coast, v = distance inland)
+const islandPeaks = peakField(1050, 950, 380, (pu, pv, r) => (pv < 300 ? 0 : Math.min(1350, 400 + 0.24 * pv) * (0.72 + 0.48 * r)), 0.3);
+// the far side of the bay: the rest of the island, bigger and further off
+const islePeaks = peakField(1300, 1300, 0, (pu, pv, r) => {
+  const inside = isleIn(pu, pv);
+  return inside < 200 ? 0 : Math.min(1900, 300 + 0.6 * inside) * (0.7 + 0.5 * r);
+}, 7.7);
+
+// height (and how far inland, how mountainous, how ridged) at x, z
 function landSample(x, z, out) {
   const base = seabedY(x, z);
   let h = base;
@@ -146,32 +206,30 @@ function landSample(x, z, out) {
   out.mtn = 0;
   out.rid = 0.5;
   if (s > 0) {
-    // a narrow coastal flat, then steep knife-edge ridges running down from the peaks with
-    // deep valleys between them, rising to the high massif in the middle of the island
+    // a narrow coastal flat, then the peaks, with spurs and gullies running down their sides
     const flat = 1.2 + 3.2 * smoothstep(15, 160, s) + 1.6 * fbm(x * 0.02, z * 0.02, 3) * smoothstep(10, 60, s);
-    const wx = x + 300 * (fbm(x * 0.0012, z * 0.0012, 3) - 0.5);
-    const wz = z + 300 * (fbm(x * 0.0012 + 7.1, z * 0.0012, 3) - 0.5);
-    const r1 = ridged(wx * 0.0019, wz * 0.0007, 5);
-    const r2 = ridged(wx * 0.0052, wz * 0.0035, 3);
-    const m = smoothstep(110, 1500, s);
-    const massif = smoothstep(1200, 3800, s);
-    const mtn = Math.pow(m, 0.75) * (160 + 860 * r1 + 190 * r2) + massif * (380 + 420 * r1);
+    const cone = islandPeaks(x, s);
+    const wx = x + 200 * (fbm(x * 0.0015, z * 0.0015, 3) - 0.5);
+    const wz = z + 200 * (fbm(x * 0.0015 + 7.1, z * 0.0015, 3) - 0.5);
+    const rid = ridged(wx * 0.0032, wz * 0.0032, 3);
+    const m = smoothstep(40, 300, s);
+    const mtn = m * (cone * (0.88 + 0.34 * (rid - 0.35)) + 60 * smoothstep(150, 900, s));
     h += flat * smoothstep(0, 25, s) + mtn;
-    out.mtn = m;
-    out.rid = r1 * 0.7 + r2 * 0.3;
+    out.mtn = smoothstep(20, 300, cone) * m;
+    out.rid = rid;
   }
   const isle = isleIn(x, z);
-  if (isle > 0) {
-    // the big island across the bay: a broad massif of ridges, not one cone
-    const r1 = ridged(x * 0.0009 + 3.3, z * 0.0009, 5);
-    const r2 = ridged(x * 0.0026, z * 0.0026 + 1.7, 3);
-    const m = Math.pow(smoothstep(60, 2600, isle), 0.6);
-    const hi = base + 2 + m * (260 + 1250 * r1 + 300 * r2);
-    if (hi > h) {
-      h = hi;
-      out.rid = r1;
+  if (isle > -400) {
+    const cone = islePeaks(x, z);
+    if (cone > 0) {
+      const rid = ridged(x * 0.0022, z * 0.0022 + 1.7, 3);
+      const hi = base + 2 + smoothstep(-100, 300, isle) * (cone * (0.88 + 0.34 * (rid - 0.35)) + 80);
+      if (hi > h) {
+        h = hi;
+        out.rid = rid;
+        out.mtn = Math.max(out.mtn, smoothstep(20, 300, cone));
+      }
     }
-    out.mtn = Math.max(out.mtn, m);
   }
   out.h = h;
   return out;
@@ -198,7 +256,7 @@ function palmGeometry() {
   const pos = [],
     col = [],
     idx = [];
-  const trunk = new THREE.Color('#6d604d'),
+  const trunk = new THREE.Color('#8a7f6c'),
     frond = new THREE.Color('#3f6d22'),
     tip = new THREE.Color('#2a4a17');
   const H = 9,
@@ -265,7 +323,7 @@ function placeAlongCoast(count, rand, sMin, sMax, xMin, xMax, tmp, ok) {
 
 function createPalms(quality, rand) {
   const tmp = {};
-  const spots = placeAlongCoast(quality === 'low' ? 220 : 520, rand, 6, 170, -1700, 1150, tmp, (t) => t.h > 1.1 && t.h < 12);
+  const spots = placeAlongCoast(quality === 'low' ? 160 : 320, rand, 5, 75, -1700, 1150, tmp, (t) => t.h > 1.1 && t.h < 9);
   const mesh = new THREE.InstancedMesh(palmGeometry(), new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }), spots.length);
   const m = new THREE.Matrix4(),
     q = new THREE.Quaternion(),
@@ -334,9 +392,9 @@ function createTrees(quality, rand) {
   let placed = 0;
   for (let tries = 0; placed < count && tries < count * 20; tries++) {
     const x = mix(-1800, 1100, rand());
-    const z = shoreZ(x) + 40 + Math.pow(rand(), 1.6) * 260;
+    const z = shoreZ(x) + 40 + Math.pow(rand(), 1.6) * 220;
     landSample(x, z, tmp);
-    if (tmp.h < 3) continue;
+    if (tmp.h < 3 || tmp.h > 24) continue;
     const r = 3 + Math.pow(rand(), 1.5) * 4.5;
     m.compose(p.set(x, tmp.h - 0.4 * r, z), q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), rand() * 6.28), sc.set(r, r * (0.7 + rand() * 0.5), r));
     trees.setMatrixAt(placed, m);
@@ -352,11 +410,11 @@ function createTrees(quality, rand) {
 // see once you're under): the wall dropping into the deep, coral heads on top.
 function createReef(quality) {
   const { texture, bump, relief } = reefTexture();
-  const step = quality === 'low' ? 1.4 : 0.75;
-  const xs = [],
-    zs = [];
-  for (let x = -95; x <= 195; x += step) xs.push(x);
-  for (let z = -60; z <= 170; z += step) zs.push(z);
+  // fine around the break, coarser further out (where the water hides the detail anyway),
+  // reaching well past where you can see so the reef never just stops
+  const low = quality === 'low';
+  const xs = marchCoords(-300, 460, 40, low ? 1.4 : 0.75, low ? 0.014 : 0.008);
+  const zs = marchCoords(-190, 400, 20, low ? 1.4 : 0.75, low ? 0.014 : 0.008);
   const nx = xs.length,
     nz = zs.length;
   const pos = new Float32Array(nx * nz * 3),
@@ -368,22 +426,40 @@ function createReef(quality) {
         z = zs[j];
       const k = j * nx + i;
       const d = z - reefEdge(x);
-      // mounds and gullies, coral heads on top: proud on the reef and the upper wall, sand
-      // and rubble below
-      const amp = mix(0.2, 1.0, smoothstep(-18, -4, d)) * (1 - 0.35 * smoothstep(80, 160, d));
+      // mounds and gullies with coral heads on top, proud on the reef and down the fore-reef,
+      // sand and rubble in the deep
+      const amp = mix(0.25, 1.0, smoothstep(-40, -6, d)) * (1 - 0.35 * smoothstep(80, 160, d));
       const lumps = fbm(x * 0.16 + 3.1, z * 0.16, 3) - 0.5;
       const r = 0.55 * relief(x / 11, z / 11) + 0.45 * relief(x / 3.7 + 0.37, z / 3.7 + 0.37);
-      const y = seabedY(x, z) + amp * (lumps * 1.5 + (r - 0.35) * 0.7);
+      // spurs and grooves running down the fore-reef
+      const e = Math.max(0, -d);
+      const groove = Math.sin(x * 0.45 + 3 * Math.sin(x * 0.037) + z * 0.04) * smoothstep(1, 8, e) * smoothstep(60, 22, e);
+      const y = seabedY(x, z) + amp * (lumps * 1.5 + (r - 0.35) * 0.7) + 1.4 * groove;
       pos[k * 3] = x;
       pos[k * 3 + 1] = y;
       pos[k * 3 + 2] = z;
-      // (z - y: the texture runs up the wall instead of streaking down it)
-      uv[k * 2] = x / 7.5;
-      uv[k * 2 + 1] = (z - y) / 7.5;
-      // the deep wall in shadow
-      const shade = mix(0.55, 1, smoothstep(-16, -3, d));
+      // in the shadow deep down the slope
+      const shade = mix(0.6, 1, smoothstep(-40, -4, d));
       col[k * 3] = col[k * 3 + 1] = col[k * 3 + 2] = shade;
     }
+  // texture coordinates measured along the surface (not straight down), so the coral keeps
+  // its size down the slopes instead of streaking
+  for (let j = 0; j < nz; j++) {
+    let u = xs[0];
+    for (let i = 0; i < nx; i++) {
+      const k = j * nx + i;
+      if (i) u += Math.hypot(xs[i] - xs[i - 1], pos[k * 3 + 1] - pos[(k - 1) * 3 + 1]);
+      uv[k * 2] = u / 7.5;
+    }
+  }
+  for (let i = 0; i < nx; i++) {
+    let v = zs[0];
+    for (let j = 0; j < nz; j++) {
+      const k = j * nx + i;
+      if (j) v += Math.hypot(zs[j] - zs[j - 1], pos[k * 3 + 1] - pos[(k - nx) * 3 + 1]);
+      uv[k * 2 + 1] = v / 7.5;
+    }
+  }
   const idx = new Uint32Array((nx - 1) * (nz - 1) * 6);
   let t = 0;
   for (let j = 0; j < nz - 1; j++)

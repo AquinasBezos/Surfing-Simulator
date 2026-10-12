@@ -61,6 +61,7 @@ uniform vec3 uAbsorb;   // per metre
 uniform vec3 uScatter;  // in-scattered body colour
 uniform vec3 uSSS;      // light through thin water
 uniform vec3 uDeep;     // the water around you when you're under
+uniform float uVis;     // how quickly the surface above fades into it
 varying vec3 vWorld;
 varying vec3 vNormal;
 varying vec4 vInfo;
@@ -141,7 +142,7 @@ void main() {
     float fp = texture(uNoise, fuvU * 0.16 + vec2(0.0, -uTime * 0.03)).r * 0.6 + texture(uNoise, fuvU * 0.047 + 0.3).r * 0.4;
     float fm = smoothstep(1.0 - fa * 0.7, 1.15 - fa * 0.55, fp + 0.15) * min(fa * 1.4, 1.0);
     ucol = mix(ucol, vec3(0.75, 0.95, 0.95) * 1.4 * uUWLight, clamp(fm + smoothstep(1.0, 1.7, fa) * 0.7, 0.0, 1.0));
-    ucol = mix(ucol, uDeep * uUWLight, 1.0 - exp(-dist * 0.085));
+    ucol = mix(ucol, uDeep * uUWLight, 1.0 - exp(-dist * uVis));
     gl_FragColor = vec4(ucol, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -242,6 +243,7 @@ export class Ocean {
       uScatter: { value: new THREE.Vector3() },
       uSSS: { value: new THREE.Vector3() },
       uDeep: { value: new THREE.Vector3() },
+      uVis: { value: 0.085 },
       uReefTex: { value: null },
     };
     this.spot = 'margaret';
@@ -285,6 +287,7 @@ export class Ocean {
     u.uScatter.value.set(...w.scatter);
     u.uSSS.value.set(...w.sss);
     u.uDeep.value.set(...w.deep);
+    u.uVis.value = w.vis * 0.65;
   }
 
   update(focus) {

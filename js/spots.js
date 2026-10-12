@@ -48,8 +48,9 @@ export const SPOTS = {
     lineup: { z: -5, side: 4 }, // where you wait: in front of the peak, a little toward the shoulder
     inside: { z: 45, x: 650 }, // drifted past here without a ride: paddle back out
     // clear, slightly green coastal water. absorb / scatter per metre; sss: light through
-    // thin water; deep: the colour of the water around you under the surface
-    water: { absorb: [0.46, 0.088, 0.105], scatter: [0.004, 0.072, 0.066], sss: [0.05, 0.85, 0.62], uwScatter: [0.009, 0.16, 0.15], deep: [0.01, 0.12, 0.12], uwUp: [0.05, 0.36, 0.34], uwGlow: [0.12, 0.42, 0.38], shaft: [0.45, 0.95, 0.85] },
+    // thin water; deep: the colour of the water around you under the surface; vis: how
+    // quickly things fade into it under water (per metre)
+    water: { absorb: [0.46, 0.088, 0.105], scatter: [0.004, 0.072, 0.066], sss: [0.05, 0.85, 0.62], uwScatter: [0.009, 0.16, 0.15], deep: [0.01, 0.12, 0.12], uwUp: [0.05, 0.36, 0.34], uwGlow: [0.12, 0.42, 0.38], shaft: [0.45, 0.95, 0.85], vis: 0.13 },
   },
 
   teahupoo: {
@@ -84,7 +85,7 @@ export const SPOTS = {
     lineup: { z: -13, side: 9 },
     inside: { z: 95, x: 650 },
     // clear, deep-blue tropical ocean
-    water: { absorb: [0.45, 0.07, 0.034], scatter: [0.003, 0.034, 0.088], sss: [0.06, 0.78, 0.95], uwScatter: [0.006, 0.09, 0.2], deep: [0.006, 0.06, 0.15], uwUp: [0.04, 0.3, 0.46], uwGlow: [0.1, 0.38, 0.52], shaft: [0.45, 0.85, 1.0] },
+    water: { absorb: [0.45, 0.07, 0.034], scatter: [0.003, 0.034, 0.088], sss: [0.06, 0.78, 0.95], uwScatter: [0.006, 0.09, 0.2], deep: [0.006, 0.06, 0.15], uwUp: [0.04, 0.3, 0.46], uwGlow: [0.1, 0.38, 0.52], shaft: [0.45, 0.85, 1.0], vis: 0.055 },
   },
 };
 

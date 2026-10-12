@@ -89,8 +89,7 @@ function applySpot(id) {
   setLandSpot(id);
   const reef = id === 'teahupoo' ? reefTexture().texture : null;
   ocean.setSpot(id, reef);
-  // (the bottom far below: sand, or coral and rubble)
-  underwater.setWater(spot.water, reef ? [0.55, 0.5, 0.42] : [1, 1, 1]);
+  underwater.setWater(spot.water, !!reef); // (a reef is a 3D seabed of its own)
   if (terrain) {
     scene.remove(terrain);
     if (terrain.userData.underwater) scene.remove(terrain.userData.underwater);
