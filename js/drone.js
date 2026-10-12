@@ -3,7 +3,7 @@
 // camera hangs on a gimbal and stays level. Crashing into the water, the lip or the land
 // ends the flight (the game respawns it).
 import * as THREE from 'three';
-import { seabedY } from './terrain.js';
+import { seabedY, solidAt } from './terrain.js';
 
 const MAX_SPEED = 12; // m/s on the horizontal plane
 const BOOST = 1.9; // with the boost held
@@ -92,6 +92,7 @@ export class Drone {
   collide(model) {
     const { x, y, z } = this.pos;
     if (y - DRONE_RADIUS < seabedY(x, z) + 0.05) return 'Crashed into the land';
+    if (solidAt(x, y, z)) return 'Flew into the pier';
     const s = model.sample(x, z, this._s || (this._s = {}));
     if (y - DRONE_RADIUS < s.height) return 'Crashed into the water';
     // the pitching lip: fine inside the tube or above the wave, not in the lip itself

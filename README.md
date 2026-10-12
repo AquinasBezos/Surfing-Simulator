@@ -3,7 +3,7 @@
 A first-person surfing game for the browser and Meta Quest, built with Three.js and WebXR.
 Paddle into glassy waves, pop up, and race the peeling lip through the barrel, on your own or with friends in the same lineup.
 
-- Two surf spots. **Margaret River**: peaky rights and lefts over sand and rock in clear green-blue water, with a beach, wooded hills and an island offshore. **Teahupo'o**: a heavy left that comes out of deep blue ocean onto a shallow coral reef and wraps round it. A wide section pitches all at once, the lip is thick and the barrel round and wide, with waves up to 6 m. Behind it are a turquoise lagoon, a palm-lined shore and steep green peaks, and the rest of the island fades into the haze across the bay.
+- Three surf spots. **Margaret River**: peaky rights and lefts over sand and rock in clear green-blue water, with a beach, wooded hills and an island offshore. **Teahupo'o**: a heavy left that comes out of deep blue ocean onto a shallow coral reef and wraps round it. A wide section pitches all at once, the lip is thick and the barrel round and wide, with waves up to 6 m. Behind it are a turquoise lagoon, a palm-lined shore and steep green peaks, and the rest of the island fades into the haze across the bay. **Wave Pool**: a kite-shaped artificial lagoon in the English countryside with machine-made waves, a left and a right either side of a viewing pier.
 
 - Clear, refractive water with sand, weed and caustics visible underneath, Fresnel sky reflections, sun glints, and light glowing through thin crests and the lip.
 - Breaking waves are built procedurally on the GPU: a swell profile plus a curling lip that pitches, forms a barrel, and collapses into whitewater as the break peels along the wave. Gerstner swell runs underneath.
@@ -67,12 +67,18 @@ On PC the game goes fullscreen and locks the keyboard when you start, so `Ctrl` 
   - Wait in the deep water just off the reef edge, a little toward the channel.
   - Duck dive or wipe out and you'll see the coral beneath you. From the lineup, under water, the reef slopes up out of the blue, with spurs and grooves running down it.
   - Look left from the lineup (facing the island) to see the coast run away across the bay to the rest of the island.
+- **Wave Pool** is an artificial lagoon with clear blue water.
+  - The wave machine sits in a long silver housing at the narrow back end, and a pier runs from it down the middle to the clubhouse. The back edges are concrete walls, the front edges sandy beaches.
+  - Every 12 s a wave runs toward the shore across both halves at once. It reaches the shallow shelf at the outer corners first, so it starts barrelling out there and peels in toward the pier as it comes to the shore. That makes a right on one side of the pier and a left on the other.
+  - A deep trench runs along the pier, and the current in it carries you back out toward the lineup. Paddle out beside the pier to get back quickly.
+  - Near the shore there's a big arch under the pier: paddle through it to surf the other side.
+  - Waves are 0.8 m to 2 m, which is what a real wave machine makes. Kick out before the pier: ride into it and you wipe out.
 
 **Time of day** (Singleplayer screen, Create a room, and the singleplayer pause screen) switches between **Midday** and **Sunset**. At sunset the sun sits a few degrees above the horizon out to sea, behind the waves as you paddle out, so it lays a long path of light across the water and shines through the crests and the lip. The sky, the reflections in the water, the fog, the sunlight on the surfers and the light under water all shift to dusk colours.
 
 In multiplayer the location and the time of day belong to the room. They're set when it's created and are the same for everyone in it.
 
-The **Waves** setting is on the Singleplayer screen, in Create a room, in the room lobby, and on the pause screen. **Set height** picks a size, and each wave varies a few percent around it: 0.6 m to 3.4 m at Margaret River, 1 m to 6 m at Teahupo'o. **Random** lets the size drift (about 0.8 m to 3 m at Margaret River, 1.8 m to 5.4 m at Teahupo'o), building and fading over a few minutes, with no wave much bigger than the last. Your choice is remembered for each location. A change applies from the next wave, so the ones already rolling in keep their size. Small waves are relatively longer and gentler, more like mushy beginner waves, so they can still be caught at the game's fixed wave speed.
+The **Waves** setting is on the Singleplayer screen, in Create a room, in the room lobby, and on the pause screen. **Set height** picks a size, and each wave varies a few percent around it: 0.6 m to 3.4 m at Margaret River, 1 m to 6 m at Teahupo'o, 0.8 m to 2 m in the Wave Pool. **Random** lets the size drift (about 0.8 m to 3 m at Margaret River, 1.8 m to 5.4 m at Teahupo'o, 0.9 m to 1.8 m in the pool), building and fading over a few minutes, with no wave much bigger than the last. Your choice is remembered for each location. A change applies from the next wave, so the ones already rolling in keep their size. Small waves are relatively longer and gentler, more like mushy beginner waves, so they can still be caught at the game's fixed wave speed.
 
 **Your surfer** (Singleplayer screen and the room lobby) sets your skin tone, hair colour and board colour. You start with a random look, so everyone looks different, and it's remembered. Your first-person arms and board follow it, and other players see the full character.
 
@@ -159,6 +165,7 @@ To check the relay works, open the game with `?relay` on two devices and join th
 | `js/sky.js` | Procedural HDR sky (rendered once into a cube map), midday and sunset |
 | `js/terrain.js` | Each spot's land and seabed (and its GLSL copy for the water shader); Margaret River's beach, headland, island and trees |
 | `js/teahupoo.js` | Teahupo'o: the reef (its edge follows the line where the wave breaks), lagoon, pass, mountains, the far side of the island, palms and houses, and the 3D reef seen under water |
+| `js/wavepool.js` | The Wave Pool: its floor (deep at the back, a shallow shelf along the break line, beaches, the trench by the pier), walls, the pier with its arch and the machine housing, clubhouse, cabins, canopies and fields, and keeping surfers off the walls and pier |
 | `js/landkit.js` | Shared pieces for building land: noise, ridges, the land mesh |
 | `js/spray.js`, `js/audio.js`, `js/hud.js`, `js/textures.js` | Spray particles, procedural sound, HUD, generated textures |
 | `assets/surfer.glb` | The surfer: 19-bone rig with Idle, Walk, Run, Surf and Paddle clips |
@@ -178,7 +185,7 @@ Breaking starts at the peak and spreads along the wave at the peel speed. Each s
 - `?q=low` / `?q=high`: quality preset. Quest defaults to `low`.
 - `?debug`: shows FPS and wave state for the board's position.
 - `?board=shortboard|longboard`: choose the board (otherwise the last one picked in the menu).
-- `?spot=margaret|teahupoo`: choose the location (not saved), e.g. with the preset scenes below.
+- `?spot=margaret|teahupoo|pool`: choose the location (not saved), e.g. with the preset scenes below.
 - `?shot=lineup|barrel|shoulder|behind|paddle|duckdive|beach|boards`: jumps to a preset scene, skipping the menu. Add `&freeze` to stop time.
 - Extra preset options: `&stand`, `&crouch=0..1`, `&dive=depth` (e.g. `&dive=1.1` to look around under water), `&foot=-1..1.2` (longboard stance), `&pitch=` / `&lookyaw=` (radians), `&tau=` (seconds since the wave started breaking; negative is before).
 - `&bots=N`: puts N stand-in surfers around you, to check how other players look. They sit and look around, or paddle; `&botpose=prone|sit|stand` puts them all in one pose. `&wave2=z`: adds a second wave of the set with its crest at `z`. `&waveh=1.0`: the preset wave's height in metres.

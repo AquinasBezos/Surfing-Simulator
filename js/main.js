@@ -3,7 +3,7 @@ import { QUALITY, SUN_DIR, SUN_COLOR, EYE, WAVE, BOARDS, CROUCH_DROP, MULTIPLAYE
 import { WaveModel, smoothstep, clamp, crestOffset, waveScale, applySpotWave, peelPoints } from './wave.js';
 import { Ocean } from './ocean.js';
 import { createSky } from './sky.js';
-import { createTerrain, seabedY, setLandSpot } from './terrain.js';
+import { createTerrain, seabedY, setLandSpot, spotCollider } from './terrain.js';
 import { SPOTS, cleanSpot } from './spots.js';
 import { reefTexture } from './teahupoo.js';
 import { createWaterNormalTexture, createNoiseTexture } from './textures.js';
@@ -96,6 +96,7 @@ function applySpot(id) {
   }
   terrain = lands[id] ||= buildLand(id);
   scene.add(terrain);
+  surfer.collide = spotCollider(); // (a pool's walls and pier)
   if (terrain.userData.underwater) scene.add(terrain.userData.underwater);
   if (!model.schedule) model.reset(-62);
   game.warmup = Math.max(game.warmup, 4); // compile the new shaders behind the menu
@@ -115,7 +116,7 @@ function buildLand(id) {
   const g = createTerrain(id, qualityName);
   const under = g.userData.underwater; // seen only from under the water
   if (under) {
-    addUnderwaterFog(under.material);
+    under.traverse((o) => o.isMesh && addUnderwaterFog(o.material));
     under.visible = false;
   }
   return g;
@@ -374,7 +375,9 @@ function lineupSpot() {
   const L = spot.lineup;
   let w = null;
   for (const c of model.waves) if (c.active && c.crestZ0 < L.z - 6 && (!w || c.crestZ0 > w.crestZ0)) w = c;
-  const x = w ? w.peakX + w.dir * L.side : 0;
+  let x = w ? w.peakX + w.dir * L.side : 0;
+  // a pool: the peak on whichever side of the pier you're on (either, the first time)
+  if (WAVE.mirror) x = (Math.sign(surfer.x) || (Math.random() < 0.5 ? -1 : 1)) * ((w ? w.peakX : WAVE.mirror) - L.side);
   return { x, z: L.z, yaw: 0 };
 }
 
@@ -632,8 +635,8 @@ function updateGame(dt) {
   // wipeout -> back to the lineup
   if (surfer.state === STATE.WIPEOUT && surfer.stateTime > 2.4 && game.teleport <= 0) respawn(true);
 
-  // drifted inside or far away without a ride: paddle back out automatically
-  const inside = surfer.z > spot.inside.z || Math.abs(surfer.x) > spot.inside.x || surfer.z < -260;
+  // drifted inside or far away (or washed up on a beach) without a ride: paddle back out
+  const inside = surfer.z > spot.inside.z || Math.abs(surfer.x) > spot.inside.x || surfer.z < -260 || seabedY(surfer.x, surfer.z) > -0.45;
   const idle = surfer.state === STATE.PRONE && !surfer.riding;
   if (inside && idle && game.teleport <= 0) {
     game.missTimer += dt;
@@ -1026,8 +1029,14 @@ function applyShot(name) {
   w.active = true;
   w.peakX = 0;
   w.dir = 1;
-  w.height = parseFloat(params.get('waveh')) || 2.6;
+  w.height = parseFloat(params.get('waveh')) || (WAVE.mirror ? 1.6 : 2.6);
   w.S = waveScale(w.height);
+  if (WAVE.mirror) {
+    // a pool: the wave breaks from both outer corners in toward the pier; the views below
+    // are on the left-hand side (x < 0), where it peels toward +x like a left
+    w.dir = 0;
+    w.peakX = WAVE.mirror;
+  }
   const setTau = (tau) => {
     w.crestZ0 = WAVE.breakZ + tau * WAVE.speed;
     model._derive(w);
@@ -1037,10 +1046,10 @@ function applyShot(name) {
   if (params.has('tau')) setTau(parseFloat(params.get('tau')));
   if (name === 'lineup') {
     if (!params.has('tau')) setTau(-6.5);
-    surfer.reset(spot.lineup.side, spot.lineup.z, 0);
+    surfer.reset(WAVE.mirror ? spot.lineup.side - WAVE.mirror : spot.lineup.side, spot.lineup.z, 0);
   } else if (name === 'barrel') {
     setTau(4.2);
-    const x = peelPoints(w)[0] - 9;
+    const x = WAVE.mirror ? peelPoints(w)[1] - 9 : peelPoints(w)[0] - 9;
     surfer.reset(x, zAt(x, 0.78), -Math.PI / 2 + 0.12);
     surfer.setState(STATE.STANDING);
     surfer.crouch = surfer.legCrouch = 0.6;
@@ -1048,7 +1057,7 @@ function applyShot(name) {
     surfer.vx = 8;
   } else if (name === 'shoulder') {
     setTau(4.0);
-    const x = peelPoints(w)[0] + 22;
+    const x = WAVE.mirror ? peelPoints(w)[1] + 22 : peelPoints(w)[0] + 22;
     surfer.reset(x, zAt(x, 1.6), Math.PI / 2 - 0.35);
     game.look.pitch = 0.05;
   } else if (name === 'behind') {
@@ -1464,6 +1473,7 @@ function emitBubbles(dt, camUnder, camDepth) {
 }
 
 function waveLabelFor(w) {
+  if (w.dir === 0) return 'left and right'; // (a pool: both sides of the pier)
   return w.dir > 0 ? 'left' : 'right'; // +x is the surfer's left when facing the beach
 }
 

@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { smoothstep, mix } from './wave.js';
 import { smax, segDist, fbm, marchCoords, buildLandMesh, lcg } from './landkit.js';
 import * as teahupoo from './teahupoo.js';
+import * as wavepool from './wavepool.js';
 
 const HEAD_A = [840, 330];
 const HEAD_B = [1260, -620];
@@ -186,6 +187,7 @@ function createMargaret(quality) {
 const LAND = {
   margaret: { seabedY: margaretSeabed, glsl: MARGARET_GLSL, create: createMargaret },
   teahupoo: { seabedY: teahupoo.seabedY, glsl: teahupoo.SEABED_GLSL, create: teahupoo.createLand },
+  pool: { seabedY: wavepool.seabedY, glsl: wavepool.SEABED_GLSL, create: wavepool.createLand, collide: wavepool.collide, solidAt: wavepool.solidAt },
 };
 let active = LAND.margaret;
 
@@ -197,6 +199,17 @@ export function setLandSpot(id) {
 // Height of the bottom (negative under water) at the spot being played.
 export function seabedY(x, z) {
   return active.seabedY(x, z);
+}
+
+// Walls and piers at the spot being played (a pool): keeps a surfer ({ x, z, vx, vz }) out of
+// them and says how hard they hit (m/s); null where there are none.
+export function spotCollider() {
+  return active.collide || null;
+}
+
+// Something solid (not the ground) at x, y, z? (for the drone)
+export function solidAt(x, y, z) {
+  return active.solidAt ? active.solidAt(x, y, z) : false;
 }
 
 // GLSL: float seabedY(vec2 p) and vec3 bedColor(vec2 p) for a spot.

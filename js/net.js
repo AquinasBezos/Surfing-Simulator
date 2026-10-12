@@ -19,7 +19,7 @@ import { SPOTS, cleanSpot } from './spots.js';
 const app = initializeApp({ databaseURL: MP.databaseURL }, 'lineup');
 const db = getDatabase(app);
 const perfNow = () => performance.now() / 1000;
-const PERIOD = WAVE.spacing / WAVE.speed;
+const period = () => WAVE.spacing / WAVE.speed; // (the spot's: a pool sends waves more often)
 
 export const POSE_FLOATS = 14;
 
@@ -198,7 +198,7 @@ export class Net {
     this.peers.clear();
     // a fresh timeline; replaced by the room's oldest one as soon as we meet a peer
     this.timeline = { seed: crypto.getRandomValues(new Uint32Array(1))[0], origin: selfId, created: Date.now(), waves: cleanWaves(waves, spot), spot, time };
-    this.offset = PERIOD * 0.55 - perfNow();
+    this.offset = period() * 0.55 - perfNow();
 
     const relays = relayServers();
     // presence in the room list (removed automatically if we vanish)
@@ -332,7 +332,7 @@ export class Net {
   setWaves(cfg) {
     if (!this.room || !this.timeline) return;
     const cur = cleanWaves(this.timeline.waves, this.spot);
-    const kNext = Math.floor(this.now() / PERIOD) + 1;
+    const kNext = Math.floor(this.now() / period()) + 1;
     const active = cur.prev && cur.fromK != null && kNext - 1 < cur.fromK ? cur.prev : cur;
     const waves = cleanWaves({ ...cfg, fromK: kNext, prev: active, rev: cur.rev + 1 }, this.spot);
     this.timeline = { ...this.timeline, waves };

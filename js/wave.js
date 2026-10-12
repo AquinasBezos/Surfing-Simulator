@@ -88,12 +88,14 @@ function lipTip(c) {
 }
 const TIP0 = lipTip(CURL);
 CURL.tip = TIP0;
+const WAVE_BASE = { ...WAVE }; // what a spot doesn't set
 
 // Make `spot` the one being played: its wave goes into WAVE, WAVE_HEIGHTS and CURL, which
 // the physics, the ocean grid and (through writeSpotUniforms) the shaders read.
 export function applySpotWave(spot) {
   const { curl, ...wave } = spot.wave;
-  Object.assign(WAVE, wave);
+  Object.assign(WAVE, WAVE_BASE, wave);
+  if (WAVE.pool) WAVE.pool = poolEdges(WAVE.pool);
   Object.assign(WAVE_HEIGHTS, spot.heights);
   Object.assign(CURL, {
     rin: curl.rin,
@@ -110,6 +112,39 @@ export function applySpotWave(spot) {
   });
   CURL.tip = lipTip(CURL);
   CURL.tipShift = CURL.tip - TIP0;
+}
+
+// A pool is a kite: back corner (0, bz), side corners (+-sx, sz), front corner (0, fz), with
+// a pier along x = 0. Each edge as a line n . (|x|, z) = c with n pointing into the pool.
+export function poolEdges(P) {
+  const edge = (ax, az, bx, bz, cx, cz) => {
+    let nx = -(bz - az),
+      nz = bx - ax;
+    const l = Math.hypot(nx, nz);
+    nx /= l;
+    nz /= l;
+    if (nx * (cx - ax) + nz * (cz - az) < 0) {
+      nx = -nx;
+      nz = -nz;
+    }
+    return [nx, nz, nx * ax + nz * az];
+  };
+  const mid = (P.bz + P.fz) / 2;
+  return { ...P, back: edge(0, P.bz, P.sx, P.sz, 0, mid), front: edge(P.sx, P.sz, 0, P.fz, 0, mid) };
+}
+
+// How far inside the pool's walls (m; negative outside). Infinity when there's no pool.
+export function poolInside(x, z, P = WAVE.pool) {
+  if (!P) return Infinity;
+  const ax = Math.abs(x);
+  return Math.min(P.back[0] * ax + P.back[1] * z - P.back[2], P.front[0] * ax + P.front[1] * z - P.front[2]);
+}
+
+// Waves in a pool die down against its walls and the pier.
+export function poolMask(x, z) {
+  const P = WAVE.pool;
+  if (!P) return 1;
+  return clamp(poolInside(x, z, P) / P.fadeWall, 0, 1) * clamp((Math.abs(x) - P.pier) / P.fadePier, 0, 1);
 }
 
 export function crestOffset(x) {
@@ -134,6 +169,12 @@ export function baseProfile(un, steep, out) {
   return 0.8 * sech2(un / Lb) + 0.2 * sech2(un / (3.5 * Lb));
 }
 
+// How far along the crest from the peak toward where it peels (negative: the other way). A
+// mirrored wave (dir 0, a pool) peaks at both x = +-peakX and peels in toward x = 0.
+export function peelSide(w, x) {
+  return w.dir === 0 ? w.peakX - Math.abs(x) : (x - w.peakX) * w.dir;
+}
+
 // How long ago the section at dx (along the crest from the peak; side = dx * dir) started
 // breaking, given the time since the peak did. A wide first section pitches all at once.
 export function sectionAge(tau, dx, side) {
@@ -141,7 +182,12 @@ export function sectionAge(tau, dx, side) {
 }
 
 // Where the breaking point has got to on the peel side, and on the other side.
+// (A mirrored wave: the breaking points on its two sides.)
 export function peelPoints(w, tau = Math.max(w.tau, 0)) {
+  if (w.dir === 0) {
+    const x = Math.max(0, w.peakX - WAVE.breakWidth - WAVE.peelSpeed * tau);
+    return [x, -x];
+  }
   const d = w.dir;
   return [w.peakX + d * (WAVE.breakWidth + WAVE.peelSpeed * tau), w.peakX - d * (WAVE.backWidth + WAVE.backSpeed * tau)];
 }
@@ -214,6 +260,10 @@ export class WaveModel {
     slot.peakX = (Math.random() * 2 - 1) * WAVE.peakSpread;
     slot.dir = Math.random() < 0.5 ? 1 : -1;
     if (WAVE.dir) slot.dir = WAVE.dir;
+    if (WAVE.mirror) {
+      slot.peakX += WAVE.mirror;
+      slot.dir = 0;
+    }
     slot.height = waveHeight(this.seed, this.nextId, this.heights);
     slot.S = waveScale(slot.height);
     this._derive(slot);
@@ -264,8 +314,9 @@ export class WaveModel {
     this.time = t;
     const P = WAVE.spacing / WAVE.speed; // a new wave every P seconds
     const kNow = Math.floor(t / P);
-    for (const k of [kNow, kNow - 1]) {
-      const w = this.waves[((k % 2) + 2) % 2];
+    const n = this.waves.length;
+    for (let k = kNow; k > kNow - n; k--) {
+      const w = this.waves[((k % n) + n) % n];
       const crest = WAVE.spawnZ + WAVE.speed * (t - k * P);
       if (crest > WAVE.dieEndZ) {
         w.active = false;
@@ -277,6 +328,10 @@ export class WaveModel {
         w.peakX = (r() * 2 - 1) * WAVE.peakSpread;
         w.dir = r() < 0.5 ? 1 : -1;
         if (WAVE.dir) w.dir = WAVE.dir;
+        if (WAVE.mirror) {
+          w.peakX += WAVE.mirror;
+          w.dir = 0;
+        }
         const hs = this.schedule.heights;
         w.height = waveHeight(seed, k, hs && hs.prev && hs.fromK != null && k < hs.fromK ? hs.prev : hs);
         w.S = waveScale(w.height);
@@ -304,15 +359,15 @@ export class WaveModel {
     if (!n || n.crestZ0 > WAVE.spawnZ + WAVE.spacing) this.spawn();
   }
 
-  // Along-crest state of wave w at x.
-  section(w, x, out = this._sec) {
+  // Along-crest state of wave w at x (and, in a pool, world z: waves die down at the walls).
+  section(w, x, z = 0, out = this._sec) {
     const dx = x - w.peakX;
-    const side = dx * w.dir;
+    const side = peelSide(w, x);
     const age = sectionAge(w.tau, dx, side);
     const e = side >= 0 ? Math.max(side - WAVE.peelFlat, 0) / WAVE.peelFall : side / WAVE.backFall;
     const env = Math.exp(-e * e);
     const kappa = Math.max(smoothstep(WAVE.tTube, WAVE.tTube + WAVE.tCollapse, age), w.collapseG);
-    out.H = w.H * env * (1 - 0.5 * kappa);
+    out.H = w.H * env * (1 - 0.5 * kappa) * poolMask(x, z);
     out.S = w.S;
     out.b = smoothstep(0, WAVE.tThrow, age) * smoothstep(0.05, 0.3, out.H / out.S);
     out.kappa = kappa;
@@ -360,7 +415,7 @@ export class WaveModel {
   // Height (world y) of the underside of the curling lip directly above world point (x, z),
   // ignoring anything below yMin. Infinity when no lip is overhead.
   tubeCeiling(w, x, z, yMin) {
-    const sc = this.section(w, x);
+    const sc = this.section(w, x, z);
     if (sc.b < 0.25 || sc.H < 0.6) return Infinity;
     const { S, H, b, steep } = sc;
     const target = (z - crestOffset(x) - w.crestZ0) / S;
@@ -391,7 +446,7 @@ export class WaveModel {
   // Full displaced surface point of wave w (including the curl) for rest coords (x, rowZ).
   // Used for spray emission.
   curlPoint(w, x, rowZ, out) {
-    const sc = this.section(w, x);
+    const sc = this.section(w, x, rowZ + crestOffset(x));
     const S = sc.S;
     const u = rowZ - w.crestZ0;
     const un = u / S;
@@ -450,7 +505,7 @@ export class WaveModel {
     out.waterVz = 0;
     for (const w of this.waves) {
       if (!w.active || w.H < 0.01) continue;
-      const sc = this.section(w, rx);
+      const sc = this.section(w, rx, rz);
       const u = rowZ - w.crestZ0;
       const un = u / sc.S;
       if (un < -16 || un > 7) continue;
@@ -488,6 +543,11 @@ export class WaveModel {
       out.b = 0;
       out.kappa = 0;
       out.age = -99;
+    }
+    // a pool's current: back out toward the lineup along the pier
+    if (WAVE.current) {
+      const C = WAVE.current;
+      out.waterVz -= C.speed * smoothstep(C.half, C.half * 0.35, Math.abs(rx)) * smoothstep(0, 10, poolInside(rx, rz));
     }
     out.height = h;
     return out;

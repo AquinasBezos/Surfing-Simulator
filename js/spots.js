@@ -89,6 +89,56 @@ export const SPOTS = {
   },
 };
 
+// The wave pool: a kite-shaped lagoon with the wave machine's housing at its narrow back end
+// and a pier down the middle to the clubhouse. Each wave runs toward the shore across both
+// halves at once, reaches the shallow shelf at the outer corners first and peels in toward
+// the pier: a left on one side, a right on the other. A trench along the pier carries a
+// current back out to the lineup, and an arch under the pier near the shore joins the sides.
+SPOTS.pool = {
+  id: 'pool',
+  name: 'Wave Pool',
+  place: 'Inland, England',
+  blurb: 'Machine-made lefts and rights either side of a pier',
+  wave: {
+    peelSpeed: 5.6,
+    backSpeed: 6,
+    breakWidth: 4,
+    backWidth: 0,
+    tThrow: 1.2,
+    tTube: 3.0,
+    tCollapse: 1.4,
+    curveK: 0,
+    curveMax: 0,
+    peelFlat: 200, // (the walls and the pier end the wave: see pool)
+    peelFall: 50,
+    backFall: 6,
+    dir: 0,
+    mirror: 66, // peaks 66 m either side of the pier, near the outer walls
+    peakSpread: 1.5,
+    // a smaller lagoon: waves come out of the machine at the back, break across the middle
+    // and die on the beaches, one every 12 s
+    spawnZ: -105,
+    breakZ: 0,
+    dieStartZ: 80,
+    dieEndZ: 108,
+    spacing: 62,
+    shoalFrom: -60,
+    shoalBase: 0.55,
+    steepFrom: -40,
+    // kite: back corner (0, bz), side corners (+-sx, sz), front corner (0, fz); waves die down
+    // within fadeWall of the walls and against the pier (half-width pier, over fadePier)
+    pool: { bz: -110, sx: 95, sz: 25, fz: 125, pier: 4, fadeWall: 7, fadePier: 6 },
+    current: { speed: 0.9, half: 13 },
+    curl: { rin: 0.5, yc: 0.46, ex: 1.15, sweep: 3.95, lf: [1.1, 0.48], lb: [1.9, 1.35], trough: 0.04, lip: 0.4 },
+  },
+  // what a pool can make: knee high to a couple of metres
+  heights: { min: 0.8, max: 2.0, randomMin: 0.9, randomMax: 1.8, default: 1.4, small: 1.0, minScale: 1.8 },
+  lineup: { z: -10, side: 7 },
+  inside: { z: 1e9, x: 1e9 }, // (you get washed up on a beach instead)
+  // clear, bright blue over a pale floor
+  water: { absorb: [0.42, 0.085, 0.05], scatter: [0.003, 0.045, 0.075], sss: [0.08, 0.9, 0.95], uwScatter: [0.006, 0.11, 0.15], deep: [0.012, 0.1, 0.14], uwUp: [0.05, 0.4, 0.48], uwGlow: [0.12, 0.45, 0.5], shaft: [0.5, 0.95, 1.0], vis: 0.07 },
+};
+
 export const SPOT_IDS = Object.keys(SPOTS);
 export const DEFAULT_SPOT = 'margaret';
 export const cleanSpot = (id) => (SPOTS[id] ? id : DEFAULT_SPOT);

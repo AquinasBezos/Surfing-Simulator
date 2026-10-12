@@ -9,8 +9,9 @@ export const QUALITY = {
 // same everywhere; how the wave breaks belongs to the surf spot (spots.js) and is copied in
 // here for the spot being played (applySpotWave in wave.js).
 export const WAVE = {
-  slots: 2, // waves alive at once (must match shader)
+  slots: 4, // waves alive at once (must match shader)
   speed: 5.2, // crest celerity
+  // (timing and where waves live can belong to a spot too: a wave pool's are its own)
   spawnZ: -115, // crest z when a wave appears
   breakZ: 0, // crest z at which the peak starts to pitch
   dieStartZ: 82, // the wave turns to whitewater and fades out here...
@@ -30,10 +31,13 @@ export const WAVE = {
   peelFall: 260, // ...over this distance
   backFall: 45, // (and over this distance on the other side)
   dir: 0, // 0: peels either way, 1: always toward +x (a left)
+  mirror: 0, // > 0: every wave peaks at both x = +-mirror and peels in toward x = 0 (a pool)
   peakSpread: 5,
   shoalFrom: -115,
   shoalBase: 0.5,
   steepFrom: -100,
+  pool: null, // a pool's walls and pier: waves die down against them (see spots.js)
+  current: null, // { speed, half }: water flowing back out (-z) within `half` m of x = 0
 };
 
 // Wave heights you can pick (m), the range the 'random' setting wanders through, the size

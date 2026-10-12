@@ -60,6 +60,7 @@ export class Surfer {
     this.riding = false;
     this.catching = false;
     this.onEvent = null; // (type, data)
+    this.collide = null; // (surfer) => impact speed: walls and piers at the spot (a pool)
     this._n = new THREE.Vector3();
     this._m = new THREE.Matrix4();
     this._q = new THREE.Quaternion();
@@ -358,6 +359,10 @@ export class Surfer {
 
     this.x += this.vx * h;
     this.z += this.vz * h;
+    if (this.collide) {
+      const hit = this.collide(this);
+      if (hit > 3.5 && this.state === STATE.STANDING) return this.wipeout('Ran into the wall');
+    }
 
     this.updateVertical(h, s, ext);
     if (this.state === STATE.WIPEOUT) return;

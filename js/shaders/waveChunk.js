@@ -14,6 +14,9 @@ export function createWaveUniforms(model) {
     uWaveD: { value: new THREE.Vector4() },
     uWaveE: { value: new THREE.Vector4() },
     uWaveF: { value: new THREE.Vector4() },
+    uPoolA: { value: new THREE.Vector4() },
+    uPoolB: { value: new THREE.Vector4() },
+    uPoolC: { value: new THREE.Vector4() },
     uSwellA: { value: model.swell.map((c) => new THREE.Vector4(c.dx, c.dz, c.amp, c.k)) },
     uSwellB: { value: model.swell.map((c) => new THREE.Vector4(c.horiz, c.omega, c.phase, c.lambda)) },
   };
@@ -29,6 +32,12 @@ export function writeSpotUniforms(u) {
   u.uWaveD.value.set(CURL.sweep, CURL.lfLo, CURL.lfHi, CURL.trough);
   u.uWaveE.value.set(WAVE.breakWidth, WAVE.backWidth, WAVE.peelFlat, WAVE.peelFall);
   u.uWaveF.value.set(WAVE.backFall, CURL.lbLo, CURL.lbHi, CURL.lip);
+  const P = WAVE.pool;
+  if (P) {
+    u.uPoolA.value.set(P.back[0], P.back[1], P.back[2], 1);
+    u.uPoolB.value.set(P.front[0], P.front[1], P.front[2], P.pier);
+    u.uPoolC.value.set(P.fadeWall, P.fadePier, 0, 0);
+  } else u.uPoolA.value.set(0, 0, 0, 0);
 }
 
 export const WAVE_GLSL = /* glsl */ `
@@ -43,6 +52,9 @@ uniform vec4 uWaveC;             // curl: tube radius, centre height, width stre
 uniform vec4 uWaveD;             // lip sweep, face length (gentle, steep), trough
 uniform vec4 uWaveE;             // first section width (peel side, other side), fade along the crest: flat, fall
 uniform vec4 uWaveF;             // fade on the other side, back length (gentle, steep), lip thickness
+uniform vec4 uPoolA;             // a pool: back walls (n.x, n.z, c), on
+uniform vec4 uPoolB;             // front edges (n.x, n.z, c), pier half-width
+uniform vec4 uPoolC;             // fade toward the walls, fade toward the pier
 uniform vec4 uSwellA[SWELL_N];   // dir.x, dir.z, amp, k
 uniform vec4 uSwellB[SWELL_N];   // horiz, omega, phase, lambda
 
@@ -57,6 +69,14 @@ const float YB0 = 0.45;
 float sech2(float x) { float c = cosh(clamp(x, -40.0, 40.0)); return 1.0 / (c * c); }
 
 float crestOffset(float x) { return -min(uWaveQ.z, uWaveQ.y * x * x); }
+
+// waves in a pool die down against its walls and the pier
+float poolMask(float x, float z) {
+  if (uPoolA.w < 0.5) return 1.0;
+  float ax = abs(x);
+  float inside = min(dot(uPoolA.xy, vec2(ax, z)) - uPoolA.z, dot(uPoolB.xy, vec2(ax, z)) - uPoolB.z);
+  return clamp(inside / uPoolC.x, 0.0, 1.0) * clamp((ax - uPoolB.w) / uPoolC.y, 0.0, 1.0);
+}
 
 float baseProfile(float un, float steep, out float Lf, out float Lb) {
   Lf = mix(uWaveD.y, uWaveD.z, steep);
@@ -84,7 +104,7 @@ vec3 mainWave(int i, float x, float rowZ, inout vec4 info) {
 
   // along-crest section state
   float dx = x - A.y;
-  float side = dx * A.z;
+  float side = A.z == 0.0 ? A.y - abs(x) : dx * A.z; // (dir 0: a pool's wave, peaking at both x = +-peakX)
   float age = side >= 0.0 ? A.w - max(side - uWaveE.x, 0.0) / uWaveP.x : A.w - max(-side - uWaveE.y, 0.0) / uWaveP.y;
 
   // foam left behind sections that had already broken when this water passed the crest
@@ -95,7 +115,7 @@ vec3 mainWave(int i, float x, float rowZ, inout vec4 info) {
   float e = side >= 0.0 ? max(side - uWaveE.z, 0.0) / uWaveE.w : side / uWaveF.x;
   float env = exp(-e * e);
   float kappa = max(smoothstep(uWaveP.w, uWaveP.w + uWaveQ.x, age), B.w);
-  float H = B.x * env * (1.0 - 0.5 * kappa);
+  float H = B.x * env * (1.0 - 0.5 * kappa) * poolMask(x, rowZ + crestOffset(x));
   float b = smoothstep(0.0, uWaveP.z, age) * smoothstep(0.05, 0.3, H / S);
   float steep = B.z * mix(0.55, 1.0, exp(-max(-age, 0.0) / 5.0));
 
