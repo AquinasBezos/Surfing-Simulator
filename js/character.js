@@ -51,6 +51,7 @@ const _v3 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _qInv = new THREE.Quaternion();
+const _qLook = new THREE.Quaternion();
 const AXIS_Z = new THREE.Vector3(0, 0, 1);
 
 // rotate a bone by a world-space rotation q (about its own origin)
@@ -156,6 +157,11 @@ export class SurferCharacter {
     this.actions = [this.paddle, this.surf, this.sit];
     for (const a of this.actions) a.play();
     this.weights = [1, 0, 0]; // lying down, up, sitting
+    // The mixer only writes a bone when its animated value changes, so a held pose would keep
+    // the look / IK tweaks from the last frame and they'd pile up (a head that spins). Keep
+    // the mixer's output and put it back before each update.
+    this.boneList = Object.values(this.bones);
+    this.base = this.boneList.map((b) => ({ q: b.quaternion.clone(), p: b.position.clone() }));
   }
 
   setLook({ skin, hair }) {
@@ -178,7 +184,15 @@ export class SurferCharacter {
     this.surf.setEffectiveWeight(wU);
     this.sit.setEffectiveWeight(wS);
     this.paddle.setEffectiveTimeScale(0.3 + (p.effort || 0) * 1.3);
+    this.boneList.forEach((b, i) => {
+      b.quaternion.copy(this.base[i].q);
+      b.position.copy(this.base[i].p);
+    });
     this.mixer.update(dt);
+    this.boneList.forEach((b, i) => {
+      this.base[i].q.copy(b.quaternion);
+      this.base[i].p.copy(b.position);
+    });
     // lying with the hips toward the tail; up, the stance slides with `foot`; sitting just
     // behind the middle
     this.model.position.set(0, 0.035, wP * (p.proneZ ?? 0.42) + wU * -(p.foot || 0) + wS * 0.18);
@@ -195,8 +209,11 @@ export class SurferCharacter {
     const maxYaw = wP * 1.1 + wU * 1.9 + wS * 2.0;
     yaw = THREE.MathUtils.clamp(yaw, -maxYaw, maxYaw);
     pitch = THREE.MathUtils.clamp(pitch, -0.9, 0.7);
-    this.root.getWorldQuaternion(_q2);
-    const up = _v.set(0, 1, 0).applyQuaternion(_q2);
+    // axes from the board's frame, worked out first (rotateWorld reuses the scratch quaternions)
+    const boardQ = this.root.getWorldQuaternion(_qLook);
+    const up = _v.set(0, 1, 0).applyQuaternion(boardQ);
+    const fwd = _v2.set(0, 0, -1).applyQuaternion(boardQ).applyAxisAngle(up, yaw);
+    const across = _v3.crossVectors(fwd, up).normalize(); // to the right of the line of sight
     const share = [
       [B.Spine, wU * 0.2],
       [B.Chest, wU * 0.25 + wS * 0.15],
@@ -204,9 +221,7 @@ export class SurferCharacter {
       [B.Head, wU * 0.3 + wS * 0.5 + wP * 0.6],
     ];
     for (const [bone, f] of share) if (bone && f > 0) rotateWorld(bone, _q.setFromAxisAngle(up, yaw * f));
-    // nod about the axis across the line of sight
-    const fwd = _v2.set(0, 0, -1).applyQuaternion(_q2).applyAxisAngle(up, yaw);
-    const across = _v3.crossVectors(fwd, up).normalize();
+    // nod about the axis across the line of sight (+ pitch tips the face up)
     for (const [bone, f] of [
       [B.Chest, wU * 0.15],
       [B.Neck, 0.4],
