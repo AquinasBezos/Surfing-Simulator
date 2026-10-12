@@ -2,7 +2,10 @@
 //   Paddle     : sweep a hand from front to back below chest height ("in the water").
 //                Faster strokes paddle faster; a stronger right stroke turns you left.
 //   Duck dive  : while paddling, hold a grip with that hand on the front of the board.
-//   Pop-up     : physically stand up (head rises > 35 cm above the calibrated paddling height).
+//   Pop-up     : physically stand up (head rises > 35 cm above the calibrated paddling height,
+//                quickly, or all the way).
+//   Sit up     : rise slowly to about half way and stay there (wait for a set); lie back down
+//                to paddle again.
 //   Surf       : lean your head/torso left/right to carve, forward to trim, back to stall.
 //   Crouch     : crouch for real; stand up fast at the lip to hop off it.
 //   Manoeuvre  : hold either grip to charge, then whip your head left/right.
@@ -10,7 +13,7 @@
 //   Buttons    : remappable (bindings.js). Defaults: Y pause menu, B back to the lineup,
 //                trigger re-calibrates the paddling position, A/X pop up / lie down, grip
 //                duck dives (on the nose) or charges a trick.
-//   Fallback   : thumbstick forward = paddle, sideways = steer/lean.
+//   Fallback   : thumbstick forward = paddle, sideways = steer/lean, back = sit up.
 import * as THREE from 'three';
 import { createVRHand } from './body.js';
 import { STATE } from './surfer.js';
@@ -126,7 +129,11 @@ export class XRControls {
     this._q.set(o.x, o.y, o.z, o.w);
     const f = this._v.set(0, 0, -1).applyQuaternion(this._q);
     this.headYaw = Math.atan2(-f.x, -f.z);
+    this.headPitch = Math.asin(Math.max(-1, Math.min(1, f.y)));
     if (!this.calibrated) this.calibrate();
+    // where you're looking relative to the board (shown on your character to other players)
+    this.lookYaw = Math.atan2(Math.sin(this.headYaw - this.yaw0), Math.cos(this.headYaw - this.yaw0));
+    this.lookPitch = this.headPitch;
     const lh = this.toBody(this.head, this.local);
 
     // head turn speed (+ = left)
@@ -139,6 +146,7 @@ export class XRControls {
 
     const prone = state === STATE.PRONE;
     const standing = state === STATE.STANDING;
+    const sitting = state === STATE.SITTING;
     let pl = 0,
       pr = 0,
       fastest = 0,
@@ -201,17 +209,39 @@ export class XRControls {
     out.steer = Math.abs(stickX) > 0.2 ? stickX : 0;
     out.duck = prone && noseGrip;
 
-    // pop-up by standing up for real
+    // pop-up by standing up for real; sitting up by rising slowly part of the way
     const dy = lh.y;
+    if (dt > 0) this.riseRate = (this.riseRate || 0) + ((dy - (this.prevDy ?? dy)) / dt - (this.riseRate || 0)) * (1 - Math.exp(-dt / 0.08));
+    this.prevDy = dy;
     if (prone) {
-      this.standTimer = dy > 0.35 ? this.standTimer + dt : 0;
+      // a pop-up is quick; a slow rise only counts once you're nearly all the way up
+      this.standTimer = dy > 0.35 && (this.riseRate > 0.9 || dy > 0.75) ? this.standTimer + dt : 0;
+      this.sitTimer = dy > 0.22 && dy < 0.75 && Math.abs(this.riseRate) < 0.35 ? (this.sitTimer || 0) + dt : 0;
+      if (this.sitTimer > 0.5) {
+        this.sitTimer = 0;
+        this.events.push('sit');
+      }
       if (this.standTimer > 0.12) {
         this.standTimer = 0;
         this.events.push('popUp');
         this.stance.copy(lh);
         this.standPeak = dy;
       }
-    } else this.standTimer = 0;
+    } else this.standTimer = this.sitTimer = 0;
+    // thumbstick fallback: pull back to sit up, push forward to lie down again
+    this.stickTimer = (prone && stickY > 0.7) || (sitting && stickY < -0.6) ? (this.stickTimer || 0) + dt : 0;
+    if (this.stickTimer > 0.3) {
+      this.stickTimer = 0;
+      this.events.push(prone ? 'sit' : 'layDown');
+    }
+    // sitting: lie back down to paddle
+    if (sitting) {
+      this.downTimer = dy < 0.15 ? (this.downTimer || 0) + dt : 0;
+      if (this.downTimer > 0.3) {
+        this.downTimer = 0;
+        this.events.push('layDown');
+      }
+    } else this.downTimer = 0;
     if (standing) {
       this.standPeak = Math.max(this.standPeak * (1 - dt * 0.02), dy);
       if (this.stateWas !== STATE.STANDING) {

@@ -50,6 +50,8 @@ uniform sampler2D uNormalTex;
 uniform sampler2D uNoise;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
+uniform vec3 uSkyAmb;   // light from the open sky (blue at midday, dim violet at sunset)
+uniform vec3 uUWLight;  // overall light under the water (white at midday)
 uniform float uRipple;
 uniform float uHQ;
 uniform float uCamUnder;
@@ -121,7 +123,7 @@ void main() {
     vec3 Tu = refract(-V, N, 1.333);
     // outside the window the surface mirrors the water below; ripples make it shimmer
     vec3 Rd = reflect(-V, N);
-    vec3 below = mix(vec3(0.014, 0.14, 0.14), vec3(0.003, 0.035, 0.045), pow(clamp(-Rd.y, 0.0, 1.0), 0.6));
+    vec3 below = mix(vec3(0.014, 0.14, 0.14), vec3(0.003, 0.035, 0.045), pow(clamp(-Rd.y, 0.0, 1.0), 0.6)) * uUWLight;
     vec3 ucol;
     if (dot(Tu, Tu) < 1e-4) {
       ucol = below;
@@ -135,8 +137,8 @@ void main() {
     vec2 fuvU = vec2(vWorld.x, vWorld.z + vWorld.y * 0.9);
     float fp = texture(uNoise, fuvU * 0.16 + vec2(0.0, -uTime * 0.03)).r * 0.6 + texture(uNoise, fuvU * 0.047 + 0.3).r * 0.4;
     float fm = smoothstep(1.0 - fa * 0.7, 1.15 - fa * 0.55, fp + 0.15) * min(fa * 1.4, 1.0);
-    ucol = mix(ucol, vec3(0.75, 0.95, 0.95) * 1.4, clamp(fm + smoothstep(1.0, 1.7, fa) * 0.7, 0.0, 1.0));
-    ucol = mix(ucol, vec3(0.01, 0.12, 0.12), 1.0 - exp(-dist * 0.085));
+    ucol = mix(ucol, vec3(0.75, 0.95, 0.95) * 1.4 * uUWLight, clamp(fm + smoothstep(1.0, 1.7, fa) * 0.7, 0.0, 1.0));
+    ucol = mix(ucol, vec3(0.01, 0.12, 0.12) * uUWLight, 1.0 - exp(-dist * 0.085));
     gl_FragColor = vec4(ucol, 1.0);
     #include <tonemapping_fragment>
     #include <colorspace_fragment>
@@ -167,7 +169,7 @@ void main() {
 
   vec3 bedP = vWorld + T * min(tBed, 250.0);
   vec3 sunDown = uSunColor * uSunDir.y;
-  vec3 skyAmb = vec3(0.32, 0.48, 0.62);
+  vec3 skyAmb = uSkyAmb;
   vec3 bedLight = (sunDown * (0.32 + caustics(bedP.xz) * smoothstep(14.0, 1.5, depth) * 0.9) + skyAmb * 0.35) * exp(-ABSORB * depth * 1.3);
   vec3 bedCol = sandColor(bedP.xz) * bedLight;
   vec3 through = textureLod(uEnv, normalize(mix(T, -V, 0.5)), 2.0).rgb;
@@ -208,7 +210,7 @@ void main() {
   vec3 haze = textureLod(uEnv, hzDir, 3.0).rgb;
   col = mix(col, haze, 1.0 - exp(-dist * 0.00024));
 
-  if (under) col = mix(col, vec3(0.02, 0.2, 0.2), 0.35);
+  if (under) col = mix(col, vec3(0.02, 0.2, 0.2) * uUWLight, 0.35);
 
   gl_FragColor = vec4(col, 1.0);
   #include <tonemapping_fragment>
@@ -228,6 +230,8 @@ export class Ocean {
       uNoise: { value: noiseTex },
       uSunDir: { value: new THREE.Vector3(...SUN_DIR) },
       uSunColor: { value: new THREE.Vector3(...SUN_COLOR).multiplyScalar(3.2) },
+      uSkyAmb: { value: new THREE.Vector3(0.32, 0.48, 0.62) },
+      uUWLight: { value: new THREE.Vector3(1, 1, 1) },
       uRipple: { value: 0.14 },
       uHQ: { value: 1 },
       uCamUnder: { value: 0 },

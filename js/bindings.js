@@ -13,8 +13,8 @@ const STORE = 'lineup.bindings';
 export const PC_ACTIONS = [
   { id: 'left', label: 'Steer / carve left', when: 'any', keys: ['KeyA', 'ArrowLeft'] },
   { id: 'right', label: 'Steer / carve right', when: 'any', keys: ['KeyD', 'ArrowRight'] },
-  { id: 'forward', label: 'Lean forward · walk to the nose', when: 'any', keys: ['KeyW', 'ArrowUp'] },
-  { id: 'back', label: 'Lean back · walk to the tail', when: 'any', keys: ['KeyS', 'ArrowDown'] },
+  { id: 'forward', label: 'Lean forward · walk to the nose · lie back down', when: 'any', keys: ['KeyW', 'ArrowUp'] },
+  { id: 'back', label: 'Lean back · walk to the tail · sit up and wait', when: 'any', keys: ['KeyS', 'ArrowDown'] },
   { id: 'popup', label: 'Pop up / lie down', when: 'any', keys: ['Space', ''] },
   { id: 'duck', label: 'Duck dive (while paddling)', when: 'prone', keys: ['Control', 'KeyC'] },
   { id: 'crouch', label: 'Crouch (while surfing)', when: 'standing', keys: ['Control', 'KeyC'] },

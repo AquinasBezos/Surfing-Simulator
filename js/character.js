@@ -6,6 +6,9 @@
 //   up         : the Surf clip (crossfaded through the pop-up), with crouch and rail lean
 //                added by moving the hips and re-solving the legs (two-bone IK) so the
 //                feet stay planted on the deck; on a longboard the stance slides along it
+//   sitting    : a sitting pose made here, for waiting out the back
+// and turned to look where the player is looking (head and neck, or the whole upper body
+// when they're up and riding).
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
@@ -88,6 +91,47 @@ function solveTwoBone(upper, lower, end, target) {
   end.updateMatrixWorld(true);
 }
 
+// Sitting astride the board waiting for a set: thighs forward and out either side, shins
+// hanging in the water, hands resting forward, with a slow breathing sway. The model has no
+// sitting clip, so it's built here. Angles in degrees (ZYX, the model's frame: it faces +z,
+// left is +x); the rig's rest pose has no rotations, so these are rotations from the T-pose.
+let sitClipCache = null;
+function sitClip() {
+  if (sitClipCache) return sitClipCache;
+  const D = Math.PI / 180;
+  const q = (x, y, z) => new THREE.Quaternion().setFromEuler(new THREE.Euler(x * D, y * D, z * D, 'ZYX'));
+  const pose = {
+    Spine: [[3, 0, 0], [6, 0, 0]],
+    Chest: [[2, 0, 0], [4, 0, 0]],
+    Neck: [[0, 0, 0]],
+    Head: [[-4, 0, 0]],
+    LeftShoulder: [[0, 0, 0]],
+    RightShoulder: [[0, 0, 0]],
+    LeftUpperArm: [[0, -32, -68], [0, -30, -70]],
+    RightUpperArm: [[0, 32, 68], [0, 30, 70]],
+    LeftLowerArm: [[0, -55, 0]],
+    RightLowerArm: [[0, 55, 0]],
+    LeftHand: [[0, -10, 0]],
+    RightHand: [[0, 10, 0]],
+    LeftUpperLeg: [[-68, 0, 20], [-64, 0, 22]],
+    RightUpperLeg: [[-68, 0, -20], [-66, 0, -21]],
+    LeftLowerLeg: [[82, 0, 0], [76, 0, 0]],
+    RightLowerLeg: [[82, 0, 0], [86, 0, 0]],
+    LeftFoot: [[25, 0, 0]],
+    RightFoot: [[25, 0, 0]],
+  };
+  const times = [0, 2, 4];
+  const tracks = [new THREE.VectorKeyframeTrack('Hips.position', times, [0, 0.1, 0, 0, 0.104, 0, 0, 0.1, 0])];
+  tracks.push(new THREE.QuaternionKeyframeTrack('Hips.quaternion', times, [...q(-4, 0, 0).toArray(), ...q(-3, 0, 0).toArray(), ...q(-4, 0, 0).toArray()]));
+  for (const [bone, keys] of Object.entries(pose)) {
+    const a = q(...keys[0]);
+    const b = keys[1] ? q(...keys[1]) : a;
+    tracks.push(new THREE.QuaternionKeyframeTrack(`${bone}.quaternion`, times, [...a.toArray(), ...b.toArray(), ...a.toArray()]));
+  }
+  sitClipCache = new THREE.AnimationClip('Sit', 4, tracks);
+  return sitClipCache;
+}
+
 export class SurferCharacter {
   // gltf: from loadSurferModel(). The root is meant to sit in the board's frame (nose -z).
   constructor(gltf) {
@@ -108,8 +152,10 @@ export class SurferCharacter {
     const clip = (name) => gltf.animations.find((a) => a.name === name);
     this.paddle = this.mixer.clipAction(clip('Paddle'));
     this.surf = this.mixer.clipAction(clip('Surf'));
-    for (const a of [this.paddle, this.surf]) a.play();
-    this.blend = 0; // 0 lying down .. 1 up
+    this.sit = this.mixer.clipAction(sitClip());
+    this.actions = [this.paddle, this.surf, this.sit];
+    for (const a of this.actions) a.play();
+    this.weights = [1, 0, 0]; // lying down, up, sitting
   }
 
   setLook({ skin, hair }) {
@@ -117,18 +163,56 @@ export class SurferCharacter {
     if (hair && this.mats.Hair) this.mats.Hair.color.set(hair);
   }
 
-  // p: { standing (0..1 target), effort, crouch, lean, foot, proneZ }
+  // p: { pose: 'prone' | 'stand' | 'sit', effort, crouch, lean, foot, proneZ, lookYaw, lookPitch }
+  //    (lookYaw / lookPitch: where they're looking, relative to the board's nose, + = left / up)
   update(dt, p) {
-    this.blend += ((p.standing || 0) - this.blend) * (1 - Math.exp(-dt * 7));
-    const up = THREE.MathUtils.smoothstep(this.blend, 0, 1);
-    this.paddle.setEffectiveWeight(1 - up);
-    this.surf.setEffectiveWeight(up);
+    const target = p.pose === 'stand' ? 1 : p.pose === 'sit' ? 2 : 0;
+    const k = 1 - Math.exp(-dt * 7);
+    let sum = 0;
+    for (let i = 0; i < 3; i++) {
+      this.weights[i] += ((i === target ? 1 : 0) - this.weights[i]) * k;
+      sum += this.weights[i];
+    }
+    const [wP, wU, wS] = this.weights.map((w) => w / sum);
+    this.paddle.setEffectiveWeight(wP);
+    this.surf.setEffectiveWeight(wU);
+    this.sit.setEffectiveWeight(wS);
     this.paddle.setEffectiveTimeScale(0.3 + (p.effort || 0) * 1.3);
     this.mixer.update(dt);
-    // lying on the deck with the hips toward the tail; up, the stance slides with `foot`
-    this.model.position.set(0, 0.035, THREE.MathUtils.lerp(p.proneZ ?? 0.42, -(p.foot || 0), up));
+    // lying with the hips toward the tail; up, the stance slides with `foot`; sitting just
+    // behind the middle
+    this.model.position.set(0, 0.035, wP * (p.proneZ ?? 0.42) + wU * -(p.foot || 0) + wS * 0.18);
     this.model.updateMatrixWorld(true);
-    if (up > 0.5) this.adjustStance(p, up);
+    if (wU > 0.5) this.adjustStance(p, wU);
+    this.applyLook(p.lookYaw || 0, p.lookPitch || 0, wP, wU, wS);
+  }
+
+  // Turn to look: lying down or sitting it's the head and neck (and a little of the chest);
+  // up on the board the whole upper body twists with the view.
+  applyLook(yaw, pitch, wP, wU, wS) {
+    if (Math.abs(yaw) < 1e-3 && Math.abs(pitch) < 1e-3) return;
+    const B = this.bones;
+    const maxYaw = wP * 1.1 + wU * 1.9 + wS * 2.0;
+    yaw = THREE.MathUtils.clamp(yaw, -maxYaw, maxYaw);
+    pitch = THREE.MathUtils.clamp(pitch, -0.9, 0.7);
+    this.root.getWorldQuaternion(_q2);
+    const up = _v.set(0, 1, 0).applyQuaternion(_q2);
+    const share = [
+      [B.Spine, wU * 0.2],
+      [B.Chest, wU * 0.25 + wS * 0.15],
+      [B.Neck, wU * 0.25 + wS * 0.35 + wP * 0.4],
+      [B.Head, wU * 0.3 + wS * 0.5 + wP * 0.6],
+    ];
+    for (const [bone, f] of share) if (bone && f > 0) rotateWorld(bone, _q.setFromAxisAngle(up, yaw * f));
+    // nod about the axis across the line of sight
+    const fwd = _v2.set(0, 0, -1).applyQuaternion(_q2).applyAxisAngle(up, yaw);
+    const across = _v3.crossVectors(fwd, up).normalize();
+    for (const [bone, f] of [
+      [B.Chest, wU * 0.15],
+      [B.Neck, 0.4],
+      [B.Head, 0.6 - wU * 0.15],
+    ])
+      if (bone && f > 0) rotateWorld(bone, _q.setFromAxisAngle(across, pitch * f));
   }
 
   // crouch and rail lean on top of the Surf clip, feet kept on the deck

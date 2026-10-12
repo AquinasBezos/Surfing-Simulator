@@ -13,6 +13,8 @@ Paddle into glassy turquoise waves, pop up, and race the peeling lip through the
 - Two control schemes: keyboard and mouse on PC, and body movement on Quest (paddle with your arms, stand up to pop up, lean to carve).
 - Pick the wave size, from knee high to well overhead, or let it wander: sets build and fade over a few minutes. On small waves you can keep riding the whitewater after the wave breaks.
 - Your surfer is a rigged, animated character (paddling, popping up, a surf stance that crouches and leans with you). Choose skin tone, hair colour and board colour; a turntable preview shows your look.
+- Sit up on your board to wait for waves. Your head turns with your view, and on a wave your upper body twists to follow it, so other players can see where you're looking.
+- Surf at midday or at sunset: a low gold sun with a long path of light across the water, a dusk sky in the reflections, backlit crests and dimmer, warmer light under water.
 - Multiplayer: create or find a room, public or private with a passcode, and surf the same waves as up to seven other players, or join as a camera drone and film them from above. PC and Quest players can share a room.
 
 There is no build step. Textures, terrain and sound are generated at start-up, and three.js (r169) loads from jsDelivr. The only files besides code are the surfer model (`assets/surfer.glb`) and the menu art in `assets/menu/`, which are screenshots of the game. Firebase and Trystero load only when you open Multiplayer.
@@ -23,6 +25,7 @@ There is no build step. Textures, terrain and sound are generated at start-up, a
 | :-- | :-- | :-- |
 | Paddle | Scroll the mouse wheel; the faster you scroll, the faster you can paddle | Sweep your hands from front to back, low by your sides ("in the water"). Faster strokes, more speed |
 | Steer while paddling | `A` / `D` | Paddle harder on one side (a stronger right stroke turns you left) |
+| Sit up and wait | `S` while paddling; `W`, `Space` or start paddling to lie back down. `A` / `D` turn the board | Sit up slowly and stop partway (head 22–75 cm above your paddling height); lie back down to paddle. Thumbstick left / right turns the board |
 | Duck dive | Hold `Ctrl` (or `C`) while paddling; let go to surface | Hold grip with your hand on the front of the board |
 | Pop up | `Space` (press again to lie back down) | Stand up for real: head rises 35 cm above your calibrated paddling height |
 | Surf (weight shift) | `A` / `D` carve, `W` / `S` lean forward (trim) or back (stall) | Lean your head and body |
@@ -34,7 +37,9 @@ There is no build step. Textures, terrain and sound are generated at start-up, a
 
 These are the defaults. Every key and Quest button can be changed in **Controls and settings**, from the main menu or the pause screen. On PC, click a key and press the new one; mouse buttons work too. On Quest, pick a button for each action, either on the page or in VR from the headset's pause menu. If a key is already taken, the two actions swap, except where they can never clash: duck diving only happens while paddling and crouching only while standing, so both can stay on `Ctrl`. Scroll to paddle, mouse look, `Esc`, and the body movements on Quest stay fixed.
 
-On Quest, kneel or lie down before you start, then press the trigger to calibrate your paddling height. `Y` opens a pause menu in the headset: resume, go back to the lineup, recalibrate, change the buttons and volume, or leave. Point at it with either controller and pull the trigger. If you don't have room, the thumbstick (forward to paddle, sideways to steer or lean) and `A`/`X` (pop up / lie down) work as a fallback.
+On Quest, kneel or lie down before you start, then press the trigger to calibrate your paddling height. `Y` opens a pause menu in the headset: resume, go back to the lineup, recalibrate, change the buttons and volume, or leave. Point at it with either controller and pull the trigger. If you don't have room, the thumbstick (forward to paddle, sideways to steer or lean, held back to sit up, forward again to lie down) and `A`/`X` (pop up / lie down) work as a fallback.
+
+Sitting up and popping up are told apart by speed: rise slowly and hold still for half a second to sit, spring up quickly to pop up. To catch a wave from sitting, lie back down and paddle. Sitting in the whitewater of a big wave wipes you out, the same as standing in it.
 
 On PC the game goes fullscreen and locks the keyboard when you start, so `Ctrl` combinations such as `Ctrl+W` reach the game instead of closing the tab. If that isn't available (e.g. Firefox), the browser asks before leaving the page, and `C` works instead of `Ctrl`. Fullscreen can be turned off in **Controls and settings**, which also has graphics quality, volume and mouse sensitivity.
 
@@ -49,7 +54,9 @@ On PC the game goes fullscreen and locks the keyboard when you start, so `Ctrl` 
 7. If you're caught inside with a wave about to land on you, duck dive under it.
 8. You wipe out if you get sucked up the face of a pitching section (over the falls), the lip lands on you or clips your head in the barrel, or the whitewater catches you while you're standing. Waves under 1.5 m don't have that power: there you can ride the whitewater all the way in.
 
-### Waves and your surfer
+### Waves, time of day and your surfer
+
+**Time of day** (Singleplayer screen, room lobby and pause screen) switches between **Midday** and **Sunset**. At sunset the sun sits a few degrees above the horizon out to sea, behind the waves as you paddle out, so it lays a long path of light across the water and shines through the crests and the lip. The sky, the reflections in the water, the fog, the sunlight on the surfers and the light under water all shift to dusk colours. It's your own setting, so in a room each player can pick their own.
 
 The **Waves** setting is on the Singleplayer screen, in Create a room, in the room lobby, and on the pause screen. **Set height** picks a size from 0.6 m to 3.4 m, and each wave varies a few percent around it. **Random** lets the size drift between about 0.8 m and 3 m, building and fading over a few minutes, with no wave much bigger than the last. A change applies from the next wave, so the ones already rolling in keep their size. Small waves are relatively longer and gentler, more like mushy beginner waves, so they can still be caught at the game's fixed wave speed.
 
@@ -60,7 +67,7 @@ The **Waves** setting is on the Singleplayer screen, in Create a room, in the ro
 1. Choose **Multiplayer**, then set your name and board. Your look and the wave size are set in the room lobby.
 2. **Find a room** lists the open rooms and who's in them; type to search by name. Rooms marked 🔒 are private and ask for the passcode.
 3. Or **Create a room**: give it a name and make it public, or private with a passcode of at least 3 characters.
-4. In the room, choose **Play on PC** or **Play in VR**. Everyone in the room gets the same waves at the same moment. Other surfers appear with name tags, and a feed shows who paddled out, got barrelled or wiped out. You can change your name, and anyone can change the room's wave size, from the pause menu.
+4. In the room, choose **Play on PC** or **Play in VR**. Everyone in the room gets the same waves at the same moment. Other surfers appear with name tags, and a feed shows who paddled out, got barrelled or wiped out. You can see where they're looking: their heads turn with their view while they paddle or sit, and their upper bodies twist with it on a wave. You can change your name, and anyone can change the room's wave size, from the pause menu.
 
 ### Join as drone
 
@@ -78,7 +85,7 @@ In the room lobby, pick **Join as drone** instead of Surfer to fly a camera dron
 ### How it works
 
 - The Firebase Realtime Database is only used to find rooms. Each player in a room writes one entry of about 100 bytes, `lineup/rooms/<room>/<player>`, with `onDisconnect().remove()`. A room is nothing more than its players' entries, so it disappears as soon as the last player leaves or closes the tab. There is no cleanup job and nothing is left behind.
-- Players connect to each other directly over WebRTC using [Trystero](https://github.com/dmotz/trystero). Trystero uses the same database for the brief connection handshake and deletes those records itself. Positions (15 times a second, 56 bytes each), events and clock sync all go peer-to-peer and never touch Firebase.
+- Players connect to each other directly over WebRTC using [Trystero](https://github.com/dmotz/trystero). Trystero uses the same database for the brief connection handshake and deletes those records itself. Positions and where each player is looking (15 times a second, 64 bytes each), events and clock sync all go peer-to-peer and never touch Firebase.
 - Waves aren't sent over the network at all. Each room has a random seed, a shared clock and a wave-size setting, and every player generates the same sets from them. A player who joins takes the clock of whoever has been in the room longest. A change to the wave size carries the wave number it starts from, so everyone switches on the same wave.
 - In a private room the passcode is the key Trystero encrypts the handshake with, so players without it can't connect. The room list stores only a short hash of it so that a wrong passcode is rejected straight away.
 
@@ -155,6 +162,6 @@ Breaking starts at the peak and spreads along the wave at the peel speed. Each s
 - `?board=shortboard|longboard`: choose the board (otherwise the last one picked in the menu).
 - `?shot=lineup|barrel|shoulder|behind|paddle|duckdive|beach|boards`: jumps to a preset scene, skipping the menu. Add `&freeze` to stop time.
 - Extra preset options: `&stand`, `&crouch=0..1`, `&dive=depth` (e.g. `&dive=1.1` to look around under water), `&foot=-1..1.2` (longboard stance), `&pitch=` / `&lookyaw=` (radians), `&tau=` (seconds since the wave started breaking; negative is before).
-- `&bots=N`: puts N stand-in surfers around you, to check how other players look. `&wave2=z`: adds a second wave of the set with its crest at `z`. `&waveh=1.0`: the preset wave's height in metres.
+- `&bots=N`: puts N stand-in surfers around you, to check how other players look. They sit and look around, or paddle; `&botpose=prone|sit|stand` puts them all in one pose. `&wave2=z`: adds a second wave of the set with its crest at `z`. `&waveh=1.0`: the preset wave's height in metres.
 - `?shot=barrel&freeze&cam=x,y,z,yawDeg,pitchDeg`: free spectator camera.
 - `?relay`: multiplayer connections only go through the TURN relay (to test the relay set-up).

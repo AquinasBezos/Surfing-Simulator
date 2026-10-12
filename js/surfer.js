@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { GRAVITY, LINEUP_Z, WAVE, WAVE_HEIGHTS, BOARDS } from './config.js';
 import { clamp, smoothstep, mix } from './wave.js';
 
-export const STATE = { PRONE: 'prone', POPUP: 'popup', STANDING: 'standing', WIPEOUT: 'wipeout' };
+export const STATE = { PRONE: 'prone', POPUP: 'popup', STANDING: 'standing', WIPEOUT: 'wipeout', SITTING: 'sitting' };
 
 const POPUP_TIME = 0.42;
 const DEG = Math.PI / 180;
@@ -125,7 +125,12 @@ export class Surfer {
   }
 
   layDown() {
-    if ((this.state === STATE.STANDING || this.state === STATE.POPUP) && !this.air) this.setState(STATE.PRONE);
+    if ((this.state === STATE.STANDING || this.state === STATE.POPUP || this.state === STATE.SITTING) && !this.air) this.setState(STATE.PRONE);
+  }
+
+  // Sit up on the board (from lying down) to wait for a set.
+  sit() {
+    if (this.state === STATE.PRONE && !this.diving && !this.air) this.setState(STATE.SITTING);
   }
 
   wipeout(reason) {
@@ -190,6 +195,7 @@ export class Surfer {
 
     const standing = this.state === STATE.STANDING;
     const prone = this.state === STATE.PRONE || this.state === STATE.POPUP;
+    const sitting = this.state === STATE.SITTING;
 
     // --- stance ---
     const k = 1 - Math.exp(-h * (standing ? 7 : 4));
@@ -233,6 +239,7 @@ export class Surfer {
     const g2 = hx * hx + hz * hz;
     const relSp = Math.hypot(this.vx, this.vz - wvz);
     let plane = standing ? mix(0.45, 1, smoothstep(B.planeLo - 0.3, B.planeHi, relSp)) : mix(0.2, 1, smoothstep(1.1, 3.0, relSp));
+    if (sitting) plane = 0.12; // upright with your legs in the water: the board barely slides
     // extending out of a crouch presses the board into the face (pumping)
     if (standing && ext > 0.5) plane *= 1 + Math.min(0.7, ext * 0.12);
     if (this.diving) plane *= 1 - smoothstep(0.1, 0.6, this.diveDepth);
@@ -306,7 +313,7 @@ export class Surfer {
           vl = vl2;
         }
       } else {
-        const lin = mix(0.38, 0.2, smoothstep(2.2, 4.5, sp)) + (this.diving ? 0.8 : 0),
+        const lin = mix(0.38, 0.2, smoothstep(2.2, 4.5, sp)) + (this.diving ? 0.8 : 0) + (sitting ? 1.4 : 0),
           quad = 0.11;
         vf -= (lin * vf + quad * vf * Math.abs(vf)) * h;
         const vl2 = vl * Math.exp(-h * 2.6);
@@ -343,6 +350,9 @@ export class Surfer {
       // steer: +1 = right (D). turn: VR paddling differential in rad/s, + = left.
       const target = (-inp.steer * 1.25) / (1 + 0.18 * speed) + (inp.turn || 0);
       this.yawRate += (target - this.yawRate) * (1 - Math.exp(-h * 5));
+    } else if (sitting) {
+      // eggbeater kicks swing the board round slowly
+      this.yawRate += (-inp.steer * 0.75 - this.yawRate) * (1 - Math.exp(-h * 3));
     }
     if (!this.move) this.yaw += this.yawRate * h;
 
@@ -383,7 +393,8 @@ export class Surfer {
   // Vertical motion: glued to the surface until the surface drops away faster than gravity
   // (cresting the lip at speed) or a leg extension pops the board up, then ballistic.
   updateVertical(h, s, ext) {
-    const target = this.model.heightAt(this.x, this.z) - this.diveDepth;
+    // sitting up, more of your weight is on the board: it floats a little lower
+    const target = this.model.heightAt(this.x, this.z) - this.diveDepth - (this.state === STATE.SITTING ? 0.07 : 0);
     const standing = this.state === STATE.STANDING;
     if (!this.air) {
       const vySurf = (target - this.y) / h;
@@ -531,7 +542,11 @@ export class Surfer {
       } else this.lipT = 0;
       this.inTube = s.b > 0.6 && s.kappa < 0.35 && un > 0.38 && un < 1.25 && s.H > 1.2;
       this.riding = un > -0.7 && un < 3 && this.speed > 2.2;
-    } else this.riding = false;
+    } else {
+      this.riding = false;
+      // sitting in the impact zone: a big wave's whitewater washes you off the board
+      if (st === STATE.SITTING && !small && s.kappa > 0.5 && un > -0.3 && un < 2.0) return this.wipeout('Caught inside the whitewater');
+    }
   }
 
   updatePose(dt) {
@@ -554,7 +569,7 @@ export class Surfer {
     const standing = st === STATE.STANDING;
     let targetRoll = standing ? -this.leanX * 0.42 : st === STATE.WIPEOUT ? Math.sin(this.tumble * 5) * 1.2 : -this.yawRate * 0.05;
     if (this.move) targetRoll = this.move.dir * (this.move.kind === 'tailslide' ? 0.2 : 0.6);
-    let targetPitch = standing ? -this.leanZ * 0.06 : st === STATE.PRONE ? 0.035 : 0;
+    let targetPitch = standing ? -this.leanZ * 0.06 : st === STATE.PRONE ? 0.035 : st === STATE.SITTING ? 0.2 : 0;
     if (standing && this.board.walk) targetPitch -= 0.06 * smoothstep(0.3, 1.1, this.footPos) - 0.07 * smoothstep(0.3, 1.0, -this.footPos);
     // the extra steepness of a pitching ledge beyond the smooth surface
     const surfAng = Math.atan(Math.max(0, -(gx * fwd.x + gz * fwd.z) / Math.max(1e-3, Math.hypot(fwd.x, fwd.z))));

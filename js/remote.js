@@ -9,7 +9,7 @@ import { createDroneModel, animateDrone } from './drone.js';
 import { SurferCharacter, loadSurferModel, cleanLook } from './character.js';
 
 // for a DRONE pose the snapshot's crouch is the gimbal pitch and effort the throttle
-export const POSE = { PRONE: 0, POPUP: 1, STANDING: 2, WIPEOUT: 3, DRONE: 4 };
+export const POSE = { PRONE: 0, POPUP: 1, STANDING: 2, WIPEOUT: 3, DRONE: 4, SITTING: 5 };
 const MAX_PLAYERS = 16;
 const DELAY = 0.15; // render this far behind the newest snapshot (s)
 
@@ -41,7 +41,7 @@ class Avatar {
     this.accent = ACCENTS[(hashStr(id) >>> 6) % ACCENTS.length];
     this.tag = null;
     this.drone = null; // quadcopter model, made the first time they fly one
-    this.cur = { x: 0, y: 0, z: 0, q: new THREE.Quaternion(), state: 0, crouch: 0, foot: 0, lean: 0, effort: 0, dive: 0 };
+    this.cur = { x: 0, y: 0, z: 0, q: new THREE.Quaternion(), state: 0, crouch: 0, foot: 0, lean: 0, effort: 0, dive: 0, lookYaw: 0, lookPitch: 0 };
   }
 
   setBoard(type, color = this.look.board) {
@@ -146,7 +146,7 @@ class Avatar {
       c.y = last.y + ((last.y - p.y) / span) * dt;
       c.z = last.z + ((last.z - p.z) / span) * dt;
       c.q.set(last.qx, last.qy, last.qz, last.qw);
-      Object.assign(c, { state: last.state, crouch: last.crouch, foot: last.foot, lean: last.lean, effort: last.effort, dive: last.dive });
+      Object.assign(c, { state: last.state, crouch: last.crouch, foot: last.foot, lean: last.lean, effort: last.effort, dive: last.dive, lookYaw: last.lookYaw || 0, lookPitch: last.lookPitch || 0 });
       return true;
     }
     if (s1 !== s0) k = Math.min(1, Math.max(0, (t - s0.t) / (s1.t - s0.t)));
@@ -161,6 +161,9 @@ class Avatar {
     c.lean = s0.lean + (s1.lean - s0.lean) * k;
     c.effort = n.effort;
     c.dive = s0.dive + (s1.dive - s0.dive) * k;
+    const dy = Math.atan2(Math.sin((s1.lookYaw || 0) - (s0.lookYaw || 0)), Math.cos((s1.lookYaw || 0) - (s0.lookYaw || 0)));
+    c.lookYaw = (s0.lookYaw || 0) + dy * k;
+    c.lookPitch = (s0.lookPitch || 0) + ((s1.lookPitch || 0) - (s0.lookPitch || 0)) * k;
     return true;
   }
 
@@ -211,7 +214,7 @@ export class RemotePlayers {
     if (board && BOARDS[board]) a.setBoard(board);
   }
 
-  // snapshot: {t, x, y, z, qx, qy, qz, qw, state, crouch, foot, lean, effort, dive}
+  // snapshot: {t, x, y, z, qx, qy, qz, qw, state, crouch, foot, lean, effort, dive, lookYaw, lookPitch}
   push(id, snap) {
     const a = this.ensure(id);
     if (a) a.push(snap);
@@ -274,12 +277,14 @@ export class RemotePlayers {
         if (ch.root.visible) {
           const B = BOARDS[a.boardType] || BOARDS.shortboard;
           ch.update(dt, {
-            standing: c.state === POSE.STANDING || c.state === POSE.POPUP ? 1 : 0,
+            pose: c.state === POSE.STANDING || c.state === POSE.POPUP ? 'stand' : c.state === POSE.SITTING ? 'sit' : 'prone',
             effort: c.effort,
             crouch: c.crouch,
             lean: c.lean,
             foot: c.foot,
             proneZ: 0.42 + (B.proneEyeZ - 0.3),
+            lookYaw: c.lookYaw,
+            lookPitch: c.lookPitch,
           });
           top = ch.bones.Head.getWorldPosition(_v);
           top.y += 0.3;

@@ -48,6 +48,54 @@ const sl = Math.hypot(s[0], s[1], s[2]);
 export const SUN_DIR = [s[0] / sl, s[1] / sl, s[2] / sl];
 export const SUN_COLOR = [1.0, 0.95, 0.86];
 
+// Times of day. The sun stays on the same bearing (over the sea, so waves are backlit when
+// you look out the back); at sunset it sits 4 degrees up, orange, and the sky light turns
+// dim and violet. waterSun: sun strength in the water shader; skyAmb: open-sky light on the
+// water and seabed; underwater: overall light below the surface.
+const unit = (v) => {
+  const l = Math.hypot(...v);
+  return v.map((c) => c / l);
+};
+const sunsetDir = (() => {
+  const h = Math.hypot(SUN_DIR[0], SUN_DIR[2]);
+  const el = (4.3 * Math.PI) / 180;
+  return unit([(SUN_DIR[0] / h) * Math.cos(el), Math.sin(el), (SUN_DIR[2] / h) * Math.cos(el)]);
+})();
+export const TIMES_OF_DAY = {
+  day: {
+    sunDir: SUN_DIR,
+    sunColor: SUN_COLOR,
+    sunLight: 2.6,
+    waterSun: 3.2,
+    skyAmb: [0.32, 0.48, 0.62],
+    hemiSky: 0xa9c8e8,
+    hemiGround: 0x6f8f80,
+    hemi: 0.9,
+    fog: 0xb4cbe0,
+    exposure: 0.95,
+    env: 0.9,
+    spray: [2.2, 2.35, 2.4],
+    underwater: [1, 1, 1],
+    sunset: 0,
+  },
+  sunset: {
+    sunDir: sunsetDir,
+    sunColor: [1.0, 0.5, 0.24],
+    sunLight: 1.9,
+    waterSun: 2.9,
+    skyAmb: [0.16, 0.13, 0.21],
+    hemiSky: 0x8b6f9c,
+    hemiGround: 0x3a302e,
+    hemi: 0.62,
+    fog: 0x9a6c62,
+    exposure: 1.05,
+    env: 0.85,
+    spray: [1.6, 1.12, 0.92],
+    underwater: [0.5, 0.42, 0.44],
+    sunset: 1,
+  },
+};
+
 export const LINEUP_Z = -5;
 
 export const BOARD = { length: 1.86, width: 0.5 };
@@ -86,6 +134,7 @@ export const BOARDS = {
 export const EYE = {
   prone: [0, 0.34, 0.3],
   standing: [0, 1.32, 0.32],
+  sitting: [0, 0.88, 0.2], // sat astride the board, a little behind its middle
 };
 
 export const CROUCH_DROP = 0.55; // how far the eye drops when fully crouched (m)

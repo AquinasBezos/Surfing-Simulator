@@ -2,7 +2,8 @@
 // these are the defaults:
 //   Scroll wheel  : paddle; the faster you scroll the harder you paddle (fixed)
 //   A / D         : steer while prone, lean (carve) while standing
-//   W / S         : lean forward / back (shortboard) or walk to the nose / tail (longboard)
+//   W / S         : lean forward / back (shortboard) or walk to the nose / tail (longboard);
+//                   while paddling, S sits you up to wait for a set and W lies you back down
 //   Ctrl (or C)   : duck dive while paddling, crouch while standing
 //   Shift + flick : hold Shift and flick the mouse sideways for a snap, cutback or tailslide
 //   Space         : pop up (and lie back down)
@@ -32,6 +33,8 @@ export class PCInput {
       this.keys.add(code);
       if (controls.pcHas('popup', code)) this.events.push('toggleStand');
       if (controls.pcHas('lineup', code)) this.events.push('reset');
+      if (controls.pcHas('back', code)) this.events.push('back'); // sits you up while paddling
+      if (controls.pcHas('forward', code)) this.events.push('forward');
     };
     window.addEventListener('keydown', (e) => press(normCode(e.code), e));
     window.addEventListener('keyup', (e) => this.keys.delete(normCode(e.code)));

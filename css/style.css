@@ -779,6 +779,10 @@ kbd {
   margin: 2px 0 14px;
 }
 
+.tod-pick {
+  margin: 0 0 14px;
+}
+
 .wave-row {
   display: flex;
   align-items: center;

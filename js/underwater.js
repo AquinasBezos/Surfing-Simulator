@@ -19,6 +19,7 @@ export const waterUniforms = {
   uCamUnder: { value: 0 },
   uUWTime: { value: 0 },
   uUWNoise: { value: null },
+  uUWLight: { value: new THREE.Vector3(1, 1, 1) }, // overall light under the water (time of day)
 };
 
 const ABSORB = 'vec3(0.46, 0.088, 0.105)';
@@ -31,6 +32,7 @@ uniform vec2 uWaterP;
 uniform float uCamUnder;
 uniform float uUWTime;
 uniform sampler2D uUWNoise;
+uniform vec3 uUWLight;
 varying vec3 vUWPos;
 `;
 
@@ -51,7 +53,7 @@ const FRAG = /* glsl */ `
     float dl = max(depthW, 0.0);
     float ca = texture2D(uUWNoise, vUWPos.xz * 0.16 + vec2(uUWTime * 0.021, uUWTime * 0.013)).g;
     vec3 lit = gl_FragColor.rgb * exp(-${ABSORB} * dl * 1.2) * (dl > 0.0 ? 0.8 + ca * 1.1 : 1.0);
-    gl_FragColor.rgb = lit * exp(-${ABSORB} * path) + ${SCATTER} * (1.0 - exp(-path * 0.32));
+    gl_FragColor.rgb = lit * exp(-${ABSORB} * path) + ${SCATTER} * uUWLight * (1.0 - exp(-path * 0.32));
     #ifdef UW_PASS
       vec3 Nw = normalize(vec3(-uWaterGrad.x, 1.0, -uWaterGrad.y));
       float F = 0.02 + 0.98 * pow(1.0 - abs(dot(Vd, Nw)), 5.0);
@@ -143,7 +145,8 @@ const DOME_FRAG = /* glsl */ `
 uniform float uCamDepth;
 uniform float uBedDepth;
 uniform vec3 uCamPos;
-uniform vec3 uSunDir;
+uniform vec3 uSunDir; // the sun's light under the water (already refracted)
+uniform vec3 uLight;
 uniform float uTime;
 uniform sampler2D uNoise;
 varying vec3 vDir;
@@ -154,8 +157,7 @@ void main() {
   vec3 up = vec3(0.05, 0.36, 0.34);
   vec3 col = d.y > 0.0 ? mix(mid, up, pow(d.y, 0.7)) : mix(mid, deep, pow(-d.y, 0.6));
   col *= exp(-uCamDepth * 0.1);
-  vec3 sunW = normalize(vec3(uSunDir.x, uSunDir.y * 1.8, uSunDir.z));
-  col += vec3(0.12, 0.42, 0.38) * pow(max(dot(d, sunW), 0.0), 6.0) * 0.5;
+  col += vec3(0.12, 0.42, 0.38) * pow(max(dot(d, -uSunDir), 0.0), 6.0) * 0.5;
   if (d.y < -0.02) {
     float t = uBedDepth / -d.y;
     if (t < 90.0) {
@@ -174,7 +176,7 @@ void main() {
       col = mix(col, bed * exp(-vec3(0.46, 0.088, 0.105) * t), exp(-t * 0.07));
     }
   }
-  gl_FragColor = vec4(col, 1.0);
+  gl_FragColor = vec4(col * uLight, 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -205,6 +207,7 @@ void main() {
 const SHAFT_FRAG = /* glsl */ `
 uniform float uTime;
 uniform float uIntensity;
+uniform vec3 uColor;
 varying vec2 vUv;
 varying float vPhase;
 varying float vDist;
@@ -214,7 +217,7 @@ void main() {
   float along = smoothstep(0.0, 0.06, vUv.y) * pow(1.0 - vUv.y, 1.6);
   float flick = 0.55 + 0.45 * sin(uTime * 0.7 + vPhase * 6.28) * sin(uTime * 1.3 + vPhase * 11.0);
   float a = edge * along * flick * uIntensity * smoothstep(0.6, 3.0, vDist) * exp(-vDist * 0.05);
-  gl_FragColor = vec4(vec3(0.45, 0.95, 0.85), a);
+  gl_FragColor = vec4(uColor, a);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;
@@ -255,7 +258,8 @@ export class UnderwaterEnv {
       uCamDepth: { value: 0 },
       uBedDepth: { value: 4 },
       uCamPos: { value: new THREE.Vector3() },
-      uSunDir: { value: new THREE.Vector3(...sunDir) },
+      uSunDir: { value: new THREE.Vector3(0, -1, 0) },
+      uLight: { value: new THREE.Vector3(1, 1, 1) },
       uTime: { value: 0 },
       uNoise: { value: noiseTex },
     };
@@ -288,14 +292,14 @@ export class UnderwaterEnv {
     sg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
     sg.setAttribute('aShaft', new THREE.Float32BufferAttribute(shaft, 4));
     sg.setIndex(idx);
-    const refr = new THREE.Vector3(sunDir[0], sunDir[1] * 1.8, sunDir[2]).normalize().negate();
     this.shaftUniforms = {
       uCam: { value: new THREE.Vector3() },
       uTop: { value: 0 },
-      uAxis: { value: refr },
+      uAxis: { value: new THREE.Vector3(0, -1, 0) },
       uLen: { value: 14 },
       uTime: { value: 0 },
       uIntensity: { value: 0.5 },
+      uColor: { value: new THREE.Vector3(0.45, 0.95, 0.85) },
     };
     this.shafts = new THREE.Mesh(
       sg,
@@ -340,10 +344,25 @@ export class UnderwaterEnv {
     this.bubbles.renderOrder = 5;
     this.group.add(this.bubbles);
     this.under = false;
+    this.setSun(sunDir);
   }
 
   setViewportHeight(h) {
     this.bubbleMat.uniforms.uScale.value = h * 0.5;
+  }
+
+  // The sun as seen from under the water: refracted at the surface (Snell's law, so never
+  // more than ~49 degrees from straight down), and the overall light level and tint.
+  setSun(sunDir, light = [1, 1, 1]) {
+    const [x, y, z] = sunDir;
+    const h = Math.hypot(x, z) || 1;
+    const sinT = Math.sqrt(Math.max(0, 1 - y * y)) / 1.333;
+    const cosT = Math.sqrt(1 - sinT * sinT);
+    const down = new THREE.Vector3((-x / h) * sinT, -cosT, (-z / h) * sinT); // the way the light travels
+    this.domeUniforms.uSunDir.value.copy(down);
+    this.shaftUniforms.uAxis.value.copy(down);
+    this.domeUniforms.uLight.value.set(...light);
+    this.shaftUniforms.uColor.value.set(0.45, 0.95, 0.85).multiply(new THREE.Vector3(...light));
   }
 
   clearBubbles() {

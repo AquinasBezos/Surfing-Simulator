@@ -18,7 +18,7 @@ const BOARD_INFO = {
 };
 const CRUMBS = { main: '', single: 'Singleplayer', multi: 'Multiplayer', lobby: 'Multiplayer', settings: 'Controls and settings', pause: '' };
 
-const DEFAULT_SETTINGS = { quality: 'auto', volume: 0.8, sensitivity: 1, invertY: false, fullscreen: true };
+const DEFAULT_SETTINGS = { quality: 'auto', volume: 0.8, sensitivity: 1, invertY: false, fullscreen: true, time: 'day' };
 
 function load(key, fallback) {
   try {
@@ -72,6 +72,7 @@ export class Menu {
 
     this.buildBoardPickers();
     this.buildWavePickers();
+    this.buildTimePickers();
     this.buildLookPickers();
     this.bindMain();
     this.bindNav();
@@ -239,6 +240,31 @@ export class Menu {
       this.preview.attach(slot);
       this.preview.start();
     } else this.preview.stop();
+  }
+
+  // ---------------------------------------------------------------- time of day
+  buildTimePickers() {
+    for (const el of this.root.querySelectorAll('.tod-pick')) {
+      el.innerHTML = `<div class="wave-row"><span class="wave-label">Time of day</span><div class="seg" role="radiogroup" aria-label="Time of day"><button type="button" role="radio" data-tod="day">Midday</button><button type="button" role="radio" data-tod="sunset">Sunset</button></div></div>`;
+      el.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-tod]');
+        if (b) this.setTimeOfDay(b.dataset.tod, true);
+      });
+    }
+    this.setTimeOfDay(this.settings.time);
+  }
+
+  setTimeOfDay(time, fromUser = false) {
+    this.settings.time = time === 'sunset' ? 'sunset' : 'day';
+    for (const b of this.root.querySelectorAll('[data-tod]')) {
+      const on = b.dataset.tod === this.settings.time;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', String(on));
+    }
+    if (fromUser) {
+      save('lineup.settings', this.settings);
+      if (this.h.onSettings) this.h.onSettings(this.settings);
+    }
   }
 
   // ---------------------------------------------------------------- wave size

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { QUALITY, SUN_DIR, SUN_COLOR, EYE, LINEUP_Z, WAVE, BOARDS, CROUCH_DROP, MULTIPLAYER } from './config.js';
+import { QUALITY, SUN_DIR, SUN_COLOR, EYE, LINEUP_Z, WAVE, BOARDS, CROUCH_DROP, MULTIPLAYER, TIMES_OF_DAY } from './config.js';
 import { WaveModel, smoothstep, clamp, crestOffset, waveScale } from './wave.js';
 import { Ocean } from './ocean.js';
 import { createSky } from './sky.js';
@@ -52,7 +52,7 @@ rig.add(camera);
 scene.add(rig);
 
 const sunDir = new THREE.Vector3(...SUN_DIR);
-const sky = createSky(renderer, SUN_DIR, quality.cubeSize);
+let sky = createSky(renderer, SUN_DIR, quality.cubeSize);
 scene.background = sky.cube;
 scene.environment = sky.env;
 scene.environmentIntensity = 0.9;
@@ -60,7 +60,8 @@ scene.environmentIntensity = 0.9;
 const sun = new THREE.DirectionalLight(new THREE.Color(...SUN_COLOR), 2.6);
 sun.position.copy(sunDir).multiplyScalar(100);
 scene.add(sun);
-scene.add(new THREE.HemisphereLight(0xa9c8e8, 0x6f8f80, 0.9));
+const hemi = new THREE.HemisphereLight(0xa9c8e8, 0x6f8f80, 0.9);
+scene.add(hemi);
 scene.fog = new THREE.Fog(0xb4cbe0, 600, 7000);
 
 const model = new WaveModel();
@@ -83,6 +84,7 @@ let board = null;
 let boardType = 'shortboard';
 const eyeProne = new THREE.Vector3(...EYE.prone);
 const eyeStand = new THREE.Vector3(...EYE.standing);
+const eyeSit = new THREE.Vector3(...EYE.sitting);
 
 const spray = new Spray(model, quality.particles);
 scene.add(spray.points);
@@ -125,6 +127,7 @@ const game = {
   flick: null,
   moveFollow: 0,
   standBlend: 0,
+  sitBlend: 0,
   vrStandOffset: 0,
   missTimer: 0,
   noseT: 0,
@@ -169,6 +172,41 @@ model.setHeights(menu.waves);
 function applySettings(s) {
   settings = s;
   audio.setVolume(s.volume);
+  applyTimeOfDay(s.time);
+}
+
+// Midday or sunset: a new sky (background, reflections and image-based light), then the
+// sun, the light from the sky, haze and exposure, and the water, underwater and spray.
+let timeOfDay = 'day'; // what the scene was built with
+function applyTimeOfDay(name) {
+  if (!TIMES_OF_DAY[name]) name = 'day';
+  if (name === timeOfDay) return;
+  timeOfDay = name;
+  const T = TIMES_OF_DAY[name];
+  sunDir.set(...T.sunDir);
+  const old = sky;
+  sky = createSky(renderer, T.sunDir, quality.cubeSize, T.sunset);
+  scene.background = sky.cube;
+  scene.environment = sky.env;
+  scene.environmentIntensity = T.env;
+  ocean.uniforms.uEnv.value = sky.cube;
+  old.dispose();
+  sun.color.setRGB(...T.sunColor);
+  sun.intensity = T.sunLight;
+  sun.position.copy(sunDir).multiplyScalar(100);
+  hemi.color.set(T.hemiSky);
+  hemi.groundColor.set(T.hemiGround);
+  hemi.intensity = T.hemi;
+  scene.fog.color.set(T.fog);
+  renderer.toneMappingExposure = T.exposure;
+  const u = ocean.uniforms;
+  u.uSunDir.value.copy(sunDir);
+  u.uSunColor.value.set(...T.sunColor).multiplyScalar(T.waterSun);
+  u.uSkyAmb.value.set(...T.skyAmb);
+  u.uUWLight.value.set(...T.underwater);
+  waterUniforms.uUWLight.value.set(...T.underwater);
+  underwater.setSun(T.sunDir, T.underwater);
+  spray.material.uniforms.uColor.value.setRGB(...T.spray);
 }
 applySettings(settings);
 
@@ -339,7 +377,7 @@ function startGame(mode, platform) {
     resume();
     const k = (id) => controls.pcKey(id);
     if (flying) hud.toast(`${k('forward')} ${k('left')} ${k('back')} ${k('right')} fly · ${k('popup')} up · ${k('crouch')} down · mouse turns and tilts the camera`, 6);
-    else hud.toast(`Scroll to paddle (faster = harder) · ${k('left')} / ${k('right')} steer · ${k('popup')} to pop up`, 5);
+    else hud.toast(`Scroll to paddle (faster = harder) · ${k('left')} / ${k('right')} steer · ${k('popup')} to pop up · ${k('back')} sit up and wait`, 6);
   } else menu.hide(); // a VR session that started on its own
 }
 
@@ -697,13 +735,14 @@ function sendEvent(e) {
   if (game.mode === 'multi' && net) net.sendEvent(e);
 }
 
-const STATE_CODE = { prone: POSE.PRONE, popup: POSE.POPUP, standing: POSE.STANDING, wipeout: POSE.WIPEOUT };
-const poseBuf = new Float32Array(14);
+const STATE_CODE = { prone: POSE.PRONE, popup: POSE.POPUP, standing: POSE.STANDING, wipeout: POSE.WIPEOUT, sitting: POSE.SITTING };
+// t, position, orientation, state, crouch, foot, lean, effort, dive, look yaw / pitch
+const poseBuf = new Float32Array(16);
 function sendPose() {
   if (game.role === 'drone') {
     // same packet; crouch carries the gimbal pitch and effort the throttle
     const q = drone.quat;
-    poseBuf.set([net.now(), drone.pos.x, drone.pos.y, drone.pos.z, q.x, q.y, q.z, q.w, POSE.DRONE, drone.camPitch, 0, 0, drone.throttle, 0]);
+    poseBuf.set([net.now(), drone.pos.x, drone.pos.y, drone.pos.z, q.x, q.y, q.z, q.w, POSE.DRONE, drone.camPitch, 0, 0, drone.throttle, 0, 0, 0]);
     net.sendPose(poseBuf);
     return;
   }
@@ -722,11 +761,16 @@ function sendPose() {
   poseBuf[11] = surfer.leanX;
   poseBuf[12] = surfer.paddleEffort;
   poseBuf[13] = surfer.diveDepth;
+  // where you're looking, relative to the board (your character turns its head / body)
+  const vr = renderer.xr.isPresenting;
+  poseBuf[14] = vr ? xr.lookYaw || 0 : game.look.yaw;
+  poseBuf[15] = vr ? xr.lookPitch || 0 : game.look.pitch;
   net.sendPose(poseBuf);
 }
 
 function decodePose(f) {
-  return { t: f[0], x: f[1], y: f[2], z: f[3], qx: f[4], qy: f[5], qz: f[6], qw: f[7], state: Math.round(f[8]), crouch: f[9], foot: f[10], lean: f[11], effort: f[12], dive: f[13] };
+  const look = f.length >= 16; // (older clients send 14 values)
+  return { t: f[0], x: f[1], y: f[2], z: f[3], qx: f[4], qy: f[5], qz: f[6], qw: f[7], state: Math.round(f[8]), crouch: f[9], foot: f[10], lean: f[11], effort: f[12], dive: f[13], lookYaw: look ? f[14] : 0, lookPitch: look ? f[15] : 0 };
 }
 
 function onRemoteEvent(id, e) {
@@ -769,6 +813,7 @@ function updateBody(dt) {
   const target = standingish ? 1 : 0;
   const rate = surfer.state === STATE.POPUP ? 1 / 0.42 : 1 / 0.35;
   game.standBlend += clamp(target - game.standBlend, -rate * dt, rate * dt);
+  game.sitBlend += clamp((surfer.state === STATE.SITTING ? 1 : 0) - game.sitBlend, -2 * dt, 2 * dt);
 }
 
 // The view follows the board heading with a little lag so steering corrections don't jerk
@@ -841,16 +886,18 @@ function updateCameraPC(dt) {
   _q.copy(_qYaw).invert().multiply(surfer.quat);
   _e.setFromQuaternion(_q, 'YXZ');
   const b = smoothstep(0, 1, game.standBlend);
-  const eye = _v.lerpVectors(eyeProne, eyeStand, b);
+  const sb = smoothstep(0, 1, game.sitBlend);
+  const eye = _v.lerpVectors(eyeProne, eyeStand, b).lerp(eyeSit, sb);
   eye.x += surfer.leanX * 0.14 * b;
   eye.z -= (surfer.leanZ * 0.12 + surfer.footPos) * b;
   eye.y -= surfer.crouch * CROUCH_DROP * b;
   // the body stays roughly upright while the board tilts on the face
-  _qPart.identity().slerp(_q, mix(0.85, 0.3, b));
+  _qPart.identity().slerp(_q, mix(mix(0.85, 0.3, b), 0.3, sb));
   eye.applyQuaternion(_qPart);
   camera.position.copy(eye);
 
-  let pitch = game.look.pitch + _e.x * mix(0.5, 0.22, b) + mix(-0.05, -0.2 - 0.12 * surfer.crouch, b);
+  // (sitting, you stay upright as the board's nose lifts)
+  let pitch = game.look.pitch + _e.x * mix(mix(0.5, 0.22, b), 0.1, sb) + mix(mix(-0.05, -0.2 - 0.12 * surfer.crouch, b), -0.22, sb);
   let roll = _e.z * mix(0.3, 0.2, b);
   let yaw = game.look.yaw;
   if (surfer.state === STATE.WIPEOUT) {
@@ -869,7 +916,8 @@ function updateCameraXR(dt) {
   rig.rotation.set(0, rigYaw, 0);
   _qYaw.setFromAxisAngle(Yaxis, surfer.yaw);
   const eyeW = _v.copy(eyeProne).applyQuaternion(_qYaw).add(surfer.position);
-  const target = surfer.state === STATE.STANDING ? clamp(1.3 - (EYE.prone[1] + Math.max(0, xr.head.y - xr.h0.y)), 0, 0.45) : 0;
+  const rise = Math.max(0, xr.head.y - xr.h0.y);
+  const target = surfer.state === STATE.STANDING ? clamp(1.3 - (EYE.prone[1] + rise), 0, 0.45) : surfer.state === STATE.SITTING ? clamp(EYE.sitting[1] - (EYE.prone[1] + rise), 0, 0.35) : 0;
   game.vrStandOffset += (target - game.vrStandOffset) * (1 - Math.exp(-dt * 2));
   const h0 = xr.h0.clone().applyAxisAngle(Yaxis, rigYaw);
   rig.position.copy(eyeW).sub(h0);
@@ -1015,9 +1063,12 @@ function updateBots() {
     const y = model.heightAt(b.x, b.z);
     const gx = (model.heightAt(b.x + e, b.z) - model.heightAt(b.x - e, b.z)) / (2 * e);
     const gz = (model.heightAt(b.x, b.z + e) - model.heightAt(b.x, b.z - e)) / (2 * e);
-    _be.set(Math.atan(gz) * 0.8 + 0.03, b.yaw, -Math.atan(gx) * 0.8, 'YXZ');
+    const pose = params.get('botpose') || (b.effort > 0 ? 'prone' : 'sit');
+    const state = pose === 'sit' ? POSE.SITTING : pose === 'stand' ? POSE.STANDING : POSE.PRONE;
+    _be.set(Math.atan(gz) * 0.8 + (state === POSE.SITTING ? 0.2 : 0.03), b.yaw, -Math.atan(gx) * 0.8, 'YXZ');
     _bq.setFromEuler(_be);
-    remote.push(b.id, { t: model.time, x: b.x, y, z: b.z, qx: _bq.x, qy: _bq.y, qz: _bq.z, qw: _bq.w, state: POSE.PRONE, crouch: 0, foot: 0, lean: 0, effort: b.effort, dive: 0 });
+    const t = model.time + b.x;
+    remote.push(b.id, { t: model.time, x: b.x, y: y - (state === POSE.SITTING ? 0.07 : 0), z: b.z, qx: _bq.x, qy: _bq.y, qz: _bq.z, qw: _bq.w, state, crouch: 0.2, foot: 0, lean: 0, effort: b.effort, dive: 0, lookYaw: state === POSE.PRONE ? 0 : Math.sin(t * 0.35) * 1.4, lookPitch: Math.sin(t * 0.21) * 0.25 });
   }
 }
 
@@ -1120,6 +1171,7 @@ function frame(time, xrFrame) {
         hud.toast('Calibrated paddling position', 2);
       } else if (e === 'reset') respawn(true);
       else if (e === 'popUp') surfer.popUp();
+      else if (e === 'sit') surfer.sit();
       else if (e === 'layDown') surfer.layDown();
       else if (e === 'toggleStand') surfer.state === STATE.PRONE ? surfer.popUp() : surfer.layDown();
     }
@@ -1144,9 +1196,13 @@ function frame(time, xrFrame) {
     for (const e of pc.consumeEvents()) {
       if (e === 'toggleStand') {
         if (surfer.state === STATE.PRONE) surfer.popUp();
-        else surfer.layDown();
+        else surfer.layDown(); // (from sitting too)
       } else if (e === 'reset') respawn(true);
+      else if (e === 'back' && surfer.state === STATE.PRONE) surfer.sit();
+      else if (e === 'forward' && surfer.state === STATE.SITTING) surfer.layDown();
     }
+    // starting to paddle lies you back down
+    if (surfer.state === STATE.SITTING && pc.paddle > 0.15) surfer.layDown();
   }
 
   if (running && flying) {
@@ -1173,7 +1229,7 @@ function frame(time, xrFrame) {
   } else {
     for (const h of xr.hands) if (h.model) h.model.visible = true;
     updateBody(dt);
-    arms.group.visible = !inXR && !game.hideArms && surfer.state === STATE.PRONE && game.standBlend < 0.05;
+    arms.group.visible = !inXR && !game.hideArms && surfer.state === STATE.PRONE && game.standBlend < 0.05 && game.sitBlend < 0.05;
     if (inXR) updateCameraXR(dt);
     else updateCameraPC(dt);
   }
@@ -1270,7 +1326,7 @@ function frame(time, xrFrame) {
   audio.update(roar, flying ? drone.speed * 0.6 : surfer.speed, camUnder);
 
   // ---- HUD
-  let stateLabel = { prone: 'Paddling', popup: 'Popping up', standing: 'Surfing', wipeout: 'Wipeout!' }[surfer.state];
+  let stateLabel = { prone: 'Paddling', popup: 'Popping up', standing: 'Surfing', wipeout: 'Wipeout!', sitting: 'Sitting up' }[surfer.state];
   if (surfer.diving) stateLabel = 'Duck diving';
   else if (surfer.air) stateLabel = 'Airborne';
   else if (surfer.state === STATE.STANDING && surfer.crouch > 0.5) stateLabel = 'Surfing · crouched';

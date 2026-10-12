@@ -70,7 +70,7 @@ export class CharacterPreview {
     loadSurferModel().then((gltf) => {
       this.character = new SurferCharacter(gltf);
       if (this.look) this.character.setLook(this.look);
-      this.character.blend = 1; // already standing
+      this.character.weights = [0, 1, 0]; // already standing
       this.turntable.add(this.character.root);
     });
   }
@@ -107,7 +107,7 @@ export class CharacterPreview {
     this.camera.lookAt(0, 0.72, 0);
     this.angle += dt * 0.5;
     this.turntable.rotation.y = this.angle;
-    if (this.character) this.character.update(dt, { standing: 1, crouch: 0.1, effort: 0 });
+    if (this.character) this.character.update(dt, { pose: 'stand', crouch: 0.1 });
     this.renderer.render(this.scene, this.camera);
   }
 }
