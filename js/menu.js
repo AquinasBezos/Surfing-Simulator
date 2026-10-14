@@ -5,6 +5,7 @@ import { controls, PC_ACTIONS, QUEST_ACTIONS, QUEST_OPTIONS, RESERVED_KEYS, keyL
 import { SPOTS, SPOT_IDS, cleanSpot } from './spots.js';
 import { SKIN_TONES, HAIR_COLORS, BOARD_COLORS, cleanLook, randomLook } from './character.js';
 import { CharacterPreview } from './preview.js';
+import { cleanLean, drawLeanGraph, AXES, LEAN_LIMITS, LEAN_DEFAULTS } from './lean.js';
 
 const BOARD_SVG = {
   shortboard:
@@ -18,7 +19,7 @@ const BOARD_INFO = {
 };
 const CRUMBS = { main: '', single: 'Singleplayer', multi: 'Multiplayer', lobby: 'Multiplayer', settings: 'Controls and settings', pause: '' };
 
-const DEFAULT_SETTINGS = { quality: 'auto', volume: 0.8, sensitivity: 1, invertY: false, fullscreen: true, time: 'day' };
+const DEFAULT_SETTINGS = { quality: 'auto', volume: 0.8, sensitivity: 1, invertY: false, fullscreen: true, time: 'day', lean: LEAN_DEFAULTS, droneVR: 'camera' };
 
 function load(key, fallback) {
   try {
@@ -128,6 +129,8 @@ export class Menu {
     this.current = null;
     this.board = 'shortboard';
     this.settings = { ...DEFAULT_SETTINGS, ...load('lineup.settings', {}) };
+    this.settings.lean = cleanLean(this.settings.lean);
+    this.settings.droneVR = this.settings.droneVR === 'fpv' ? 'fpv' : 'camera';
     this.name = load('lineup.name', null) || `Surfer ${100 + Math.floor(Math.random() * 900)}`;
     this.rooms = [];
     this.inRoom = false;
@@ -528,6 +531,89 @@ export class Menu {
       t.addEventListener('click', () => this.selectSettingsTab(t.dataset.stab));
     }
     this.bindKeybinds();
+    this.buildLean();
+    this.bindDroneVR();
+  }
+
+  // ---------------------------------------------------------------- VR leaning sensitivity
+  buildLean() {
+    const set = document.getElementById('lean-set');
+    const row = (axis, key, label) => {
+      const [lo, hi] = LEAN_LIMITS[key];
+      return `<label class="field"><span>${label} <output data-lean-out="${axis}.${key}"></output></span><input type="range" min="${lo}" max="${hi}" step="0.05" data-lean="${axis}.${key}" /></label>`;
+    };
+    set.innerHTML = ['x', 'z']
+      .map((a) => `<div class="lean-axis"><b>${AXES[a].title} <small>· ${AXES[a].what}</small></b>${row(a, 'centre', 'Centre sensitivity')}${row(a, 'max', 'Max sensitivity')}<canvas data-lean-graph="${a}"></canvas></div>`)
+      .join('');
+    set.addEventListener('input', (e) => {
+      const r = e.target.closest('[data-lean]');
+      if (!r) return;
+      const [axis, key] = r.dataset.lean.split('.');
+      const lean = cleanLean(this.settings.lean);
+      lean[axis][key] = +r.value;
+      this.setLean(lean, true);
+    });
+    document.getElementById('lean-reset').addEventListener('click', () => this.setLean(LEAN_DEFAULTS, true));
+    // (the graphs are sized to their boxes: redraw when shown or resized)
+    this.leanResize = new ResizeObserver(() => this.drawLean());
+    for (const c of set.querySelectorAll('canvas')) this.leanResize.observe(c);
+    this.setLean(this.settings.lean);
+  }
+
+  // the leaning curves (from the page or the headset menu); fromUser: save and apply
+  setLean(lean, fromUser = false) {
+    this.settings.lean = cleanLean(lean);
+    for (const r of this.root.querySelectorAll('[data-lean]')) {
+      const [axis, key] = r.dataset.lean.split('.');
+      if (document.activeElement !== r) r.value = this.settings.lean[axis][key];
+    }
+    for (const o of this.root.querySelectorAll('[data-lean-out]')) {
+      const [axis, key] = o.dataset.leanOut.split('.');
+      o.textContent = `${this.settings.lean[axis][key].toFixed(2)}×`;
+    }
+    this.drawLean();
+    if (fromUser) {
+      save('lineup.settings', this.settings);
+      if (this.h.onSettings) this.h.onSettings(this.settings);
+    }
+  }
+
+  drawLean() {
+    for (const c of this.root.querySelectorAll('[data-lean-graph]')) {
+      const w = c.clientWidth,
+        h = c.clientHeight;
+      if (!w || !h) continue;
+      const dpr = Math.min(2, window.devicePixelRatio || 1);
+      c.width = Math.round(w * dpr);
+      c.height = Math.round(h * dpr);
+      const g = c.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, 0, 0);
+      g.clearRect(0, 0, w, h);
+      drawLeanGraph(g, 0, 0, w, h, c.dataset.leanGraph, this.settings.lean[c.dataset.leanGraph], { font: getComputedStyle(document.body).fontFamily });
+    }
+  }
+
+  // ---------------------------------------------------------------- the drone in VR
+  bindDroneVR() {
+    for (const b of this.root.querySelectorAll('[data-dronevr]')) b.addEventListener('click', () => this.setDroneVR(b.dataset.dronevr, true));
+    this.setDroneVR(this.settings.droneVR);
+  }
+
+  setDroneVR(mode, fromUser = false) {
+    this.settings.droneVR = mode === 'fpv' ? 'fpv' : 'camera';
+    for (const b of this.root.querySelectorAll('[data-dronevr]')) {
+      const on = b.dataset.dronevr === this.settings.droneVR;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', String(on));
+    }
+    document.getElementById('dronevr-note').textContent =
+      this.settings.droneVR === 'fpv'
+        ? 'FPV: flown like a racing drone in acro mode. Left stick: throttle (centre hovers) and yaw. Right stick: pitch and roll, as rates: the drone keeps its angle when you let go. The camera is fixed to the drone, tilted up, and ignores your head, like FPV goggles. That is intense in a headset: stop if you feel unwell.'
+        : 'Camera drone: it holds its height and stays level. Left stick climbs and turns, right stick flies, and the camera follows your head.';
+    if (fromUser) {
+      save('lineup.settings', this.settings);
+      if (this.h.onSettings) this.h.onSettings(this.settings);
+    }
   }
 
   // e.g. from the in-headset menu

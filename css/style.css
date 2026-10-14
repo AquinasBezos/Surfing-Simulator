@@ -891,6 +891,47 @@ kbd {
   }
 }
 
+/* VR leaning sensitivity */
+.lean-set {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  margin: 12px 0 4px;
+}
+
+.lean-axis {
+  padding: 12px 14px 10px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.lean-axis b {
+  display: block;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+
+.lean-axis b small {
+  font-weight: 400;
+  color: var(--ink-dim);
+}
+
+.lean-axis .field {
+  margin-bottom: 8px;
+}
+
+.lean-axis canvas {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+}
+
+.lean-note b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
 /* surf spot */
 .spot-pick {
   margin: 0 0 14px;

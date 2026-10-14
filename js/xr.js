@@ -1,7 +1,10 @@
 // Meta Quest / WebXR controls.
-//   Paddle     : sweep a hand from front to back below chest height ("in the water").
-//                Faster strokes paddle faster; a stronger right stroke turns you left.
-//   Duck dive  : while paddling, hold a grip with that hand on the front of the board.
+//   Paddle     : sweep a hand from front to back below chest height ("in the water"), any
+//                way you hold the controller (thumbs up, or turned in with the palm down and
+//                the grip squeezed). Faster strokes paddle faster; a stronger right stroke
+//                turns you left.
+//   Duck dive  : while paddling, squeeze a grip with that hand held still on the front of
+//                the board (a hand squeezing the grip as it sweeps past is still paddling).
 //   Pop-up     : physically stand up (head rises > 35 cm above the calibrated paddling height,
 //                quickly, or all the way).
 //   Sit up     : rise slowly to about half way and stay there (wait for a set); lie back down
@@ -18,6 +21,7 @@ import * as THREE from 'three';
 import { createVRHand } from './body.js';
 import { STATE } from './surfer.js';
 import { controls, QUEST_BUTTON_INDEX } from './bindings.js';
+import { leanCurve, cleanLean, FULL_LEAN } from './lean.js';
 
 const Y = new THREE.Vector3(0, 1, 0);
 
@@ -59,12 +63,13 @@ export class XRControls {
     this.hands = [];
     this.onHandModel = null;
     this._q = new THREE.Quaternion();
+    this.headQuat = this._q; // the head's orientation this frame (reference space)
     this._v = new THREE.Vector3();
     for (let i = 0; i < 2; i++) {
       const grip = renderer.xr.getControllerGrip(i);
       const ctrl = renderer.xr.getController(i);
       rig.add(grip, ctrl);
-      const h = { grip, ctrl, source: null, side: i === 0 ? -1 : 1, model: null, prev: new THREE.Vector3(), vel: new THREE.Vector3(), has: false, stroking: false, holding: false };
+      const h = { grip, ctrl, source: null, side: i === 0 ? -1 : 1, model: null, prev: new THREE.Vector3(), vel: new THREE.Vector3(), has: false, stroking: false, holding: false, noseT: 0, onNose: false };
       ctrl.addEventListener('connected', (e) => {
         h.source = e.data;
         h.side = e.data.handedness === 'left' ? -1 : 1;
@@ -81,6 +86,8 @@ export class XRControls {
       });
       this.hands.push(h);
     }
+    this.lean = cleanLean(null); // response curves for leaning (settings)
+    this.leanRaw = null; // { x, z } your lean now, while standing (for the menu's graph)
     this.pressed = {}; // action -> held last frame
     this.sticks = { left: [0, 0], right: [0, 0] }; // thumbstick x, y per hand (drone flying)
   }
@@ -158,7 +165,10 @@ export class XRControls {
       if (!h.source) continue;
       const lp = this.toBody(h.grip.position, new THREE.Vector3());
       if (h.has && dt > 0) {
-        const v = lp.clone().sub(h.prev).divideScalar(dt);
+        // the headset's own velocity for the hand (it blends the cameras with the
+        // controller's motion sensors, so it holds up when the hand is low by your side where
+        // the cameras see it badly); otherwise from how far it moved
+        const v = h.grip.hasLinearVelocity ? this._v.copy(h.grip.linearVelocity).applyAxisAngle(Y, -this.yaw0) : lp.clone().sub(h.prev).divideScalar(dt);
         h.vel.lerp(v, 1 - Math.exp(-dt * 20));
       }
       h.prev.copy(lp);
@@ -166,12 +176,16 @@ export class XRControls {
       const gp = h.source.gamepad;
       h.holding = held(h, 'duck');
       anyGrip = anyGrip || held(h, 'charge');
-      // holding the front of the board: hand ahead of and below the head
-      if (h.holding && lp.z < -0.12 && lp.y < -0.05) noseGrip = true;
+      // holding the front of the board: grip squeezed with the hand ahead of and below the
+      // head, held still there a moment (paddling with a squeezed grip sweeps through)
+      const atNose = h.holding && lp.z < -0.12 && lp.y < -0.05;
+      h.noseT = atNose && h.vel.length() < 0.8 ? h.noseT + dt : 0;
+      h.onNose = h.holding && (h.onNose || h.noseT > 0.18);
+      if (h.onNose) noseGrip = true;
       // paddling: backward sweep below chest height pushes water
-      const inWater = lp.y < -0.22;
+      const inWater = lp.y < -0.18;
       const back = h.vel.z;
-      const pulling = prone && inWater && back > 0.3 && !h.holding;
+      const pulling = prone && inWater && back > 0.3 && !h.onNose;
       const pw = pulling ? Math.min(2.2, back / 1.1) : 0;
       if (pw > 0.5 && !h.stroking) {
         h.stroking = true;
@@ -258,9 +272,13 @@ export class XRControls {
       // where moving forward/back is walking)
       this.stance.x += (lh.x - this.stance.x) * dt * 0.08;
       if (!board.walk) this.stance.z += (lh.z - this.stance.z) * dt * 0.08;
-      out.leanX = Math.max(-1, Math.min(1, (lh.x - this.stance.x) / 0.17));
+      // leaning, through your sensitivity curves
+      const rx = (lh.x - this.stance.x) / FULL_LEAN,
+        rz = -(lh.z - this.stance.z) / FULL_LEAN;
+      this.leanRaw = { x: rx, z: rz };
+      out.leanX = leanCurve(rx, this.lean.x);
       if (board.walk) out.walkTo = this.lastWalk = -(lh.z - this.stance.z);
-      else out.leanZ = Math.max(-1, Math.min(1, -(lh.z - this.stance.z) / 0.17));
+      else out.leanZ = leanCurve(rz, this.lean.z);
       out.crouch = Math.max(0, Math.min(1, (this.standPeak - dy) / 0.4));
       if (Math.abs(stickX) > 0.2) out.leanX = stickX;
       if (Math.abs(stickY) > 0.2) {
@@ -292,6 +310,7 @@ export class XRControls {
     } else {
       this.flickWin = null;
       this.restance = false;
+      this.leanRaw = null;
     }
     this.stateWas = state;
     return out;

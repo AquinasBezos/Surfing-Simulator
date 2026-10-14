@@ -1,10 +1,13 @@
 // In-headset pause menu for Meta Quest: a floating panel you point at with either
 // controller and click with the trigger. Opens with the pause button (Y by default).
 //   Pause    : resume, back to the lineup, recalibrate, controls and settings, leave
-//   Settings : the Quest button bindings (‹ ›  to step through the buttons), volume
+//   Settings : Quest buttons, leaning sensitivity, the drone in VR, volume
+//   Buttons  : the Quest button bindings (‹ ›  to step through the buttons)
+//   Leaning  : the sensitivity curves, with graphs and a dot showing your lean now
 // Drawn into a canvas texture, like the VR HUD panel.
 import * as THREE from 'three';
 import { controls, QUEST_ACTIONS, QUEST_OPTIONS, questLabel } from './bindings.js';
+import { cleanLean, drawLeanGraph, AXES, LEAN_LIMITS, LEAN_DEFAULTS } from './lean.js';
 
 const W = 1024;
 const H = 860;
@@ -14,13 +17,15 @@ const SKY = '#8fd0ee';
 const FONT = "'Outfit', system-ui, sans-serif";
 const ROW_H = 62;
 const ARROWS_W = 330; // value column: ‹ value ›
+const TITLES = { pause: 'PAUSED', settings: 'CONTROLS AND SETTINGS', buttons: 'QUEST BUTTONS', lean: 'LEANING SENSITIVITY' };
 
 export class VRMenu {
   constructor(renderer, rig, camera, handlers) {
     this.renderer = renderer;
     this.rig = rig;
     this.camera = camera; // three.js keeps it on the head pose (inside the rig) in VR
-    this.h = handlers; // onResume, onLineup, onRecalibrate, onQuit, getVolume, setVolume, info
+    this.h = handlers; // onResume, onLineup, onRecalibrate, onQuit, getVolume, setVolume, info,
+    // getLean, setLean, leanNow (your lean while standing), getDroneVR, setDroneVR
     this.open = false;
     this.screen = 'pause';
     this.items = [];
@@ -114,6 +119,43 @@ export class VRMenu {
       else add({ label: 'Recalibrate paddling height', sub: 'Lie or kneel in your paddling position first', onClick: () => this.h.onRecalibrate() });
       add({ label: 'Controls and settings', onClick: () => this.go('settings') });
       add({ label: this.h.info().inRoom ? 'Leave room' : 'Main menu', sub: 'Leaves VR', onClick: () => this.h.onQuit() });
+    } else if (this.screen === 'settings') {
+      add({ label: 'Quest buttons', sub: 'Change what each button does', onClick: () => this.go('buttons') });
+      add({ label: 'Leaning sensitivity', sub: 'How hard the board turns for how far you lean', onClick: () => this.go('lean') });
+      add({
+        label: 'Drone in VR',
+        value: () => (this.h.getDroneVR() === 'fpv' ? 'FPV (acro)' : 'Camera drone'),
+        step: () => this.h.setDroneVR(this.h.getDroneVR() === 'fpv' ? 'camera' : 'fpv'),
+      });
+      add({
+        label: 'Volume',
+        value: () => `${Math.round(this.h.getVolume() * 100)}%`,
+        step: (dir) => this.h.setVolume(Math.max(0, Math.min(1, Math.round(this.h.getVolume() * 10 + dir) / 10))),
+      });
+      add({ label: 'Back', primary: true, onClick: () => this.go('pause') });
+    } else if (this.screen === 'lean') {
+      for (const axis of ['x', 'z'])
+        for (const key of ['centre', 'max']) {
+          add({
+            label: `${AXES[axis].title} · ${key === 'centre' ? 'centre' : 'max'}`,
+            value: () => `${this.h.getLean()[axis][key].toFixed(2)}×`,
+            step: (dir) => {
+              const lean = cleanLean(this.h.getLean());
+              const [lo, hi] = LEAN_LIMITS[key];
+              lean[axis][key] = Math.max(lo, Math.min(hi, Math.round((lean[axis][key] + dir * 0.05) * 100) / 100));
+              this.h.setLean(lean);
+            },
+          });
+        }
+      add({ spacer: 236 }); // the graphs
+      add({
+        label: 'Reset to defaults',
+        onClick: () => {
+          this.h.setLean(LEAN_DEFAULTS);
+          this.message = 'Leaning reset to the defaults';
+        },
+      });
+      add({ label: 'Back', primary: true, onClick: () => this.go('settings') });
     } else {
       for (const a of QUEST_ACTIONS) {
         add({
@@ -123,27 +165,24 @@ export class VRMenu {
         });
       }
       add({
-        label: 'Volume',
-        value: () => `${Math.round(this.h.getVolume() * 100)}%`,
-        step: (dir) => this.h.setVolume(Math.max(0, Math.min(1, Math.round(this.h.getVolume() * 10 + dir) / 10))),
-      });
-      add({
         label: 'Reset buttons to defaults',
         onClick: () => {
           controls.resetQuest();
           this.message = 'Buttons reset to the defaults';
         },
       });
-      add({ label: 'Back', primary: true, onClick: () => this.go('pause') });
+      add({ label: 'Back', primary: true, onClick: () => this.go('settings') });
     }
     // lay out the rows under the header
-    const top = 128;
-    const gap = this.screen === 'pause' ? 22 : 10;
-    const h = this.screen === 'pause' ? 76 : ROW_H;
-    items.forEach((it, i) => {
-      it.y = top + i * (h + gap);
-      it.h = h;
-    });
+    const big = this.screen === 'pause' || this.screen === 'settings';
+    const gap = big ? 22 : 10;
+    const h = big ? 76 : ROW_H;
+    let y = 128;
+    for (const it of items) {
+      it.y = y;
+      it.h = it.spacer || h;
+      y += it.h + gap;
+    }
     this.items = items;
     this.dirty = true;
   }
@@ -171,6 +210,7 @@ export class VRMenu {
   // ---------------------------------------------------------------- pointing
   hitTest(px, py) {
     for (const it of this.items) {
+      if (it.spacer) continue;
       if (py < it.y || py > it.y + it.h || px < 40 || px > W - 40) continue;
       if (it.step) {
         const x0 = W - 40 - ARROWS_W;
@@ -208,6 +248,17 @@ export class VRMenu {
       if (hover) for (const p of this.pointers) if (p.hit && key(p.hit) === key(hover)) this.pulse(p, 0.15, 12);
       this.hover = hover;
       this.dirty = true;
+    }
+    // the leaning graphs follow your lean (a few times a second, while you're standing)
+    if (this.screen === 'lean') {
+      const now = performance.now();
+      const live = this.h.leanNow();
+      const key = live ? `${live.x.toFixed(2)},${live.z.toFixed(2)}` : '';
+      if (key !== this.liveKey && now - (this.liveAt || 0) > 100) {
+        this.liveKey = key;
+        this.liveAt = now;
+        this.dirty = true;
+      }
     }
     if (this.dirty) this.draw();
   }
@@ -256,15 +307,16 @@ export class VRMenu {
     g.fillStyle = SKY;
     g.font = `500 44px ${FONT}`;
     g.textAlign = 'left';
-    g.fillText(this.screen === 'pause' ? 'PAUSED' : 'CONTROLS AND SETTINGS', 44, 54);
+    g.fillText(TITLES[this.screen], 44, 54);
     g.font = `400 26px ${FONT}`;
     g.fillStyle = 'rgba(226, 236, 241, 0.72)';
     g.textAlign = 'right';
-    g.fillText(this.screen === 'pause' ? info.subtitle : 'Point and pull the trigger', W - 44, 54);
+    g.fillText(this.screen === 'pause' ? info.subtitle : this.screen === 'lean' ? 'Stand and lean: the dot is you' : 'Point and pull the trigger', W - 44, 54);
 
     for (const it of this.items) {
       const hov = this.hover && this.hover.item === it ? this.hover.part : null;
-      if (it.step) this.drawValueRow(g, it, hov);
+      if (it.spacer) this.drawLeanGraphs(g, it);
+      else if (it.step) this.drawValueRow(g, it, hov);
       else this.drawButton(g, it, !!hov);
     }
     if (this.message) {
@@ -274,6 +326,26 @@ export class VRMenu {
       g.fillText(this.message, W / 2, H - 34);
     }
     this.tex.needsUpdate = true;
+  }
+
+  // side to side, and forward and back, with your lean on them
+  drawLeanGraphs(g, it) {
+    const lean = this.h.getLean();
+    const live = this.h.leanNow();
+    const w = (W - 80 - 20) / 2;
+    for (const [i, axis] of ['x', 'z'].entries()) {
+      const x = 40 + i * (w + 20);
+      roundRect(g, x, it.y, w, it.h, 14);
+      g.fillStyle = 'rgba(255, 255, 255, 0.04)';
+      g.fill();
+      g.fillStyle = '#eef5f8';
+      g.font = `600 22px ${FONT}`;
+      g.textAlign = 'left';
+      g.textBaseline = 'middle';
+      g.fillText(AXES[axis].title, x + 16, it.y + 22);
+      drawLeanGraph(g, x + 4, it.y + 40, w - 8, it.h - 46, axis, lean[axis], { scale: 1.7, marker: live ? live[axis] : null, font: FONT });
+    }
+    g.textBaseline = 'middle';
   }
 
   drawButton(g, it, hov) {

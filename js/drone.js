@@ -2,6 +2,10 @@
 // plane, climbs and yaws. The body tilts into its acceleration like a real one while the
 // camera hangs on a gimbal and stays level. Crashing into the water, the lip or the land
 // ends the flight (the game respawns it).
+//
+// In VR it can instead be flown as an FPV drone in acro (rate) mode: the sticks set how fast
+// it pitches, rolls and yaws (let go and it keeps its attitude), the throttle pushes along its
+// own up, and the camera is fixed to the body, tilted up.
 import * as THREE from 'three';
 import { seabedY, solidAt } from './terrain.js';
 
@@ -12,6 +16,13 @@ const RESPONSE = 2.2; // 1/s: how quickly the drone reaches the commanded veloci
 const CEILING = 140; // m
 const RANGE = 700; // m from the break
 export const DRONE_RADIUS = 0.2;
+// FPV (acro): max rates (rad/s), stick expo, thrust to weight (the throttle stick springs back
+// to the middle, so the middle should about hover), drag, camera uptilt (rad)
+const FPV = { rate: 9.4, yawRate: 5.2, expo: 0.45, thrustToWeight: 2.0, drag: 0.012, camTilt: (25 * Math.PI) / 180 };
+const _w = new THREE.Vector3();
+const _dq = new THREE.Quaternion();
+const _qt = new THREE.Quaternion();
+const X = new THREE.Vector3(1, 0, 0);
 
 const _e = new THREE.Euler(0, 0, 0, 'YXZ');
 const _v = new THREE.Vector3();
@@ -27,6 +38,21 @@ export class Drone {
     this.throttle = 0.5;
     this.quat = new THREE.Quaternion(); // body orientation
     this.crash = null; // reason, once it hits something
+    this.fpv = false; // flown in acro mode (VR)
+    this.angVel = new THREE.Vector3(); // body rates (FPV)
+  }
+
+  // Switch between the camera drone and FPV in flight. Back to the camera drone it levels out
+  // on its current heading.
+  setFPV(on) {
+    if (on === this.fpv) return;
+    this.fpv = on;
+    this.angVel.set(0, 0, 0);
+    if (!on) {
+      this.yaw = _e.setFromQuaternion(this.quat, 'YXZ').y;
+      this.tiltF = this.tiltR = 0;
+      this._orient();
+    }
   }
 
   reset(x, y, z, yaw = 0, pitch = -0.3) {
@@ -36,6 +62,7 @@ export class Drone {
     this.camPitch = pitch;
     this.tiltF = this.tiltR = 0;
     this.crash = null;
+    this.angVel.set(0, 0, 0);
     this._orient();
   }
 
@@ -82,6 +109,46 @@ export class Drone {
     this.throttle += (Math.min(1, 0.45 + Math.hypot(af, ar) * 0.04 + Math.max(0, this.vel.y) * 0.08 + Math.abs(input.yawRate) * 0.05) - this.throttle) * kt;
     this._orient();
     if (model) this.crash = this.collide(model);
+  }
+
+  // FPV, acro mode. input: throttle 0..1, and pitch (+ nose down), roll (+ right side down),
+  // yaw (+ clockwise from above) in -1..1: the rates they ask for
+  updateFPV(dt, input, model) {
+    if (dt <= 0 || this.crash) return;
+    const rate = (v, max) => max * (FPV.expo * v * v * v + (1 - FPV.expo) * v);
+    // body axes: x right, y up, z back
+    _w.set(-rate(input.pitch, FPV.rate), -rate(input.yaw, FPV.yawRate), -rate(input.roll, FPV.rate));
+    this.angVel.lerp(_w, 1 - Math.exp(-dt / 0.035));
+    const a = this.angVel.length();
+    if (a > 1e-6) this.quat.multiply(_dq.setFromAxisAngle(_v.copy(this.angVel).divideScalar(a), a * dt)).normalize();
+    // thrust along the body's up, gravity, air drag
+    const g = 9.81;
+    _v.set(0, 1, 0).applyQuaternion(this.quat).multiplyScalar(input.throttle * FPV.thrustToWeight * g);
+    _v.y -= g;
+    _v.addScaledVector(this.vel, -(FPV.drag * this.vel.length() + 0.08));
+    this.vel.addScaledVector(_v, dt);
+    this.pos.addScaledVector(this.vel, dt);
+    if (this.pos.y > CEILING) {
+      this.pos.y = CEILING;
+      this.vel.y = Math.min(0, this.vel.y);
+    }
+    const r = Math.hypot(this.pos.x, this.pos.z);
+    if (r > RANGE) this.pos.multiplyScalar(RANGE / r).setY(this.pos.y);
+    this.throttle += (input.throttle - this.throttle) * (1 - Math.exp(-dt * 12));
+    // (for the others: its heading, and where its camera points)
+    _e.setFromQuaternion(this.quat, 'YXZ');
+    this.yaw = _e.y;
+    this.camPitch = _e.setFromQuaternion(this.fpvCameraQuat(_qt), 'YXZ').x;
+    if (model) this.crash = this.collide(model);
+  }
+
+  // FPV camera: fixed in the nose, tilted up
+  fpvCameraQuat(out) {
+    return out.copy(this.quat).multiply(_dq.setFromAxisAngle(X, FPV.camTilt));
+  }
+
+  fpvCameraPosition(out) {
+    return out.set(0, 0.02, -0.11).applyQuaternion(this.quat).add(this.pos);
   }
 
   _orient() {

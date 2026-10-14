@@ -23,6 +23,7 @@ import { controls } from './bindings.js';
 import { Drone, createDroneModel, animateDrone } from './drone.js';
 import { loadSurferModel, randomLook } from './character.js';
 import { Fish } from './fish.js';
+import { cleanLean } from './lean.js';
 
 const params = new URLSearchParams(location.search);
 const isMobileXR = /OculusBrowser|Quest|Pico/i.test(navigator.userAgent);
@@ -227,6 +228,7 @@ let settings = menu.settings;
 function applySettings(s) {
   settings = s;
   audio.setVolume(s.volume);
+  xr.lean = cleanLean(s.lean);
   applyTimeOfDay(inRoom() ? net.time : s.time); // a room's time of day is the same for everyone
 }
 const inRoom = () => !!(net && net.room);
@@ -301,6 +303,11 @@ const vrMenu = new VRMenu(renderer, rig, camera, {
   },
   getVolume: () => settings.volume,
   setVolume: (v) => menu.setVolume(v),
+  getLean: () => settings.lean,
+  setLean: (lean) => menu.setLean(lean, true),
+  leanNow: () => xr.leanRaw, // (only while you're standing)
+  getDroneVR: () => settings.droneVR,
+  setDroneVR: (mode) => menu.setDroneVR(mode, true),
   info: () => ({
     inRoom: game.mode === 'multi',
     drone: game.role === 'drone',
@@ -520,7 +527,8 @@ renderer.xr.addEventListener('sessionstart', () => {
   underwater.setViewportHeight(1700);
   const press = (id) => controls.questText(id).replace(/^Either/, 'either');
   if (game.role === 'drone') {
-    hud.toast(`Left stick: climb and turn · right stick: fly · look around to aim the camera. ${press('pause')}: menu.`, 7);
+    if (settings.droneVR === 'fpv') hud.toast(`FPV, acro mode. Left stick: throttle (the middle hovers) and yaw · right stick: pitch and roll. ${press('pause')}: menu.`, 8);
+    else hud.toast(`Left stick: climb and turn · right stick: fly · look around to aim the camera. ${press('pause')}: menu.`, 7);
     return;
   }
   const calibrate = controls.quest.recalibrate === 'none' ? 'Lie or kneel down to start.' : `Lie or kneel down, then press ${press('recalibrate')} to calibrate.`;
@@ -1173,6 +1181,7 @@ let fpsAcc = 0,
   fps = 0;
 const NO_INPUT = { paddle: 0, pulse: 0, turn: 0, steer: 0, leanX: 0, leanZ: 0, walk: 0, walkTo: null, crouch: 0, duck: false, charge: false };
 const NO_FLIGHT = { fwd: 0, right: 0, up: 0, yawRate: 0, boost: false };
+const FPV_IDLE = { fpv: true, throttle: 0.5, yaw: 0, pitch: 0, roll: 0 };
 
 // ---------------------------------------------------------------- drone
 // PC: strafe on the movement keys, climb / descend on the pop-up / crouch keys, the mouse
@@ -1186,16 +1195,20 @@ function droneInputPC() {
 }
 
 // Quest: left stick climbs / descends and turns, right stick strafes; the head aims.
-const deadzone = (v) => (Math.abs(v) < 0.15 ? 0 : (v - Math.sign(v) * 0.15) / 0.85);
+// FPV (acro): left stick throttle (up = full, the middle about hovers) and yaw rate, right
+// stick pitch and roll rates.
+const deadzone = (v, d = 0.15) => (Math.abs(v) < d ? 0 : (v - Math.sign(v) * d) / (1 - d));
 function droneInputXR() {
   const L = xr.sticks.left;
   const R = xr.sticks.right;
+  if (drone.fpv) return { fpv: true, throttle: Math.min(1, Math.max(0, (1 - L[1]) / 2)), yaw: deadzone(L[0], 0.06), pitch: -deadzone(R[1], 0.06), roll: deadzone(R[0], 0.06) };
   return { fwd: -deadzone(R[1]), right: deadzone(R[0]), up: -deadzone(L[1]), yawRate: -deadzone(L[0]) * 1.4, boost: false };
 }
 
 function updateDrone(dt, fly) {
   const wasDown = drone.crash;
-  drone.update(dt, fly, model);
+  if (drone.fpv) drone.updateFPV(dt, fly.fpv ? fly : FPV_IDLE, model); // (sticks centred while the menu is open)
+  else drone.update(dt, fly, model);
   if (drone.crash && !wasDown) {
     // into the water (or the lip, or the land): splash, fade out and relaunch
     game.teleport = 1.4;
@@ -1220,7 +1233,17 @@ function updateCameraDronePC() {
   camera.rotation.set(drone.camPitch, 0, 0, 'YXZ');
 }
 
+const _qc = new THREE.Quaternion();
+const _qh = new THREE.Quaternion();
 function updateCameraDroneXR() {
+  if (drone.fpv) {
+    // FPV goggles: the view is the drone's camera, whatever your head does. The rig cancels
+    // the head's pose this frame, so the eyes end up exactly on the camera.
+    drone.fpvCameraQuat(_qc);
+    rig.quaternion.copy(_qc).multiply(_qh.copy(xr.headQuat).invert());
+    drone.fpvCameraPosition(rig.position).sub(_v.copy(xr.head).applyQuaternion(rig.quaternion));
+    return;
+  }
   // the calibrated head sits on the drone's camera point, facing the drone's heading
   const rigYaw = drone.yaw - xr.yaw0;
   rig.rotation.set(0, rigYaw, 0);
@@ -1247,6 +1270,8 @@ function frame(time, xrFrame) {
   let fly = NO_FLIGHT;
   pc.update(dt);
 
+  // the drone flies FPV in VR if you chose that (the camera drone everywhere else)
+  drone.setFPV(flying && inXR && settings.droneVR === 'fpv');
   if (inXR) {
     const gestures = xr.update(dt, xrFrame, surfer.state, surfer.board);
     if (acceptInput) {
@@ -1431,7 +1456,7 @@ function frame(time, xrFrame) {
   let warn = '';
   if (surfer.state === STATE.STANDING && surfer.ceiling < 2.1 && surfer.crouch < 0.65) warn = inXR ? 'Crouch!' : `Crouch! (${controls.pcKey('crouch')})`;
   if (flying) {
-    stateLabel = drone.crash ? 'Drone down' : `Drone · ${Math.max(0, game.droneAlt || 0).toFixed(1)} m up`;
+    stateLabel = drone.crash ? 'Drone down' : `${drone.fpv ? 'FPV' : 'Drone'} · ${Math.max(0, game.droneAlt || 0).toFixed(1)} m up`;
     warn = !drone.crash && game.droneAlt < 0.9 && drone.vel.y < -0.3 ? 'Pull up!' : '';
   }
   const B = surfer.board;

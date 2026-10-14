@@ -27,12 +27,12 @@ In the menus, the arrow keys move between the cards, `Enter` picks one and `Esc`
 
 | Action | PC | Meta Quest |
 | :-- | :-- | :-- |
-| Paddle | Scroll the mouse wheel; the faster you scroll, the faster you can paddle | Sweep your hands from front to back, low by your sides ("in the water"). Faster strokes, more speed |
+| Paddle | Scroll the mouse wheel; the faster you scroll, the faster you can paddle | Sweep your hands from front to back, low by your sides ("in the water"). Faster strokes, more speed. Hold the controllers however feels natural: thumbs up, or turned in with palms down and the grip squeezed |
 | Steer while paddling | `A` / `D` | Paddle harder on one side (a stronger right stroke turns you left) |
 | Sit up and wait | `S` while paddling; `W`, `Space` or start paddling to lie back down. `A` / `D` turn the board | Sit up slowly and stop partway (head 22–75 cm above your paddling height); lie back down to paddle. Thumbstick left / right turns the board |
-| Duck dive | Hold `Ctrl` (or `C`) while paddling; let go to surface | Hold grip with your hand on the front of the board |
+| Duck dive | Hold `Ctrl` (or `C`) while paddling; let go to surface | Squeeze the grip with your hand held still on the front of the board (a hand squeezing the grip as it sweeps past is still paddling) |
 | Pop up | `Space` (press again to lie back down) | Stand up for real: head rises 35 cm above your calibrated paddling height |
-| Surf (weight shift) | `A` / `D` carve, `W` / `S` lean forward (trim) or back (stall) | Lean your head and body |
+| Surf (weight shift) | `A` / `D` carve, `W` / `S` lean forward (trim) or back (stall) | Lean your head and body (how much a lean counts is adjustable: see below) |
 | Crouch | Hold `Ctrl` (or `C`); let go at the lip to spring into an air | Crouch for real; stand up fast at the lip to hop |
 | Snap · cutback · tailslide | Hold `Shift` and flick the mouse left or right | Hold either grip and whip your head round |
 | Longboard | `W` / `S` walk toward the nose or the tail | Walk forward or back on the board |
@@ -40,6 +40,8 @@ In the menus, the arrow keys move between the cards, `Enter` picks one and `Esc`
 | Other | `R` back to the lineup · `Esc` pause menu | `Y` pause menu · `B` back to the lineup · trigger: recalibrate |
 
 These are the defaults. Every key and Quest button can be changed in **Controls and settings**, from the main menu or the pause screen. On PC, click a key and press the new one; mouse buttons work too. On Quest, pick a button for each action, either on the page or in VR from the headset's pause menu. If a key is already taken, the two actions swap, except where they can never clash: duck diving only happens while paddling and crouching only while standing, so both can stay on `Ctrl`. Scroll to paddle, mouse look, `Esc`, and the body movements on Quest stay fixed.
+
+**Leaning sensitivity** (Controls and settings → Meta Quest, or in the headset: pause → Controls and settings → Leaning sensitivity) sets how hard the board carves (side to side) and trims or stalls (forward and back) for how far you lean. Each direction has two settings. **Centre** is how much small movements count, and **max** is how quickly a bigger lean builds to a full turn. The defaults (0.55 and 1.3) make small wobbles gentler than the original straight response while a full lean still turns as hard. A graph shows how far the board tilts for each angle you lean; in the headset, a dot on it shows your own lean while you're standing.
 
 On Quest, kneel or lie down before you start, then press the trigger to calibrate your paddling height. `Y` opens a pause menu in the headset: resume, go back to the lineup, recalibrate, change the buttons and volume, or leave. Point at it with either controller and pull the trigger. If you don't have room, the thumbstick (forward to paddle, sideways to steer or lean, held back to sit up, forward again to lie down) and `A`/`X` (pop up / lie down) work as a fallback.
 
@@ -103,6 +105,12 @@ In the room lobby, pick **Join as drone** instead of Surfer to fly a camera dron
 | Tilt the camera | Mouse up / down | Look around |
 | Go faster | Hold `Shift` (your trick key) | |
 | Relaunch | `R` (your lineup key) | `B` (your lineup button) |
+
+**FPV drone (VR).** In Controls and settings → Meta Quest (or the headset's settings), set **Drone in VR** to **FPV drone** to fly like a racing drone in acro mode instead.
+- **Sticks:** the left stick is throttle (up for more; it springs back to the middle, which hovers) and yaw. The right stick is pitch and roll.
+- **Rate control:** the sticks set how fast it rotates, not its angle. Let go and it holds whatever attitude it's in, so you fly it like a real FPV quad: tilt, then add throttle to go.
+- **Camera:** fixed in the nose, tilted up 25°, and it ignores your head, like goggles with no head tracking. That's intense in a headset, so take it easy at first.
+- On PC the drone is always the camera drone.
 
 ### How it works
 

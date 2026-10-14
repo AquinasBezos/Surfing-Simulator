@@ -221,6 +221,13 @@
                     <tr><td>Thumbstick</td><td>Fallback: forward to paddle, sideways to steer or lean</td></tr>
                   </tbody>
                 </table>
+                <h3>Leaning on the board</h3>
+                <p class="note lean-note">How hard the board carves and trims for how far you lean. <b>Centre</b> is how much small movements count, <b>max</b> how quickly a bigger lean builds to a full turn: a low centre and a high max keep small wobbles gentle and still let you turn hard. The dashed line is the old straight response. You can change these in VR too, and see where your own lean sits on the graph.</p>
+                <div class="lean-set" id="lean-set"></div>
+                <div class="binds-foot"><span></span><button type="button" class="btn small" id="lean-reset">Reset leaning to defaults</button></div>
+                <h3>Drone in VR</h3>
+                <div class="wave-row"><span class="wave-label">When you join a room as a drone and play in VR</span><div class="seg" role="radiogroup" aria-label="Drone in VR"><button type="button" role="radio" data-dronevr="camera">Camera drone</button><button type="button" role="radio" data-dronevr="fpv">FPV drone</button></div></div>
+                <p class="note" id="dronevr-note"></p>
               </div>
 
               <div class="stab-body settings" data-stab-body="general" hidden>
