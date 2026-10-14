@@ -9,7 +9,11 @@
 //        to duck dive until you lift your finger; tap to sit up (tap again to lie down)
 //   bottom right: drag to look around (with Snap held, a quick sideways swipe is a trick)
 //   tilt the phone: left and right to steer and carve, forward and back to trim, stall or
-//        walk a longboard (through the tilt curves in the settings)
+//        walk a longboard (through the tilt curves in the settings). Calibrating (when you
+//        start or resume, or with the Level button) takes the way you're holding it as level,
+//        and works out which way the screen is turned from which edge you're holding higher,
+//        rather than trusting the angle the browser reports (wrong by 90 degrees on some
+//        iPads). A setting can turn the directions further if a device still gets it wrong.
 //   buttons: pause; while standing, Crouch (toggles) and Snap (hold to charge a trick)
 //   flying a drone: drag on the left half to fly, on the right half to turn and tilt the
 //        camera; the arrow buttons climb and descend
@@ -36,13 +40,18 @@ export class TouchInput {
     this.sticks = [0, 0, 0, 0]; // drone: left x / y, right x / y (y + = down)
     this.time = 0;
     this.lastActive = -1e9;
-    this.tilt = { roll: 0, pitch: 0, roll0: 0, pitch0: 0, has: false, calibrate: true };
+    this.tilt = { roll: 0, pitch: 0, roll0: 0, pitch0: 0, has: false, calibrate: true, angle: null, auto: 0 };
     const opt = { passive: false };
     dom.addEventListener('touchstart', (e) => this.start(e), opt);
     dom.addEventListener('touchmove', (e) => this.move(e), opt);
     dom.addEventListener('touchend', (e) => this.end(e), opt);
     dom.addEventListener('touchcancel', (e) => this.end(e), opt);
     window.addEventListener('deviceorientation', (e) => this.orient(e));
+    // the picture turned round (landscape one way to the other): work it out again
+    const turned = () => this.calibrate();
+    if (screen.orientation && screen.orientation.addEventListener) screen.orientation.addEventListener('change', turned);
+    window.addEventListener('orientationchange', turned);
+    this.onCalibrated = null; // (level, angle) after each calibration
     this.bindButtons();
   }
 
@@ -57,24 +66,46 @@ export class TouchInput {
     if (D && typeof D.requestPermission === 'function') D.requestPermission().catch(() => {});
   }
 
-  // the way the phone is held now counts as level
+  // the way the phone is held now counts as level (straight away, from the latest reading)
   calibrate() {
     this.tilt.calibrate = true;
+    if (this.lastUp) this.applyUp(...this.lastUp);
+  }
+
+  // how far the screen's picture is turned from the device's own axes, as the browser says (deg)
+  static reportedAngle() {
+    const so = screen.orientation;
+    const a = so && typeof so.angle === 'number' ? so.angle : typeof window.orientation === 'number' ? window.orientation : 0;
+    return (((Math.round(a / 90) * 90) % 360) + 360) % 360;
   }
 
   orient(e) {
     if (e.beta == null || e.gamma == null) return;
     const b = (e.beta * Math.PI) / 180,
       g = (e.gamma * Math.PI) / 180;
-    // which way is up, in the phone's own axes (x right, y top, z out of the screen in its
-    // natural portrait position), then on the screen as it's showing now
+    // which way is up, in the device's own axes (x right, y top, z out of the screen, as
+    // the browser reports them: normally the natural, upright position)
     const ux = -Math.sin(g) * Math.cos(b),
       uy = Math.sin(b),
       uz = Math.cos(g) * Math.cos(b);
-    const a = (((screen.orientation && screen.orientation.angle) ?? window.orientation ?? 0) * Math.PI) / 180;
+    this.lastUp = [ux, uy, uz];
+    this.applyUp(ux, uy, uz);
+  }
+
+  applyUp(ux, uy, uz) {
+    const T = this.tilt;
+    if (T.calibrate || T.angle == null) {
+      // Which way is the picture turned? The edge you hold higher is the top of the screen:
+      // the one the up direction points most toward, across the screen. (If the device is
+      // nearly flat, that can't tell, so take the browser's word.)
+      const across = Math.hypot(ux, uy);
+      T.auto = across > 0.3 ? ((((Math.round((Math.atan2(ux, uy) * 2) / Math.PI) * 90) % 360) + 360) % 360) : TouchInput.reportedAngle();
+      T.angle = (T.auto + this.settings.turn) % 360;
+    }
+    const a = (T.angle * Math.PI) / 180;
+    // up, on the screen as it's showing: its right, and its top
     const right = ux * Math.cos(a) - uy * Math.sin(a);
     const up = ux * Math.sin(a) + uy * Math.cos(a);
-    const T = this.tilt;
     // right edge down = steer right; top edge away from you (screen facing up more) = forward
     T.roll = (Math.asin(Math.max(-1, Math.min(1, -right))) * 180) / Math.PI;
     T.pitch = (Math.atan2(up, uz) * 180) / Math.PI;
@@ -83,7 +114,16 @@ export class TouchInput {
       T.roll0 = T.roll;
       T.pitch0 = T.pitch;
       T.calibrate = false;
+      if (this.onCalibrated) this.onCalibrated(T.angle);
     }
+  }
+
+  // how far you're tilting now, as fractions of a full tilt (before the curves): for the
+  // settings' level; null until the motion sensors have said anything
+  get tiltNow() {
+    const T = this.tilt;
+    if (!T.has) return null;
+    return { x: (T.roll - T.roll0) / FULL_TILT, z: (T.pitch0 - T.pitch) / FULL_TILT };
   }
 
   // through the tilt curves: steer / carve (+ right), lean (+ forward)
@@ -217,6 +257,7 @@ export class TouchInput {
     hold('up', (v) => (this.climb = v ? 1 : 0));
     hold('down', (v) => (this.climb = v ? -1 : 0));
     hold('lineup', (v) => v && this.events.push('reset'));
+    hold('level', (v) => v && this.events.push('level'));
   }
 
   // what the on-screen buttons show, for the surfer's state now

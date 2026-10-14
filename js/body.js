@@ -1,8 +1,13 @@
-// First-person body: bare arms (the character wears boardshorts) with simple 2-bone IK and
-// a paddling stroke cycle (PC), plus hand models for VR controllers. Skin tone follows the
-// player's look (setSkinColor).
+// First-person body: the character's own arms (fparms.js), posed for paddling on PC and
+// mobile, and following the controllers in VR. Skin tone follows the player's look
+// (setSkinColor).
+//
+// Paddling (PC, mobile): each stroke follows a smooth loop through the water and back over
+// it: reach ahead and catch, pull down and back beside the board with the palm pushing the
+// water, slice out at the hip, then swing forward with the elbow high. The shoulder reaches
+// with it. Poses blend smoothly between resting, stroking and gripping the rails.
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { ArmRig } from './fparms.js';
 
 const SKIN = new THREE.MeshStandardMaterial({ color: 0xc08465, roughness: 0.62, metalness: 0.0 });
 
@@ -10,163 +15,144 @@ export function setSkinColor(color) {
   SKIN.color.set(color);
 }
 
-const UP = new THREE.Vector3(0, 1, 0);
 const mix = (a, b, t) => a + (b - a) * t;
 const _a = new THREE.Vector3();
-const _b = new THREE.Vector3();
-const _c = new THREE.Vector3();
-const _m = new THREE.Matrix4();
+const _q = new THREE.Quaternion();
+const _s = new THREE.Vector3();
+const _w = new THREE.Vector3();
+const _f = new THREE.Vector3();
+const _n = new THREE.Vector3();
+const _p = new THREE.Vector3();
+const Y = new THREE.Vector3(0, 1, 0);
 
-function limb(r0, r1) {
-  const g = new THREE.CylinderGeometry(r1, r0, 1, 12, 1, false);
-  g.translate(0, 0.5, 0);
-  return new THREE.Mesh(g, SKIN);
+// The stroke, in the board's frame (x out to this arm's side, y up, z toward the tail), for
+// the right arm (the left mirrors it): [time, wrist, fingers, palm normal, elbow direction]
+const STROKE = [
+  [0.0, [0.27, 0.0, -0.25], [0.05, -0.45, -1], [0, -1, 0.35], [0.8, 0.55, 0.1]], // catch
+  [0.14, [0.29, -0.15, -0.1], [0.08, -1, -0.2], [0, -0.25, 1], [0.85, 0.5, 0]], // pull
+  [0.32, [0.3, -0.22, 0.1], [0.1, -1, 0.2], [0, 0.1, 1], [0.9, 0.45, -0.05]],
+  [0.5, [0.3, -0.13, 0.31], [0.15, -0.7, 0.75], [0, 0.3, 1], [0.8, 0.6, -0.1]], // push past the hip
+  [0.6, [0.33, 0.06, 0.38], [0.25, -0.3, 0.9], [-1, 0, 0.1], [0.6, 0.8, 0.1]], // slice out
+  [0.76, [0.4, 0.22, 0.2], [0.25, -0.6, -0.5], [-0.6, -0.6, 0], [0.55, 0.85, 0.3]], // elbow high
+  [0.9, [0.35, 0.16, -0.2], [0.1, -0.35, -1], [-0.2, -1, 0.2], [0.75, 0.6, 0.2]], // reach
+];
+const KEYS = STROKE.map(([t, ...v]) => [t, ...v.map((a) => new THREE.Vector3(...a))]);
+
+// periodic Catmull-Rom through the stroke's keys, at phase p (0..1); writes 4 vectors
+function strokeAt(p, out) {
+  const n = KEYS.length;
+  let i = n - 1;
+  while (i > 0 && KEYS[i][0] > p) i--;
+  const t0 = KEYS[i][0],
+    t1 = i + 1 < n ? KEYS[i + 1][0] : 1;
+  const u = (p - t0) / Math.max(1e-6, t1 - t0);
+  const u2 = u * u,
+    u3 = u2 * u;
+  for (let c = 1; c <= 4; c++) {
+    const P0 = KEYS[(i - 1 + n) % n][c],
+      P1 = KEYS[i][c],
+      P2 = KEYS[(i + 1) % n][c],
+      P3 = KEYS[(i + 2) % n][c];
+    out[c - 1].set(0, 0, 0)
+      .addScaledVector(P0, -0.5 * u3 + u2 - 0.5 * u)
+      .addScaledVector(P1, 1.5 * u3 - 2.5 * u2 + 1)
+      .addScaledVector(P2, -1.5 * u3 + 2 * u2 + 0.5 * u)
+      .addScaledVector(P3, 0.5 * u3 - 0.5 * u2);
+  }
+  return out;
 }
 
-function placeLimb(mesh, from, to) {
-  _a.subVectors(to, from);
-  const len = _a.length();
-  mesh.position.copy(from);
-  mesh.quaternion.setFromUnitVectors(UP, _a.divideScalar(len || 1));
-  mesh.scale.set(1, len, 1);
-}
-
-const handGeoCache = new Map();
-function handGeometry(side) {
-  // palm, fingers and thumb merged into one mesh (one draw call per hand)
-  if (handGeoCache.has(side)) return handGeoCache.get(side);
-  const parts = [];
-  const o = new THREE.Object3D();
-  const add = (geo, setup) => {
-    o.position.set(0, 0, 0);
-    o.rotation.set(0, 0, 0);
-    o.scale.set(1, 1, 1);
-    setup(o);
-    o.updateMatrix();
-    parts.push(geo.clone().applyMatrix4(o.matrix));
-  };
-  add(new THREE.SphereGeometry(1, 16, 10), (p) => {
-    p.scale.set(0.043, 0.017, 0.052);
-    p.position.set(0, 0, -0.045);
-  });
-  const fingerGeo = new THREE.CapsuleGeometry(0.0085, 0.06, 4, 8);
-  fingerGeo.rotateX(Math.PI / 2);
-  const lens = [0.92, 1.0, 0.97, 0.82];
-  for (let i = 0; i < 4; i++)
-    add(fingerGeo, (f) => {
-      f.position.set((-0.027 + i * 0.018) * side, -0.002, -0.118 + (1 - lens[i]) * 0.03);
-      f.scale.set(1, 1, lens[i]);
-      f.rotation.set(-0.12, (i - 1.5) * 0.06 * side, 0);
-    });
-  add(fingerGeo, (t) => {
-    t.position.set(-0.045 * side, -0.006, -0.05);
-    t.rotation.y = 0.75 * side;
-    t.scale.set(1.1, 1.1, 0.8);
-  });
-  const geo = mergeGeometries(parts.map((g) => g.toNonIndexed()));
-  handGeoCache.set(side, geo);
-  return geo;
-}
-
-export function createHand(side) {
-  // local frame: fingers toward -z, palm facing -y, thumb toward -side*x (inside)
-  const hand = new THREE.Group();
-  hand.add(new THREE.Mesh(handGeometry(side), SKIN));
-  return hand;
-}
+const mirror = (v, s) => (v.x *= s, v);
 
 class Arm {
   constructor(side) {
     this.side = side; // +1 right, -1 left
-    this.shoulder = new THREE.Vector3(0.2 * side, 0.2, 0.38);
-    this.upper = limb(0.052, 0.044);
-    this.fore = limb(0.043, 0.034);
-    this.hand = createHand(side);
-    this.elbowJoint = new THREE.Mesh(new THREE.SphereGeometry(0.042, 10, 8), SKIN);
     this.phase = -1; // <0 idle, otherwise stroke progress 0..1
     this.blend = 0; // 0 idle pose, 1 stroke pose
-    this.dive = 0; // 0..1 blend into the duck-dive grip
-    this.wrist = new THREE.Vector3();
-    this.handDir = new THREE.Vector3(0, 0, -1);
+    this.dive = 0; // 0..1 blend into gripping the rails (duck dive, turtle roll)
+    this.power = 1;
     this.idleT = Math.random() * 10;
+    this.k = [0, 1, 2, 3].map(() => new THREE.Vector3()); // the stroke now
+    // what the arm is doing (smoothed): shoulder, wrist, fingers, palm, elbow
+    this.shoulder = new THREE.Vector3(0.19 * side, 0.19, 0.3);
+    this.wrist = new THREE.Vector3(0.31 * side, 0.02, -0.2);
+    this.fingers = new THREE.Vector3(0, -0.3, -1);
+    this.palm = new THREE.Vector3(0, -1, 0);
+    this.pole = new THREE.Vector3(side, 0.5, 0.3);
   }
 
-  target(out, dirOut) {
+  // the pose this frame, in the board's frame
+  target(dt) {
     const s = this.side;
-    // idle: hands resting on the water beside the nose
-    this.idleT += 0.016;
+    this.idleT += dt;
+    // resting: hands on the water beside the nose, drifting a little
     const sway = Math.sin(this.idleT * 0.9 + s) * 0.02;
-    const idle = _b.set(0.31 * s, 0.015 + sway * 0.4, -0.28 + (s > 0 ? 0.07 : -0.03) + sway);
-    let stroke = _c.copy(idle);
-    if (this.phase >= 0) {
-      const p = this.phase;
-      if (p < 0.55) {
-        const q = p / 0.55;
-        stroke.set((0.3 + 0.05 * q) * s, -0.24 * Math.sin(Math.PI * q) - 0.02, -0.34 + 0.98 * q);
-      } else {
-        const q = (p - 0.55) / 0.45;
-        const e = 0.5 - 0.5 * Math.cos(Math.PI * q);
-        stroke.set((0.35 + 0.08 * Math.sin(Math.PI * q)) * s, 0.02 + 0.22 * Math.sin(Math.PI * q), 0.64 - 0.98 * e);
-      }
+    const W = _w.set(0.31 * s, 0.02 + sway * 0.4, -0.2 + sway);
+    const F = _f.set(0.12 * s, -0.3, -1);
+    const N = _n.set(0, -1, 0.2);
+    const P = _p.set(0.8 * s, 0.5, 0.3);
+    const S = _s.set(0.19 * s, 0.19, 0.3);
+    if (this.blend > 0.001) {
+      const [kw, kf, kn, kp] = strokeAt(Math.max(0, this.phase < 0 ? 0.999 : this.phase), this.k);
+      const b = this.blend;
+      W.lerp(mirror(kw, s), b);
+      F.lerp(mirror(kf, s), b);
+      N.lerp(mirror(kn, s), b);
+      P.lerp(mirror(kp, s), b);
+      // the shoulder reaches with the catch and drops back on the push
+      const ph = this.phase < 0 ? 1 : this.phase;
+      S.z += (-0.045 * Math.cos(2 * Math.PI * ph) + 0.01) * b;
+      S.y += 0.015 * Math.sin(2 * Math.PI * ph) * b;
     }
-    out.lerpVectors(idle, stroke, this.blend);
-    // hand direction: forward while reaching, angled down/back while pulling
-    dirOut.set(0.05 * s, -0.15, -1);
-    if (this.phase >= 0 && this.phase < 0.55) dirOut.lerp(_a.set(0.1 * s, -1, 0.3), Math.sin((Math.PI * this.phase) / 0.55) * this.blend);
-    // duck dive: both hands grip the rails ahead and push the nose under
-    if (this.dive > 0) {
-      out.lerp(_a.set(0.22 * s, 0.07, -0.5), this.dive);
-      dirOut.lerp(_a.set(-0.25 * s, -0.55, -1), this.dive);
+    if (this.dive > 0.001) {
+      // gripping the rails up by the nose, fingers curled over
+      W.lerp(_a.set(0.21 * s, 0.08, -0.2), this.dive);
+      F.lerp(_a.set(-0.3 * s, -1, -0.1), this.dive);
+      N.lerp(_a.set(-s, 0, 0), this.dive);
+      P.lerp(_a.set(0.8 * s, 0.6, 0.2), this.dive);
     }
-    dirOut.normalize();
-    return out;
-  }
-
-  solve() {
-    const handPos = this.target(new THREE.Vector3(), this.handDir);
-    this.wrist.copy(handPos).addScaledVector(this.handDir, 0.035);
-    const L1 = 0.31,
-      L2 = 0.29;
-    const S = this.shoulder;
-    const d = _a.subVectors(this.wrist, S);
-    let len = d.length();
-    const dir = d.clone().divideScalar(len);
-    len = Math.min(Math.max(len, 0.12), L1 + L2 - 0.002);
-    const wrist = S.clone().addScaledVector(dir, len);
-    const cosA = (L1 * L1 + len * len - L2 * L2) / (2 * L1 * len);
-    const ang = Math.acos(Math.min(1, Math.max(-1, cosA)));
-    // elbow points outward, up and back
-    const pole = new THREE.Vector3(0.8 * this.side, 0.6, 0.5);
-    pole.addScaledVector(dir, -pole.dot(dir)).normalize();
-    const elbow = S.clone().addScaledVector(dir, Math.cos(ang) * L1).addScaledVector(pole, Math.sin(ang) * L1);
-    placeLimb(this.upper, S, elbow);
-    placeLimb(this.fore, elbow, wrist);
-    this.elbowJoint.position.copy(elbow);
-    // orient hand: fingers along handDir, palm down
-    const fwd = this.handDir;
-    const right = _b.crossVectors(fwd, UP).normalize();
-    const up = _c.crossVectors(right, fwd).normalize();
-    _m.makeBasis(right, up, fwd.clone().negate());
-    this.hand.quaternion.setFromRotationMatrix(_m);
-    this.hand.position.copy(wrist);
+    // smoothing takes the corners off any change of pose
+    const k = 1 - Math.exp(-dt * 22);
+    this.shoulder.lerp(S, k);
+    this.wrist.lerp(W, k);
+    this.fingers.lerp(F.normalize(), k).normalize();
+    this.palm.lerp(N.normalize(), k).normalize();
+    this.pole.lerp(P.normalize(), k).normalize();
   }
 }
 
 export class Arms {
   constructor() {
+    // the frame the paddling poses are in (main puts it in the board's frame); the arms
+    // themselves are drawn by the rig, once the character has loaded
     this.group = new THREE.Group();
     this.right = new Arm(1);
     this.left = new Arm(-1);
-    for (const a of [this.left, this.right]) this.group.add(a.upper, a.fore, a.hand, a.elbowJoint);
     this.next = this.left;
     this.onStroke = null;
     this.effort = 0;
+    this.rig = null;
     // strokes asked for one arm at a time (a controller's triggers, swipes on a phone)
     this.manualEffort = 0; // 0..1, from how often and how hard
     this.manualAt = -1e9; // time of the last one
     this.time = 0;
     this.turn = 0; // rad/s, + = left: a right-arm stroke turns you left
-    this.left.power = this.right.power = 1;
+  }
+
+  // the character model has loaded: build its arms (add `rig.group` to the scene)
+  setModel(gltf) {
+    const src = (() => {
+      let m = null;
+      gltf.scene.traverse((o) => o.isSkinnedMesh && o.material.name === 'Skin' && (m = o));
+      return m;
+    })();
+    if (src) {
+      // the character's skin, in your colour
+      SKIN.roughness = src.material.roughness ?? SKIN.roughness;
+      SKIN.metalness = src.material.metalness ?? SKIN.metalness;
+    }
+    this.rig = new ArmRig(gltf, SKIN);
+    return this.rig;
   }
 
   // One stroke with one arm (side -1 left, +1 right), strength 0..1 (how hard the pull or
@@ -189,7 +175,7 @@ export class Arms {
     return this.time - this.manualAt < 1.6;
   }
 
-  // effort: 0..1 paddling intensity (sets the stroke cadence). dive: duck-dive grip.
+  // effort: 0..1 paddling intensity (sets the stroke cadence). dive: gripping the rails.
   // Returns the stroke pulse: power of the pulling arms, averaging ~1 while paddling
   // continuously, whatever the cadence. Strokes asked for with stroke() take over from the
   // automatic ones for a while.
@@ -212,8 +198,9 @@ export class Arms {
         if (a.phase >= 1) a.phase = -1;
       }
       const target = a.phase >= 0 ? 1 : 0;
-      a.blend += (target - a.blend) * Math.min(1, dt * 9);
-      a.dive += ((dive ? 1 : 0) - a.dive) * Math.min(1, dt * 10);
+      // into a stroke quickly, out of it gently
+      a.blend += (target - a.blend) * Math.min(1, dt * (target ? 12 : 4));
+      a.dive += ((dive ? 1 : 0) - a.dive) * Math.min(1, dt * 8);
     }
     this.turn = manual && active && !dive ? turn * 0.28 : 0;
     if (active && !dive && this.effort > 0.04 && !manual) {
@@ -225,26 +212,63 @@ export class Arms {
         this.next = other;
       }
     }
-    this.left.solve();
-    this.right.solve();
+    if (dt > 0) for (const a of [this.left, this.right]) a.target(dt);
     return active && !dive ? pulse : 0;
   }
 
   get stroking() {
     return this.left.phase >= 0 || this.right.phase >= 0;
   }
+
+  // Draw the paddling arms where `group` is now (after the board has moved this frame).
+  pose() {
+    if (!this.rig) return;
+    this.rig.visible = this.group.visible && !!this.group.parent;
+    if (!this.rig.visible) return;
+    this.group.updateWorldMatrix(true, false);
+    const M = this.group.matrixWorld;
+    this.group.getWorldQuaternion(_q);
+    for (const a of [this.left, this.right]) {
+      const S = a.shoulder.clone().applyMatrix4(M);
+      const W = a.wrist.clone().applyMatrix4(M);
+      this.rig.pose(a.side, S, W, a.fingers.clone().applyQuaternion(_q), a.palm.clone().applyQuaternion(_q), a.pole.clone().applyQuaternion(_q));
+    }
+  }
+
+  // VR: the arms reach from your (estimated) shoulders to the controllers. hands: xr.hands;
+  // head, headQuat: the headset in the rig's space; rig: the camera rig; prone: lying down.
+  poseVR(hands, head, headQuat, rig, prone, show) {
+    if (!this.rig) return;
+    const any = show && hands.some((h) => h.source && h.has);
+    this.rig.visible = any;
+    if (!any) return;
+    rig.updateMatrixWorld(true);
+    // the shoulders: below and behind the head, across its heading (further behind lying down)
+    const fwd = _a.set(0, 0, -1).applyQuaternion(headQuat);
+    fwd.y = 0;
+    if (fwd.lengthSq() < 1e-4) fwd.set(0, 0, -1);
+    fwd.normalize();
+    const right = new THREE.Vector3().crossVectors(fwd, Y);
+    const down = prone ? 0.15 : 0.21,
+      back = prone ? 0.16 : 0.06;
+    for (const h of hands) {
+      if (!h.source || !h.has) continue;
+      const s = h.side;
+      const S = head.clone().addScaledVector(right, 0.17 * s).addScaledVector(Y, -down).addScaledVector(fwd, -back).applyMatrix4(rig.matrixWorld);
+      h.grip.updateWorldMatrix(true, false);
+      h.grip.getWorldQuaternion(_q);
+      // the hand in the controller's grip: fingers forward and a little down, palm down-ish
+      const F = new THREE.Vector3(0, -0.343, -0.939).applyQuaternion(_q);
+      const N = new THREE.Vector3(0, -0.939, 0.343).applyQuaternion(_q);
+      const W = h.grip.getWorldPosition(new THREE.Vector3()).addScaledVector(F, -0.03);
+      // the elbow out to the side and down
+      const P = right.clone().transformDirection(rig.matrixWorld).multiplyScalar(0.7 * s).add(new THREE.Vector3(0, -0.6, 0)).addScaledVector(fwd.clone().transformDirection(rig.matrixWorld), -0.3);
+      this.rig.pose(s, S, W, F, N, P);
+    }
+  }
 }
 
-// Hands that follow VR controller grips (with a short forearm).
-export function createVRHand(side) {
-  const g = new THREE.Group();
-  const hand = createHand(side);
-  hand.rotation.x = -0.35;
-  g.add(hand);
-  const fore = limb(0.034, 0.042);
-  fore.rotation.x = Math.PI / 2 - 0.35;
-  fore.position.set(0, 0, 0.03);
-  fore.scale.set(1, 0.26, 1);
-  g.add(fore);
-  return g;
+// VR controllers: an empty holder (the arms are drawn by the rig, posed from the grips)
+export function createVRHand() {
+  return new THREE.Group();
 }

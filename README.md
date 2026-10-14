@@ -7,14 +7,15 @@ Paddle into glassy waves, pop up, and race the peeling lip through the barrel, o
 
 - Clear, refractive water with sand, weed and caustics visible underneath, Fresnel sky reflections, sun glints, and light glowing through thin crests and the lip.
 - Breaking waves are built procedurally on the GPU: a swell profile plus a curling lip that pitches, forms a barrel, and collapses into whitewater as the break peels along the wave. Gerstner swell runs underneath.
-- Foam forms on the lip, where the lip lands, and on the broken whitewater, and is left behind on the water after the wave passes. Whitewater is lumpy and lit like real foam, with shadowed crevices, and gets rougher the bigger the wave. When a barrel's time is up it closes and squashes down into a mound of whitewater. Small waves don't barrel: they spill, with foam boiling over the crest and tumbling down the face. Spray comes off the lip and the crest.
+- Foam forms on the lip, where the lip lands, and on the broken whitewater, and is left behind on the water after the wave passes. Whitewater is lumpy and lit like real foam, with shadowed crevices, and gets rougher the bigger the wave. When a barrel's time is up it closes and squashes down into a mound of whitewater. Small waves don't barrel: they spill, with foam boiling over the crest and tumbling down the face. Spray comes off the lip and the crest, and white water sprays off the nose of your board as you drop in.
 - The board, arms and hands stay visible when they dip under the surface, tinted by the water they're seen through.
 - Duck dive under breaking waves. Underwater you get Snell's window, the seabed (at Teahupo'o, the coral reef sloping away into the deep), light shafts and bubbles. In the ocean, a school of fish sometimes swims past (silvery baitfish at Margaret River, reef fish at Teahupo'o) and scatters if you get close.
-- Shortboard or longboard. On the longboard you walk to the nose to hang five, or to the tail for tight turns.
+- Shortboard or longboard. On the longboard you walk to the nose to hang five, or to the tail for tight turns. A longboard is too big to duck dive, so you turtle roll instead: grab the rails and roll over, hanging upside down under the board while the wave passes over. The view rolls with you, in a headset too.
 - You can crouch under the lip and spring off the top of the wave for an air. Snaps, cutbacks and tailslides come from flicking your view.
 - Four ways to play: keyboard and mouse, a game controller, touch on a phone or tablet (swipe to paddle, tilt to steer), and body movement on Quest (paddle with your arms, stand up to pop up, lean to carve).
 - Pick the wave size, from knee high to well overhead, or let it wander: sets build and fade over a few minutes. On small waves you can keep riding the whitewater after the wave breaks.
-- Your surfer is a rigged, animated character (paddling, popping up, a surf stance that crouches and leans with you). Choose skin tone, hair colour and board colour; a turntable preview shows your look.
+- Your surfer is a rigged, animated character (paddling, popping up, a surf stance that crouches and leans with you). Choose skin tone, hair colour and board colour; a turntable preview shows your look. In first person you see that character's own arms: on PC and phones they paddle in smooth, flowing strokes, and in VR they follow your controllers.
+- Tricks, hang fives and tens, airs and barrels pop up as early-2000s surf-mag stickers, and every ride ends with a score card (with a badge when you beat your best).
 - Sit up on your board to wait for waves. Your head turns with your view, and on a wave your upper body twists to follow it, so other players can see where you're looking.
 - Surf at midday or at sunset: a low gold sun with a long path of light across the water, a dusk sky in the reflections, backlit crests and dimmer, warmer light under water.
 - Multiplayer: create or find a room, public or private with a passcode, and surf the same waves as up to seven other players, or join as a camera drone and film them from above. PC and Quest players can share a room.
@@ -30,7 +31,7 @@ In the menus, the arrow keys move between the cards, `Enter` picks one and `Esc`
 | Paddle | Scroll the mouse wheel; the faster you scroll, the faster you can paddle | Sweep your hands from front to back, low by your sides ("in the water"). Faster strokes, more speed. Hold the controllers however feels natural: thumbs up, or turned in with palms down and the grip squeezed |
 | Steer while paddling | `A` / `D` | Paddle harder on one side (a stronger right stroke turns you left) |
 | Sit up and wait | `S` while paddling; `W`, `Space` or start paddling to lie back down. `A` / `D` turn the board | Sit up slowly and stop partway (head 22–75 cm above your paddling height); lie back down to paddle. Thumbstick left / right turns the board |
-| Duck dive | Hold `Ctrl` (or `C`) while paddling; let go to surface | Squeeze the grip with your hand held still on the front of the board (a hand squeezing the grip as it sweeps past is still paddling) |
+| Duck dive (longboard: turtle roll) | Hold `Ctrl` (or `C`) while paddling; let go to surface | Squeeze the grip with your hand held still on the front of the board (a hand squeezing the grip as it sweeps past is still paddling) |
 | Pop up | `Space` (press again to lie back down) | Stand up for real: head rises 35 cm above your calibrated paddling height |
 | Surf (weight shift) | `A` / `D` carve, `W` / `S` lean forward (trim) or back (stall) | Lean your head and body (how much a lean counts is adjustable: see below) |
 | Crouch | Hold `Ctrl` (or `C`); let go at the lip to spring into an air | Crouch for real; stand up fast at the lip to hop |
@@ -59,7 +60,7 @@ Any controller the browser recognises works on PC (Xbox, PlayStation, Switch Pro
 | Steer, carve, trim, walk | Left stick (the same as `W` `A` `S` `D`) |
 | Sit up / lie down | Pull the left stick back while paddling / push it forward |
 | Stand up / lie down | `A` |
-| Duck dive / crouch | Hold `B` (duck dive while paddling, crouch while surfing) |
+| Duck dive (longboard: turtle roll) / crouch | Hold `B` (duck dive while paddling, crouch while surfing) |
 | Snap, cutback, tailslide | Hold `LB` or `RB` and flick the right stick: straight out and back for a tailslide, a short flick for a snap, held out for a cutback |
 | Look around | Right stick (the view drifts back to straight ahead when you let go) |
 | Back to the lineup | `Y` |
@@ -69,7 +70,7 @@ Every button can be changed in **Controls and settings → Controller**: click a
 
 ### Phones and tablets
 
-Hold the phone sideways. Where your finger first touches decides what it does until you lift it, so a paddle stroke that starts high on the right and runs down into the look area never turns the view.
+Hold the phone sideways (upright works too, with less of the wave in view). The layout fits any screen, whatever its size or shape, and keeps clear of notches and rounded corners. In fullscreen the game stays in landscape where the browser allows it. Where your finger first touches decides what it does until you lift it, so a paddle stroke that starts high on the right and runs down into the look area never turns the view.
 
 | Action | Touch |
 | :-- | :-- |
@@ -77,14 +78,20 @@ Hold the phone sideways. Where your finger first touches decides what it does un
 | Steer and carve | Tilt the phone left and right (while paddling, too) |
 | Trim, stall, walk the longboard | Tilt it forward and back. The way you hold it when you start, or resume, counts as level |
 | Stand up | Swipe up on the board. Swipe down on it to go back to paddling |
-| Duck dive | While paddling, swipe down on the board and keep your finger on the screen; lift it to come up |
+| Duck dive (longboard: turtle roll) | While paddling, swipe down on the board and keep your finger on the screen; lift it to come up |
 | Sit up | Tap the board while paddling; tap again to lie down |
 | Look around | Drag in the bottom right quarter of the screen |
 | Crouch | The Crouch button on the left while you're surfing (tap on, tap off) |
 | Snap, cutback, tailslide | Hold Snap on the left and swipe sideways in the look area |
-| Pause, back to the lineup | The buttons at the top left |
+| Pause, back to the lineup, recalibrate the tilt | The buttons at the top left (◎ makes the way you're holding it now level) |
 
-A guide to the touch zones shows for the first few seconds. **Controls and settings → Touch** has sensitivity curves with graphs for the tilt, and the look sensitivity. iPhones ask for permission to use the motion sensors the first time. Phones get the lighter graphics setting automatically. As a drone, drag on the left half to fly and on the right half to turn and tilt the camera; ▲ ▼ climb and descend.
+A guide to the touch zones shows for the first few seconds. **Controls and settings → Touch** has sensitivity curves with graphs for the tilt, and the look sensitivity.
+
+**If tilting steers the wrong way** (some tablets, such as iPads, report the screen turned 90° from how it really is):
+
+1. Hold the device the way you play and tap ◎, or **Recalibrate tilt** on the pause screen. That makes the way you're holding it level. The game also works out which edge of the screen is up from gravity, so this alone fixes most tablets.
+2. If it's still wrong, open **Controls and settings → Touch**. Tilt the device and watch the dot on the bubble level: it should move the way you tilt.
+3. If the dot goes the wrong way, use **Tilt directions** (Turn 90°, 180°, Turn −90°) until it follows you. The choice is remembered. iPhones ask for permission to use the motion sensors the first time. Phones get the lighter graphics setting automatically. As a drone, drag on the left half to fly and on the right half to turn and tilt the camera; ▲ ▼ climb and descend.
 
 ### How to catch and ride a wave
 
@@ -211,7 +218,8 @@ To check the relay works, open the game with `?relay` on two devices and join th
 | `js/input.js`, `js/xr.js` | PC input; Quest head/hand gesture input with calibration |
 | `js/gamepad.js`, `js/touch.js` | Controller input (paddling strokes on the triggers, stick flicks for tricks, menu navigation); touch input (swipe zones, phone tilt, the on-screen buttons) |
 | `js/lean.js` | Sensitivity curves for VR leaning, controller sticks and phone tilt, and their graphs |
-| `js/body.js`, `js/board.js` | First-person arms (IK paddling), VR hands, parametric shortboard and longboard |
+| `js/body.js`, `js/board.js` | First-person arms: the paddle stroke (a smooth looped path for each hand) on PC and phones, and reaching for the controllers in VR; parametric shortboard and longboard |
+| `js/fparms.js` | The character's own arms cut out of `assets/surfer.glb` into a separate skinned mesh, posed with two-bone IK |
 | `js/sky.js` | Procedural HDR sky (rendered once into a cube map), midday and sunset |
 | `js/terrain.js` | Each spot's land and seabed (and its GLSL copy for the water shader); Margaret River's beach, headland, island and trees |
 | `js/teahupoo.js` | Teahupo'o: the reef (its edge follows the line where the wave breaks), lagoon, pass, mountains, the far side of the island, palms and houses, and the 3D reef seen under water |

@@ -12,6 +12,7 @@ import { clamp, smoothstep, mix, CURL } from './wave.js';
 export const STATE = { PRONE: 'prone', POPUP: 'popup', STANDING: 'standing', WIPEOUT: 'wipeout', SITTING: 'sitting' };
 
 const POPUP_TIME = 0.42;
+const AXIS_Z = new THREE.Vector3(0, 0, 1);
 const DEG = Math.PI / 180;
 
 const moveToward = (v, t, d) => (v < t ? Math.min(t, v + d) : Math.max(t, v - d));
@@ -47,6 +48,11 @@ export class Surfer {
     this.diveRate = 0;
     this.diveT = 0;
     this.diveCool = 0;
+    // longboard: you can't push it under, so you turtle roll: flip it over and hang on
+    // underneath while the wave passes over. 0..1 how far over it is
+    this.turtle = 0;
+    this.turtleT = 0;
+    this.quatBase = new THREE.Quaternion(); // the board's orientation without the roll
     this.effPitch = 0; // nose-down angle of the board including a pitching ledge (rad)
     this.pearlT = 0;
     this.ceiling = Infinity; // height of the lip above the board (m)
@@ -100,6 +106,7 @@ export class Surfer {
     this.popVel = 0;
     this.diving = false;
     this.diveDepth = this.diveRate = 0;
+    this.turtle = 0;
     this.pearlT = this.lipT = 0;
     this.paddleEffort = 0;
     this.setState(STATE.PRONE);
@@ -230,8 +237,9 @@ export class Surfer {
     }
 
     this.updateDive(h, inp);
-    const deep = this.diveDepth > 0.35;
-    const wvz = s.waterVz * Math.exp(-this.diveDepth * 1.4);
+    const deep = this.diveDepth > 0.35 || this.turtle > 0.8;
+    // (upside down under the board you're pushed back less, though more than duck diving)
+    const wvz = s.waterVz * Math.exp(-this.diveDepth * 1.4) * (1 - 0.6 * this.turtle);
 
     // --- forces ---
     // A board drifting with the water just rides the orbital motion (the slope is what
@@ -370,12 +378,33 @@ export class Surfer {
     if (!this.air) this.checkRules(s, h, deep);
   }
 
-  // Duck dive: hold to push the board under, release to float back up.
+  // Duck dive: hold to push the board under, release to float back up. On a longboard the
+  // same input turtle rolls instead: over (about half a second), hold on, back up on release.
   updateDive(h, inp) {
     const can = this.state === STATE.PRONE && !this.air;
     const want = can && !!inp.duck;
     const prev = this.diveDepth;
     this.diveCool = Math.max(0, this.diveCool - h);
+    if (this.board.walk || this.turtle > 0) {
+      if (want && !this.diving && this.diveCool <= 0 && this.board.walk) {
+        this.diving = true;
+        this.turtleT = 0;
+        this.emit('duckdive', { turtle: true });
+      }
+      if (this.diving) {
+        this.turtleT += h;
+        const hold = want && this.turtleT < 4;
+        this.turtle = moveToward(this.turtle, hold ? 1 : 0, (hold ? 1 / 0.55 : 1 / 0.65) * h);
+        if (!can || (!hold && this.turtle <= 0.001)) {
+          this.diving = false;
+          this.diveCool = 0.5;
+          this.emit('surface', {});
+        }
+      } else this.turtle = moveToward(this.turtle, 0, h / 0.65);
+      this.diveDepth = moveToward(this.diveDepth, 0, 1.5 * h);
+      this.diveRate = (this.diveDepth - prev) / h;
+      return;
+    }
     if (want && !this.diving && this.diveCool <= 0) {
       this.diving = true;
       this.diveT = 0;
@@ -399,7 +428,7 @@ export class Surfer {
   // (cresting the lip at speed) or a leg extension pops the board up, then ballistic.
   updateVertical(h, s, ext) {
     // sitting up, more of your weight is on the board: it floats a little lower
-    const target = this.model.heightAt(this.x, this.z) - this.diveDepth - (this.state === STATE.SITTING ? 0.07 : 0);
+    const target = this.model.heightAt(this.x, this.z) - this.diveDepth - (this.state === STATE.SITTING ? 0.07 : 0) - 0.12 * this.turtle;
     const standing = this.state === STATE.STANDING;
     if (!this.air) {
       const vySurf = (target - this.y) / h;
@@ -587,5 +616,14 @@ export class Surfer {
     this.pitch += (targetPitch - this.pitch) * (1 - Math.exp(-dt * 6));
     this._q.setFromEuler(new THREE.Euler(this.pitch, 0, this.roll, 'YXZ'));
     this.quat.multiply(this._q);
+    this.quatBase.copy(this.quat);
+    // turtle roll: over onto its back about its length
+    if (this.turtle > 0) this.quat.multiply(this._q.setFromAxisAngle(AXIS_Z, this.turtleAngle));
+  }
+
+  // how far the board has rolled over (rad; 0 upright, pi upside down)
+  get turtleAngle() {
+    const t = this.turtle;
+    return Math.PI * t * t * (3 - 2 * t);
   }
 }

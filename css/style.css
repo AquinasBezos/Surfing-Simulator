@@ -42,6 +42,10 @@ body {
 
 /* ================================================================ touch controls */
 #touch-ui {
+  /* button sizes follow the screen's shorter side */
+  --t-small: clamp(34px, 10vmin, 52px);
+  --t-mid: clamp(46px, 14vmin, 66px);
+  --t-big: clamp(54px, 18vmin, 86px);
   position: fixed;
   inset: 0;
   z-index: 6;
@@ -74,10 +78,10 @@ body {
 }
 
 .t-pause {
-  top: max(12px, env(safe-area-inset-top));
-  left: max(12px, env(safe-area-inset-left));
-  width: 44px;
-  height: 44px;
+  top: max(10px, env(safe-area-inset-top));
+  left: max(10px, env(safe-area-inset-left));
+  width: var(--t-small);
+  height: var(--t-small);
   border-radius: 50%;
   gap: 5px;
 }
@@ -89,31 +93,45 @@ body {
   background: #fff;
 }
 
-.t-lineup {
-  top: max(12px, env(safe-area-inset-top));
-  left: calc(max(12px, env(safe-area-inset-left)) + 54px);
-  width: 44px;
-  height: 44px;
+.t-level {
+  top: max(10px, env(safe-area-inset-top));
+  left: calc(max(10px, env(safe-area-inset-left)) + 2 * var(--t-small) + 20px);
+  width: var(--t-small);
+  height: var(--t-small);
   border-radius: 50%;
-  font-size: 20px;
+  font-size: calc(var(--t-small) * 0.5);
+}
+
+#touch-ui[data-mode='drone'] .t-level {
+  display: none;
+}
+
+.t-lineup {
+  top: max(10px, env(safe-area-inset-top));
+  left: calc(max(10px, env(safe-area-inset-left)) + var(--t-small) + 10px);
+  width: var(--t-small);
+  height: var(--t-small);
+  border-radius: 50%;
+  font-size: calc(var(--t-small) * 0.45);
 }
 
 /* standing: crouch (toggle) and snap (hold) on the left */
 .t-crouch,
 .t-charge {
-  left: max(16px, env(safe-area-inset-left));
-  width: 76px;
-  height: 76px;
+  left: max(14px, env(safe-area-inset-left));
+  width: var(--t-big);
+  height: var(--t-big);
   border-radius: 50%;
+  font-size: calc(var(--t-big) * 0.2);
   display: none;
 }
 
 .t-crouch {
-  top: 34%;
+  top: calc(50% - var(--t-big) - 6px);
 }
 
 .t-charge {
-  top: calc(34% + 92px);
+  top: calc(50% + 6px);
 }
 
 #touch-ui[data-mode='standing'] .t-crouch,
@@ -124,20 +142,20 @@ body {
 /* drone: climb and descend, on the right */
 .t-up,
 .t-down {
-  right: max(16px, env(safe-area-inset-right));
-  width: 60px;
-  height: 60px;
+  right: max(14px, env(safe-area-inset-right));
+  width: var(--t-mid);
+  height: var(--t-mid);
   border-radius: 50%;
-  font-size: 18px;
+  font-size: calc(var(--t-mid) * 0.3);
   display: none;
 }
 
 .t-up {
-  top: 26%;
+  top: calc(40% - var(--t-mid) - 6px);
 }
 
 .t-down {
-  top: calc(26% + 72px);
+  top: calc(40% + 6px);
 }
 
 #touch-ui[data-mode='drone'] .t-up,
@@ -156,7 +174,7 @@ body {
   opacity: 0;
   transition: opacity 0.6s;
   color: rgba(255, 255, 255, 0.9);
-  font: 600 13px/1.4 var(--font);
+  font: 600 clamp(10px, 3.2vmin, 14px) / 1.4 var(--font);
   text-align: center;
   text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
 }
@@ -200,30 +218,9 @@ body {
   display: none;
 }
 
-/* phones held upright: ask for sideways */
+/* (portrait is playable: the start message suggests turning the phone) */
 #rotate-hint {
   display: none;
-}
-
-@media (orientation: portrait) and (pointer: coarse) {
-  body.playing #rotate-hint {
-    position: fixed;
-    inset: 0;
-    z-index: 30;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 14px;
-    background: rgba(10, 16, 20, 0.92);
-    color: var(--ink);
-    font: 600 18px var(--font);
-  }
-
-  body.playing #rotate-hint span {
-    font-size: 54px;
-    color: var(--sky);
-  }
 }
 
 button {
@@ -1589,6 +1586,7 @@ body:not(.ready) .crumb::after {
   top: 16%;
   left: 50%;
   transform: translate(-50%, -8px);
+  width: max-content; /* (else left: 50% caps it at half the screen) */
   max-width: min(720px, 92vw);
   padding: 10px 18px;
   border-radius: 12px;
@@ -1607,21 +1605,34 @@ body:not(.ready) .crumb::after {
 
 #hud-tube {
   position: absolute;
-  top: 26%;
+  top: 22%;
   left: 50%;
-  transform: translateX(-50%) scale(0.9);
-  font-size: 22px;
-  font-weight: 800;
-  letter-spacing: 0.2em;
-  text-transform: uppercase;
-  color: #bff7ef;
+  transform: translateX(-50%) rotate(-6deg) scale(0.6);
   opacity: 0;
-  transition: opacity 0.2s, transform 0.2s;
+  transition: opacity 0.2s, transform 0.3s cubic-bezier(0.3, 1.6, 0.5, 1);
+  pointer-events: none;
+}
+
+#hud-tube span {
+  font-size: clamp(28px, 6vmin, 54px);
+}
+
+#hud-tube span::after {
+  background: linear-gradient(180deg, #e9ffff 0%, #5ff2ff 45%, #12a8e0 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
 }
 
 #hud-tube.show {
   opacity: 1;
-  transform: translateX(-50%) scale(1);
+  transform: translateX(-50%) rotate(-6deg) scale(1);
+  animation: tube-wobble 0.9s ease-in-out infinite alternate;
+}
+
+@keyframes tube-wobble {
+  to {
+    transform: translateX(-50%) rotate(-3deg) scale(1.05);
+  }
 }
 
 #hud-paddle,
@@ -1676,40 +1687,194 @@ body:not(.ready) .crumb::after {
   background: #fff;
 }
 
+/* ---------- tricks and scores: early-2000s surf-mag stickers ---------- */
+:root {
+  --chunky: 'Titan One', 'Arial Black', system-ui, sans-serif;
+  --marker: 'Permanent Marker', 'Comic Sans MS', system-ui, sans-serif;
+  --sticker-ink: #082a4a;
+}
+
+/* big gradient letters, a thick navy outline and a hard offset shadow: the word itself is
+   the outline, and a copy of it on top carries the gradient */
+#hud-callout b,
+#hud-ride b,
+#hud-tube span {
+  position: relative;
+  display: inline-block;
+  font: 400 clamp(40px, 10vmin, 96px) / 1 var(--chunky);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  color: var(--sticker-ink);
+  -webkit-text-stroke: 0.17em var(--sticker-ink);
+  filter: drop-shadow(0.07em 0.09em 0 var(--sticker-ink)) drop-shadow(0 0.18em 0.35em rgba(0, 20, 40, 0.35));
+}
+
+#hud-callout b::after,
+#hud-ride b::after,
+#hud-tube span::after {
+  content: attr(data-t);
+  position: absolute;
+  left: 0;
+  top: 0;
+  -webkit-text-stroke: 0;
+  background: linear-gradient(180deg, #fff36b 0%, #ffd23a 40%, #ff8a1e 72%, #ff4f2e 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+#hud-ride b small {
+  -webkit-text-stroke: 0.1em var(--sticker-ink);
+  paint-order: stroke fill;
+  -webkit-text-fill-color: #ffd23a;
+}
+
 #hud-callout {
   position: absolute;
-  top: 34%;
+  top: 40%;
   left: 50%;
-  transform: translate(-50%, 0) scale(0.8);
-  font-size: 30px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #fff;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  transform: translate(-50%, 0) rotate(var(--tilt, -5deg));
   opacity: 0;
   pointer-events: none;
 }
 
-#hud-callout.show {
-  animation: callout 1.3s ease-out forwards;
+/* a burst behind the word, like a sticker on a board */
+#hud-callout::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 46%;
+  width: 150%;
+  aspect-ratio: 2.4;
+  translate: -50% -50%;
+  background: radial-gradient(circle at 50% 50%, rgba(95, 242, 255, 0.95) 0 30%, rgba(30, 170, 230, 0.9) 31% 52%, transparent 53%);
+  clip-path: polygon(50% 0%, 57% 30%, 76% 6%, 70% 36%, 98% 22%, 79% 48%, 100% 64%, 72% 64%, 80% 96%, 58% 72%, 50% 100%, 42% 72%, 20% 96%, 28% 64%, 0% 64%, 21% 48%, 2% 22%, 30% 36%, 24% 6%, 43% 30%);
+  opacity: 0.85;
+  z-index: -1;
 }
 
-@keyframes callout {
+#hud-callout i,
+#hud-ride i,
+#hud-ride em {
+  font: 400 clamp(15px, 3.2vmin, 26px) / 1.15 var(--marker);
+  font-style: normal;
+  color: #5ff2ff;
+  text-shadow: 0.06em 0.06em 0 var(--sticker-ink), -0.03em 0.03em 0 var(--sticker-ink), 0.03em -0.03em 0 var(--sticker-ink), -0.03em -0.03em 0 var(--sticker-ink), 0 0.2em 0.4em rgba(0, 20, 40, 0.5);
+  white-space: nowrap;
+}
+
+#hud-callout.show {
+  animation: slap 1.6s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+}
+
+@keyframes slap {
   0% {
     opacity: 0;
-    transform: translate(-50%, 8px) scale(0.8);
+    transform: translate(-50%, 18px) rotate(calc(var(--tilt) - 14deg)) scale(2.1);
   }
-  12% {
+  10% {
     opacity: 1;
-    transform: translate(-50%, 0) scale(1.05);
+    transform: translate(-50%, 0) rotate(calc(var(--tilt) + 3deg)) scale(0.92);
   }
-  70% {
+  18% {
+    transform: translate(-50%, 0) rotate(var(--tilt)) scale(1.06);
+  }
+  26%,
+  78% {
     opacity: 1;
-    transform: translate(-50%, 0) scale(1);
+    transform: translate(-50%, 0) rotate(var(--tilt)) scale(1);
   }
   100% {
     opacity: 0;
-    transform: translate(-50%, -10px) scale(1);
+    transform: translate(-50%, -26px) rotate(calc(var(--tilt) + 4deg)) scale(0.9);
+  }
+}
+
+/* the ride's score */
+#hud-ride {
+  position: absolute;
+  top: 9%;
+  left: 50%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  max-width: 92vw;
+  padding: 14px 30px 16px;
+  transform: translate(-50%, 0) rotate(-3deg);
+  border: 4px solid var(--sticker-ink);
+  border-radius: 18px 26px 16px 30px;
+  background:
+    repeating-linear-gradient(-45deg, rgba(255, 255, 255, 0.09) 0 10px, transparent 10px 22px),
+    linear-gradient(160deg, #1e8fd6 0%, #0b5aa8 60%, #0a3f7a 100%);
+  box-shadow: 7px 9px 0 var(--sticker-ink), 0 18px 40px rgba(0, 20, 40, 0.35);
+  opacity: 0;
+  pointer-events: none;
+}
+
+#hud-ride em {
+  color: #fff;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+#hud-ride b {
+  font-size: clamp(44px, 10vmin, 92px);
+}
+
+#hud-ride b small {
+  margin-left: 0.15em;
+  font-size: 0.42em;
+}
+
+#hud-ride strong {
+  position: absolute;
+  top: -14px;
+  right: -22px;
+  padding: 5px 12px;
+  transform: rotate(12deg);
+  border: 3px solid var(--sticker-ink);
+  border-radius: 8px;
+  background: #ff3d8b;
+  color: #fff;
+  font: 400 clamp(13px, 2.6vmin, 20px) / 1 var(--chunky);
+  text-transform: uppercase;
+  box-shadow: 3px 4px 0 var(--sticker-ink);
+}
+
+#hud-ride i {
+  max-width: 80vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #dff9ff;
+}
+
+#hud-ride.show {
+  animation: ride-card 5.5s cubic-bezier(0.2, 0.9, 0.3, 1) forwards;
+}
+
+@keyframes ride-card {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -40px) rotate(-12deg) scale(1.4);
+  }
+  7% {
+    opacity: 1;
+    transform: translate(-50%, 0) rotate(-1deg) scale(0.96);
+  }
+  12%,
+  88% {
+    opacity: 1;
+    transform: translate(-50%, 0) rotate(-3deg) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -16px) rotate(-3deg) scale(0.95);
   }
 }
 
@@ -1742,14 +1907,166 @@ body:not(.ready) .crumb::after {
 }
 
 /* ================================================================ phones and short screens */
+/* the HUD keeps clear of notches and rounded corners, and scales with the screen */
+.hud-tl {
+  top: max(18px, env(safe-area-inset-top));
+  left: max(20px, env(safe-area-inset-left));
+}
+
+.hud-tr {
+  top: max(20px, env(safe-area-inset-top));
+  right: max(22px, env(safe-area-inset-right));
+  max-width: 45vw;
+}
+
+#hud-speed {
+  font-size: clamp(20px, 5.4vmin, 30px);
+}
+
+#hud-state {
+  font-size: clamp(10px, 2.6vmin, 13px);
+}
+
+#hud-wave {
+  font-size: clamp(11px, 2.8vmin, 14px);
+}
+
+#toast {
+  font-size: clamp(12px, 3.4vmin, 16px);
+  max-width: min(720px, 86vw);
+}
+
+#hud-feed {
+  left: max(20px, env(safe-area-inset-left));
+}
+
+#hud-feed li {
+  font-size: clamp(11px, 3vmin, 14px);
+}
+
 /* playing by touch: the HUD's top left moves over for the pause and lineup buttons */
 body[data-device='touch'] .hud-tl {
-  top: 14px;
-  left: calc(max(12px, env(safe-area-inset-left)) + 112px);
+  top: max(10px, env(safe-area-inset-top));
+  left: calc(max(10px, env(safe-area-inset-left)) + 3 * clamp(34px, 10vmin, 52px) + 34px);
+}
+
+/* only on touch screens */
+body:not([data-device='touch']) .touch-only {
+  display: none !important;
+}
+
+/* the settings' bubble level for the phone's tilt */
+.tilt-check {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  align-items: flex-start;
+  margin: 10px 0 14px;
+}
+
+.tilt-side {
+  flex: 1 1 260px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.tilt-side .note {
+  margin: 0;
+}
+
+.tilt-side .wave-row {
+  flex-wrap: wrap;
+  margin: 0;
+}
+
+.tilt-level {
+  position: relative;
+  flex: none;
+  width: 150px;
+  height: 150px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background:
+    linear-gradient(var(--line), var(--line)) center / 1px 100% no-repeat,
+    linear-gradient(var(--line), var(--line)) center / 100% 1px no-repeat,
+    radial-gradient(circle, transparent 0 34%, rgba(255, 255, 255, 0.12) 35% 36%, transparent 37%),
+    rgba(255, 255, 255, 0.03);
+}
+
+.tilt-level i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 18px;
+  height: 18px;
+  margin: -9px 0 0 -9px;
+  border-radius: 50%;
+  background: #ffc94a;
+  box-shadow: 0 0 10px rgba(255, 201, 74, 0.6);
+  transition: transform 0.06s linear;
+}
+
+.tilt-level.off i {
+  background: rgba(255, 255, 255, 0.25);
+  box-shadow: none;
+}
+
+.tilt-level span {
+  position: absolute;
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+.l-l {
+  left: 6px;
+  top: 50%;
+  transform: translateY(-120%);
+}
+
+.l-r {
+  right: 6px;
+  top: 50%;
+  transform: translateY(-120%);
+}
+
+.l-f {
+  top: 4px;
+  left: 50%;
+  transform: translateX(6px);
+}
+
+.l-b {
+  bottom: 4px;
+  left: 50%;
+  transform: translateX(6px);
 }
 
 body[data-device='touch'] .hud-bl {
   display: none;
+}
+
+body[data-device='touch'] #toast {
+  top: 18%;
+  max-width: min(640px, calc(84vw - 216px)); /* (clear of the zone labels at the sides) */
+}
+
+/* phones upright: the wave readout goes under the buttons, and the right zone's label below the messages */
+@media (orientation: portrait) and (max-width: 600px) {
+  body[data-device='touch'] .hud-tr {
+    top: calc(max(10px, env(safe-area-inset-top)) + clamp(34px, 10vmin, 52px) + 26px);
+  }
+
+  body[data-device='touch'] #toast {
+    max-width: 88vw;
+  }
+
+  .g-right {
+    top: 34%;
+  }
 }
 
 @media (max-height: 520px) {
@@ -1806,13 +2123,72 @@ body[data-device='touch'] .hud-bl {
     padding: 12px 14px 14px;
   }
 
-  .t-crouch,
-  .t-charge {
-    width: 64px;
-    height: 64px;
+}
+
+/* very short screens (small phones sideways) */
+@media (max-height: 380px) {
+  .logo {
+    font-size: 20px;
   }
 
-  .t-charge {
-    top: calc(34% + 76px);
+  .rule {
+    margin: 4px 0 6px;
+  }
+
+  .mode-card {
+    height: calc(100vh - 118px);
+  }
+
+  .menu-foot {
+    min-height: 28px;
+    margin-top: 4px;
+  }
+
+  .prompt kbd {
+    min-width: 22px;
+    height: 22px;
+  }
+
+  .panel-body h3 {
+    margin-bottom: 6px;
+  }
+
+  /* the pause screen: buttons in two columns so they all fit */
+  [data-screen='pause'] .panel.narrow {
+    width: min(620px, 100%);
+  }
+
+  [data-screen='pause'] .panel-body.stack {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  [data-screen='pause'] .panel-body.stack > :not(.btn) {
+    grid-column: 1 / -1;
+  }
+
+  [data-screen='pause'] .btn {
+    padding: 9px 16px;
+  }
+}
+
+/* phones upright: menus in one column, cards stacked */
+@media (max-width: 560px) and (orientation: portrait) {
+  .mode-cards {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .mode-card {
+    width: 100%;
+    max-width: none;
+    height: auto;
+    aspect-ratio: 16 / 7;
+  }
+
+  .spot-opts,
+  .lean-set {
+    grid-template-columns: 1fr;
   }
 }

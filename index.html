@@ -2,13 +2,13 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <title>LINEUP</title>
     <meta name="description" content="LINEUP: a first-person WebXR surfing game with breaking barrels and peer-to-peer multiplayer, for PC browsers and Meta Quest." />
     <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M6 44c10-22 34-30 52-22-14-2-26 6-30 18 10-8 22-6 28 2-16-6-34 0-50 2z' fill='%238fd0ee'/%3E%3C/svg%3E" />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=Titan+One&family=Permanent+Marker&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="css/style.css" />
     <script type="importmap">
       {
@@ -37,9 +37,10 @@
         <div id="hud-wave"></div>
         <div id="hud-players"></div>
       </div>
-      <div id="hud-tube">In the barrel</div>
+      <div id="hud-tube"><span data-t="Tubed!">Tubed!</span></div>
       <div id="hud-warn"></div>
       <div id="hud-callout"></div>
+      <div id="hud-ride"></div>
       <div id="toast"></div>
       <ul id="hud-feed"></ul>
       <div class="hud-bl" id="hud-hint">R lineup · Esc menu</div>
@@ -50,6 +51,7 @@
     <div id="touch-ui" hidden>
       <button type="button" class="t-btn t-pause" data-t="pause" aria-label="Pause"><span></span><span></span></button>
       <button type="button" class="t-btn t-lineup" data-t="lineup" aria-label="Back to the lineup">↺</button>
+      <button type="button" class="t-btn t-level" data-t="level" aria-label="Recalibrate tilt: the way you hold it now is level">◎</button>
       <button type="button" class="t-btn t-crouch" data-t="crouch">Crouch</button>
       <button type="button" class="t-btn t-charge" data-t="charge">Snap</button>
       <button type="button" class="t-btn t-up" data-t="up" aria-label="Climb">▲</button>
@@ -289,6 +291,15 @@
                   </tbody>
                 </table>
                 <h3>Tilt</h3>
+                <div class="tilt-check">
+                  <div class="tilt-level" id="tilt-level" aria-hidden="true"><i></i><span class="l-l">left</span><span class="l-r">right</span><span class="l-f">forward</span><span class="l-b">back</span></div>
+                  <div class="tilt-side">
+                    <p class="note" id="tilt-status">Tilt your phone: the dot should follow it (right edge down moves it right, top edge away from you moves it up).</p>
+                    <button type="button" class="btn small" id="tilt-calibrate">Recalibrate tilt</button>
+                    <div class="wave-row"><span class="wave-label">Tilt directions</span><div class="seg" role="radiogroup" aria-label="Tilt directions"><button type="button" role="radio" data-tiltturn="0">As detected</button><button type="button" role="radio" data-tiltturn="90">Turn 90°</button><button type="button" role="radio" data-tiltturn="180">180°</button><button type="button" role="radio" data-tiltturn="270">Turn −90°</button></div></div>
+                    <p class="note">Hold the phone the way you play, then recalibrate: that becomes level, and the game works out which way up the screen is from which edge is higher. If tilting still steers the wrong way (some tablets), turn the directions until the dot follows your tilt.</p>
+                  </div>
+                </div>
                 <p class="note lean-note">How much tilting the phone does. <b>Centre</b> is how much small tilts count, <b>max</b> how quickly a bigger tilt builds to the full amount.</p>
                 <div class="lean-set" id="tilt-curves"></div>
                 <label class="field"><span>Look sensitivity (dragging) <output id="out-touch-look"></output></span><input type="range" id="set-touch-look" min="0.3" max="3" step="0.05" /></label>
@@ -328,6 +339,7 @@
               <p class="room-meta" id="pause-room" hidden></p>
               <button type="button" class="btn primary" data-resume>Resume</button>
               <button type="button" class="btn" data-lineup>Back to the lineup</button>
+              <button type="button" class="btn touch-only" data-level>Recalibrate tilt</button>
               <button type="button" class="btn" data-go="settings">Controls and settings</button>
               <div class="wave-pick"></div>
               <div class="tod-pick pause-tod"></div>

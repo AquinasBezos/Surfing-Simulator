@@ -134,7 +134,9 @@ export function addUnderwaterFog(material) {
 export function addUnderwaterPass(root) {
   const meshes = [];
   root.traverse((o) => {
-    if (o.isMesh && !o.isSkinnedMesh && !o.userData.uw && !o.userData.uwClone) meshes.push(o);
+    // (skinned meshes only when marked uwSkinned, like the first-person arms: the copy shares
+    // their skeleton)
+    if (o.isMesh && (!o.isSkinnedMesh || o.userData.uwSkinned) && !o.userData.uw && !o.userData.uwClone) meshes.push(o);
   });
   for (const mesh of meshes) {
     mesh.userData.uw = true;
@@ -143,7 +145,12 @@ export function addUnderwaterPass(root) {
       mat.userData.uwPatched = true;
       patch(mat, false);
     }
-    const copy = new THREE.Mesh(mesh.geometry, throughWaterMaterial(mat));
+    let copy;
+    if (mesh.isSkinnedMesh) {
+      copy = new THREE.SkinnedMesh(mesh.geometry, throughWaterMaterial(mat));
+      copy.bind(mesh.skeleton, mesh.bindMatrix);
+      copy.frustumCulled = false;
+    } else copy = new THREE.Mesh(mesh.geometry, throughWaterMaterial(mat));
     copy.userData.uwClone = true;
     copy.renderOrder = 2;
     copy.raycast = () => {};

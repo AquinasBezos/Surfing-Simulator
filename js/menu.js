@@ -429,6 +429,7 @@ export class Menu {
       }
       if (e.target.closest('[data-resume]')) return this.h.onResume && this.h.onResume();
       if (e.target.closest('[data-lineup]')) return this.h.onLineup && this.h.onLineup();
+      if (e.target.closest('[data-level]')) return this.h.onLevel && this.h.onLevel(true);
       if (e.target.closest('[data-quit]')) return this.h.onQuit && this.h.onQuit();
       if (e.target.closest('[data-leave]')) return this.h.onLeaveRoom && this.h.onLeaveRoom();
     });
@@ -699,6 +700,15 @@ export class Menu {
     extra('set-pad-look', 'pad', 'lookSpeed', (el) => +el.value);
     extra('set-pad-invert', 'pad', 'invertY', (el) => el.checked);
     extra('set-touch-look', 'tilt', 'look', (el) => +el.value);
+    // the tilt's direction correction, recalibrating, and the live level
+    for (const b of this.root.querySelectorAll('[data-tiltturn]'))
+      b.addEventListener('click', () => {
+        const v = cleanTilt(this.settings.tilt);
+        v.turn = +b.dataset.tiltturn;
+        this.setCurves('tilt', v, true);
+      });
+    document.getElementById('tilt-calibrate').addEventListener('click', () => this.h.onLevel && this.h.onLevel());
+    this.watchTilt();
     for (const g of Object.keys(CURVE_SETS)) this.setCurves(g, this.settings[g]);
   }
 
@@ -720,12 +730,49 @@ export class Menu {
     } else if (group === 'tilt') {
       document.getElementById('set-touch-look').value = v.look;
       document.getElementById('out-touch-look').textContent = `${v.look.toFixed(2)}×`;
+      for (const b of this.root.querySelectorAll('[data-tiltturn]')) {
+        const on = +b.dataset.tiltturn === v.turn;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', String(on));
+      }
     }
     this.drawCurves();
     if (fromUser) {
       save('lineup.settings', this.settings);
       if (this.h.onSettings) this.h.onSettings(this.settings);
     }
+  }
+
+  // While the Touch tab is showing, the bubble level follows the phone's tilt (and so do
+  // dots on the tilt graphs).
+  watchTilt() {
+    const level = document.getElementById('tilt-level');
+    const dot = level.querySelector('i');
+    const status = document.getElementById('tilt-status');
+    let last = '';
+    const tick = () => {
+      requestAnimationFrame(tick);
+      const body = this.screens.settings.querySelector('[data-stab-body="touch"]');
+      if (!this.isOpen || this.current !== 'settings' || body.hidden) return;
+      const t = this.h.getTilt ? this.h.getTilt() : null;
+      level.classList.toggle('off', !t);
+      const key = t ? `${t.x.toFixed(3)},${t.z.toFixed(3)}` : 'none';
+      if (key === last) return;
+      last = key;
+      if (!t) {
+        status.textContent = 'No tilt yet: tap Recalibrate tilt (your phone may ask to use its motion sensors), then tilt it.';
+        dot.style.transform = '';
+        return;
+      }
+      status.textContent = 'Tilt your phone: the dot should follow it (right edge down moves it right, top edge away from you moves it up).';
+      const R = 60; // px for a full tilt
+      const cx = Math.max(-1.15, Math.min(1.15, t.x)) * R,
+        cz = Math.max(-1.15, Math.min(1.15, t.z)) * R;
+      dot.style.transform = `translate(${cx}px, ${-cz}px)`;
+      this.tiltMarker = t;
+      this.drawCurves();
+    };
+    requestAnimationFrame(tick);
   }
 
   setLean(lean, fromUser = false) {
@@ -746,7 +793,8 @@ export class Menu {
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
       g.clearRect(0, 0, w, h);
       const axis = CURVE_SETS[group].axes[k];
-      drawLeanGraph(g, 0, 0, w, h, axis, this.settings[group][k], { font, out: axis === 'pad.look' ? this.settings.pad.lookSpeed : null });
+      const marker = group === 'tilt' && this.tiltMarker ? this.tiltMarker[k] : null;
+      drawLeanGraph(g, 0, 0, w, h, axis, this.settings[group][k], { font, out: axis === 'pad.look' ? this.settings.pad.lookSpeed : null, marker });
     }
   }
 

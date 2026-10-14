@@ -17,7 +17,9 @@ export const HEAD_HEIGHT = 1.45; // m: your head above your feet in a surfing st
 export const LEAN_DEFAULTS = { x: { centre: 0.55, max: 1.3 }, z: { centre: 0.55, max: 1.3 } };
 // controller sticks and phone tilt: full output at a full push / FULL_TILT ((centre + max) / 2 = 1)
 export const PAD_DEFAULTS = { x: { centre: 0.6, max: 1.4 }, z: { centre: 0.6, max: 1.4 }, look: { centre: 0.45, max: 1.55 }, lookSpeed: 200, invertY: false };
-export const TILT_DEFAULTS = { x: { centre: 0.6, max: 1.4 }, z: { centre: 0.6, max: 1.4 }, look: 1 };
+// (turn: a correction to the tilt directions, in quarter turns of degrees, if they come out
+// wrong on some device)
+export const TILT_DEFAULTS = { x: { centre: 0.6, max: 1.4 }, z: { centre: 0.6, max: 1.4 }, look: 1, turn: 0 };
 export const LEAN_LIMITS = { centre: [0.2, 1.5], max: [0.5, 2.5] };
 // For the graphs: what the input is (its range and how it maps to a fraction of a full
 // input) and what a full response does (board roll 0.42 rad, pitch 0.06 rad, or the view
@@ -53,7 +55,9 @@ export function cleanPad(p) {
 
 export function cleanTilt(t) {
   const D = TILT_DEFAULTS;
-  return { x: cleanCurve(t && t.x, D.x), z: cleanCurve(t && t.z, D.z), look: Math.round(clamp(Number(t && t.look) || D.look, 0.3, 3) * 100) / 100 };
+  const tn = Number(t && t.turn);
+  const turn = [0, 90, 180, 270].includes(tn) ? tn : 0;
+  return { x: cleanCurve(t && t.x, D.x), z: cleanCurve(t && t.z, D.z), look: Math.round(clamp(Number(t && t.look) || D.look, 0.3, 3) * 100) / 100, turn };
 }
 
 // lean (fraction of a full lean, either sign) -> response, -1..1

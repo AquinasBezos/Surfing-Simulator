@@ -70,20 +70,22 @@ export class PCInput {
     });
   }
 
-  // Fullscreen + pointer lock + keyboard lock (must be called from a click).
-  capture(fullscreen = true) {
+  // Fullscreen + pointer lock + keyboard lock (must be called from a click). lockPointer:
+  // false when playing by touch (the mouse pointer has no part to play, and a locked one would
+  // take the taps meant for the on-screen buttons on a tablet with a trackpad).
+  capture(fullscreen = true, lockPointer = true) {
     const el = document.documentElement;
     const lockKeys = () => {
       if (navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(lockCodes()).catch(() => {});
     };
     if (!fullscreen) {
-      this.requestLock();
+      if (lockPointer) this.requestLock();
       return;
     }
     if (el.requestFullscreen && !document.fullscreenElement) {
       el.requestFullscreen({ navigationUI: 'hide' }).then(lockKeys, () => {});
     } else lockKeys();
-    this.requestLock();
+    if (lockPointer) this.requestLock();
   }
 
   requestLock() {

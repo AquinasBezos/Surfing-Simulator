@@ -24,10 +24,10 @@ uniform vec3 uColor;
 varying float vLife;
 varying float vDist;
 void main() {
-  float a = texture2D(uTex, gl_PointCoord).r;
+  float a = texture2D(uTex, gl_PointCoord).a; // (its colour is white right to the rim)
   // fade out right in front of the lens so nearby droplets don't turn into big discs
-  float fade = smoothstep(0.0, 0.15, vLife) * smoothstep(1.0, 0.55, vLife) * smoothstep(0.6, 2.6, vDist);
-  gl_FragColor = vec4(uColor, a * fade * 0.38);
+  float fade = smoothstep(0.0, 0.15, vLife) * smoothstep(1.0, 0.55, vLife) * smoothstep(0.4, 1.8, vDist);
+  gl_FragColor = vec4(uColor, a * fade * 0.8);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`;

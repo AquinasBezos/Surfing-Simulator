@@ -146,7 +146,13 @@ const eyeSit = new THREE.Vector3(...EYE.sitting);
 const spray = new Spray(model, quality.particles);
 scene.add(spray.points);
 const remote = new RemotePlayers(scene, model);
-loadSurferModel().catch(() => {}); // fetch the character early (other players, the menu preview)
+// fetch the character early (other players, the menu preview, and your own first-person arms)
+loadSurferModel()
+  .then((g) => {
+    scene.add(arms.setModel(g).group);
+    addUnderwaterPass(arms.rig.mesh); // (seen through the water as they paddle)
+  })
+  .catch(() => {});
 
 // spectator camera drone (multiplayer): the flight model, and the body you see if you look up
 const drone = new Drone();
@@ -234,6 +240,16 @@ const menu = new Menu({
   },
   onQuit: () => quitToMenu(),
   onCapturePad: (fn) => (gamepad.capture = fn), // (binding a controller button)
+  // recalibrate the phone's tilt (from the settings, or the pause screen: then carry on)
+  onLevel: (andResume) => {
+    TouchInput.askForTilt();
+    touch.calibrate();
+    if (andResume) {
+      resume();
+      hud.toast('Tilt recalibrated: the way you hold it now is level', 2.5);
+    }
+  },
+  getTilt: () => touch.tiltNow,
 });
 let settings = menu.settings;
 function applySettings(s) {
@@ -241,7 +257,10 @@ function applySettings(s) {
   audio.setVolume(s.volume);
   xr.lean = cleanLean(s.lean);
   gamepad.settings = cleanPad(s.pad);
-  touch.settings = cleanTilt(s.tilt);
+  const tilt = cleanTilt(s.tilt);
+  const turned = tilt.turn !== touch.settings.turn;
+  touch.settings = tilt;
+  if (turned) touch.calibrate(); // (the tilt directions were turned by hand: apply it now)
   applyTimeOfDay(inRoom() ? net.time : s.time); // a room's time of day is the same for everyone
 }
 const inRoom = () => !!(net && net.room);
@@ -494,8 +513,9 @@ function startToast(flying) {
     TouchInput.askForTilt();
     touch.ui.classList.add('guide'); // the zones, for a few seconds
     setTimeout(() => touch.ui.classList.remove('guide'), 6000);
-    if (flying) hud.toast('Drag on the left to fly, on the right to turn · ▲ ▼ climb and descend', 6);
-    else hud.toast('Swipe down beside the board to paddle · tilt your phone to steer · swipe up on the board to stand', 7);
+    const tip = window.innerHeight > window.innerWidth ? '<br>Tip: turn the screen sideways to see more of the wave' : '';
+    if (flying) hud.toast(`Drag on the left to fly, on the right to turn · ▲ ▼ climb and descend${tip}`, 6);
+    else hud.toast(`Swipe down beside the board to paddle · tilt to steer · swipe up on the board to stand${tip}`, 7);
   } else if (device === 'pad') {
     const b = (id) => controls.padText(id);
     if (flying && settings.droneVR === 'fpv') hud.toast('FPV, acro mode. Left stick: throttle (the middle hovers) and yaw · right stick: pitch and roll', 7);
@@ -518,7 +538,7 @@ function resume() {
   touch.calibrate(); // the way the phone is held now is level
   if (device === 'touch') TouchInput.askForTilt();
   // (a controller can't grab the mouse or go fullscreen: that needs a click or a key)
-  if (device !== 'pad') pc.capture(settings.fullscreen);
+  if (device !== 'pad') pc.capture(settings.fullscreen, device !== 'touch');
 }
 
 function pause() {
@@ -558,7 +578,7 @@ window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !e.defaultPrevented && !pc.locked && game.started && !game.paused && !renderer.xr.isPresenting) pause();
 });
 renderer.domElement.addEventListener('mousedown', () => {
-  if (game.started && !game.paused && !pc.locked && !renderer.xr.isPresenting) pc.requestLock();
+  if (game.started && !game.paused && !pc.locked && !renderer.xr.isPresenting && device !== 'touch') pc.requestLock();
 });
 document.addEventListener('fullscreenchange', () => {
   if (!document.fullscreenElement) pause();
@@ -632,12 +652,12 @@ surfer.onEvent = (type, data) => {
   } else if (type === 'state' && data.to === STATE.STANDING) {
     xr.stateWas = null;
   } else if (type === 'maneuver') {
-    hud.callout(TRICK_NAMES[data.kind]);
+    hud.callout(TRICK_NAMES[data.kind], '+40');
     audio.whoosh(data.kind === 'cutback' ? 0.8 : 1);
     if (game.ride) game.ride.tricks.push(data.kind);
     sendEvent({ k: 'trick', kind: data.kind, dir: data.dir });
   } else if (type === 'air') {
-    hud.callout(`Air ${data.time.toFixed(1)} s`);
+    hud.callout('Air!', `${data.time.toFixed(1)} s · +40`);
     if (game.ride) game.ride.tricks.push('air');
     sendEvent({ k: 'air', t: Math.round(data.time * 10) / 10 });
   } else if (type === 'takeoff') {
@@ -666,10 +686,52 @@ function endRide(reason) {
   for (const t of r.tricks) counts[t] = (counts[t] || 0) + 1;
   for (const [k, n] of Object.entries(counts)) parts.push(`${n} ${k === 'air' ? 'air' : k}${n > 1 ? 's' : ''}`);
   const score = Math.round(r.time * 10 + r.top * 6 + r.tube * 60 + r.nose * 25 + r.tricks.length * 40);
-  if (!game.best || score > game.best) game.best = score;
-  const title = { wipeout: 'Ride ended', kickout: 'Nice kick-out!', closeout: 'The wave closed out' }[reason] || 'Ride over';
-  setTimeout(() => hud.toast(`<b>${title}</b> · ${parts.join(' · ')} · score ${score}`, 5), reason === 'wipeout' ? 3000 : 0);
+  const best = !game.best || score > game.best;
+  if (best) game.best = score;
+  const title = { wipeout: 'Ride over', kickout: 'Nice kick-out!', closeout: 'Closed out' }[reason] || 'Ride over';
+  setTimeout(() => hud.rideCard(title, score, parts, best && score > 120), reason === 'wipeout' ? 3000 : 0);
   sendEvent({ k: 'ride', time: Math.round(r.time * 10) / 10, tube: Math.round(r.tube * 10) / 10, score });
+}
+
+// Dropping in: the nose knifes down the face and throws white water off both sides of it,
+// more the faster and steeper you go (and when you're caught and sliding down lying down).
+function noseSpray(dt) {
+  const s = surfer.s;
+  const st = surfer.state;
+  const up = st === STATE.STANDING || st === STATE.POPUP;
+  if (surfer.air || !s.wave || !(up || surfer.catching) || s.un < -0.2 || s.un > 1.8) return;
+  const down = Math.max(0, -surfer.vy); // m/s down the face
+  const steep = Math.max(surfer.effPitch, Math.atan(down / Math.max(1, surfer.speed)));
+  const power = smoothstep(3.5, 9, surfer.speed) * smoothstep(0.1, 0.45, steep) * (up ? 1 : 0.6);
+  if (power <= 0.01) return;
+  const [fx, fz] = surfer.forward;
+  const L = surfer.board.length;
+  const nx = surfer.x + fx * L * 0.42,
+    nz = surfer.z + fz * L * 0.42,
+    ny = model.heightAt(nx, nz) + 0.05;
+  const R = Math.random;
+  let n = 900 * (spray.max / 1600) * power * dt + R();
+  while (n-- >= 1) {
+    const side = R() < 0.5 ? -1 : 1;
+    const out = 0.6 + R() * 1.8 * power; // out to the side
+    // thrown on ahead with the board (down the face too: the sheets of white water carry on a
+    // moment before the board runs through them), so you see it from where you stand
+    const clump = R() < 0.35; // soft clumps of white water among the droplets
+    const k = 1 + R() * 0.3,
+      fwd = R() * 1.5;
+    const along = (R() - 0.3) * L * 0.25;
+    spray.emit(
+      nx - fx * along + (R() - 0.5) * 0.1,
+      ny,
+      nz - fz * along + (R() - 0.5) * 0.1,
+      surfer.vx * k + fx * fwd - fz * side * out,
+      surfer.vy * k + 1.2 + R() * 2 * power,
+      surfer.vz * k + fz * fwd + fx * side * out,
+      0.45 + R() * 0.5,
+      clump ? 0.07 + R() * 0.09 : 0.02 + R() * R() * 0.035,
+      clump ? 0.7 : 1.3,
+    );
+  }
 }
 
 function updateGame(dt) {
@@ -692,12 +754,12 @@ function updateGame(dt) {
     game.noseT += dt;
     if (game.ride) game.ride.nose += dt;
     if (game.noseT > 0.3 && game.noseCalled < 1) {
-      hud.callout('Hang five');
+      hud.callout('Hang five', 'nose ride');
       sendEvent({ k: 'hang', n: 5 });
       game.noseCalled = 1;
     }
     if (surfer.footPos > 1.06 && game.noseT > 0.6 && game.noseCalled < 2) {
-      hud.callout('Hang ten');
+      hud.callout('Hang ten!', 'toes over the nose');
       sendEvent({ k: 'hang', n: 10 });
       game.noseCalled = 2;
     }
@@ -951,6 +1013,8 @@ const _qPart = new THREE.Quaternion();
 const _v = new THREE.Vector3();
 const _e = new THREE.Euler();
 const Yaxis = new THREE.Vector3(0, 1, 0);
+const _Z = new THREE.Vector3(0, 0, 1);
+const _v2 = new THREE.Vector3();
 const focus = new THREE.Vector3();
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 
@@ -1049,7 +1113,7 @@ function updateCameraPC(dt) {
   rig.quaternion.copy(_qYaw);
 
   // board orientation relative to the (smoothed) heading frame
-  _q.copy(_qYaw).invert().multiply(surfer.quat);
+  _q.copy(_qYaw).invert().multiply(surfer.quatBase); // (the turtle roll is added below)
   _e.setFromQuaternion(_q, 'YXZ');
   const b = smoothstep(0, 1, game.standBlend);
   const sb = smoothstep(0, 1, game.sitBlend);
@@ -1065,6 +1129,12 @@ function updateCameraPC(dt) {
   // (sitting, you stay upright as the board's nose lifts)
   let pitch = game.look.pitch + _e.x * mix(mix(0.5, 0.22, b), 0.1, sb) + mix(mix(-0.05, -0.2 - 0.12 * surfer.crouch, b), -0.22, sb);
   let roll = _e.z * mix(0.3, 0.2, b);
+  // turtle roll (longboard): you go over with the board, and hang underneath it upside down
+  const turtle = surfer.turtleAngle;
+  if (turtle > 0) {
+    camera.position.applyAxisAngle(_Z, turtle); // (about the board's length: the rig sits on it)
+    roll += turtle;
+  }
   let yaw = game.look.yaw;
   if (surfer.state === STATE.WIPEOUT) {
     const t = surfer.stateTime;
@@ -1081,7 +1151,16 @@ function updateCameraXR(dt) {
   const rigYaw = game.camYaw - xr.yaw0;
   rig.rotation.set(0, rigYaw, 0);
   _qYaw.setFromAxisAngle(Yaxis, surfer.yaw);
-  const eyeW = _v.copy(eyeProne).applyQuaternion(_qYaw).add(surfer.position);
+  const turtle = surfer.turtleAngle;
+  const eyeW = _v.copy(eyeProne).applyAxisAngle(_Z, turtle).applyQuaternion(_qYaw).add(surfer.position);
+  if (turtle > 0) {
+    // turtle roll: the whole world turns over around your head, about the way you're facing
+    // (so you end up under the board, upside down, wherever you're looking)
+    const fwd = _v2.set(-Math.sin(xr.yaw0), 0, -Math.cos(xr.yaw0));
+    rig.quaternion.setFromAxisAngle(Yaxis, rigYaw).multiply(_qh.setFromAxisAngle(fwd, -turtle));
+    rig.position.copy(eyeW).sub(_v2.copy(xr.h0).applyQuaternion(rig.quaternion));
+    return;
+  }
   const rise = Math.max(0, xr.head.y - xr.h0.y);
   const target = surfer.state === STATE.STANDING ? clamp(1.3 - (EYE.prone[1] + rise), 0, 0.45) : surfer.state === STATE.SITTING ? clamp(EYE.sitting[1] - (EYE.prone[1] + rise), 0, 0.35) : 0;
   game.vrStandOffset += (target - game.vrStandOffset) * (1 - Math.exp(-dt * 2));
@@ -1091,15 +1170,37 @@ function updateCameraXR(dt) {
   if (surfer.state === STATE.WIPEOUT) rig.position.y -= Math.min(1.2, surfer.stateTime * 1.4);
 }
 
+// Fit the screen, whatever its size and shape: phones in either orientation (the visible
+// area, which changes as the browser's bars come and go), tablets, ultrawide monitors. On a
+// tall screen the view widens so you still see along the wave (the field of view is set for
+// the narrower direction).
+function screenSize() {
+  const vv = window.visualViewport;
+  const w = Math.round(vv && isTouchDevice ? vv.width : window.innerWidth);
+  const h = Math.round(vv && isTouchDevice ? vv.height : window.innerHeight);
+  return [Math.max(1, w), Math.max(1, h)];
+}
 function onResize() {
   if (renderer.xr.isPresenting) return; // the headset sets the size; sessionend calls this again
-  camera.aspect = window.innerWidth / window.innerHeight;
+  const [w, h] = screenSize();
+  camera.aspect = w / h;
+  // at least about 80 degrees across, at most 100 up and down (portrait phones)
+  const across = (Math.atan(Math.tan((72 * Math.PI) / 360) * camera.aspect) * 360) / Math.PI;
+  camera.fov = across < 80 ? Math.min(100, (Math.atan(Math.tan((80 * Math.PI) / 360) / camera.aspect) * 360) / Math.PI) : 72;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(w, h);
+  document.documentElement.style.setProperty('--vh', `${h / 100}px`);
   spray.setViewportHeight(renderer.domElement.height);
   underwater.setViewportHeight(renderer.domElement.height);
 }
 window.addEventListener('resize', onResize);
+if (window.visualViewport) window.visualViewport.addEventListener('resize', onResize);
+window.addEventListener('orientationchange', () => setTimeout(onResize, 300));
+document.addEventListener('fullscreenchange', () => {
+  setTimeout(onResize, 200);
+  // phones: sideways while playing fullscreen, where the phone lets us
+  if (document.fullscreenElement && isTouchDevice && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {});
+});
 onResize();
 
 arms.onStroke = (side, effort) => audio.splash(0.5 + 0.5 * effort);
@@ -1441,7 +1542,10 @@ function frame(time, xrFrame) {
         else surfer.layDown(); // (from sitting too)
       } else if (e === 'reset') respawn(true);
       else if (e === 'pause') pause();
-      else if (e === 'back' && surfer.state === STATE.PRONE) surfer.sit();
+      else if (e === 'level') {
+        touch.calibrate();
+        hud.toast('Tilt recalibrated: the way you hold it now is level', 2.5);
+      } else if (e === 'back' && surfer.state === STATE.PRONE) surfer.sit();
       else if (e === 'forward' && surfer.state === STATE.SITTING) surfer.layDown();
     }
     // starting to paddle lies you back down
@@ -1463,13 +1567,15 @@ function frame(time, xrFrame) {
     // (strokes one arm at a time: their effort, and a harder right stroke turns you left)
     if (!inXR) inp = { ...inp, pulse, turn: arms.turn, paddle: Math.max(inp.paddle, arms.manual ? arms.manualEffort : 0) };
     surfer.update(dt, inp);
+    noseSpray(dt);
     updateGame(dt);
   } else arms.update(0, false);
 
   if (flying) {
     // your own drone: in view above you on PC; in a headset it would sit right by your eyes
     droneBody.visible = !inXR;
-    for (const h of xr.hands) if (h.model) h.model.visible = false; // no wetsuit hands on a drone
+    for (const h of xr.hands) if (h.model) h.model.visible = false; // no arms on a drone
+    arms.group.visible = false;
     droneBody.position.copy(drone.pos);
     droneBody.quaternion.copy(drone.quat);
     animateDrone(droneBody, dt, drone.throttle, drone.camPitch, drone.quat, drone.yaw);
@@ -1484,6 +1590,9 @@ function frame(time, xrFrame) {
   }
 
   rig.updateMatrixWorld(true);
+  // your arms: paddling on PC and mobile, reaching for the controllers in VR
+  if (inXR) arms.poseVR(xr.hands, xr.head, xr.headQuat, rig, surfer.state === STATE.PRONE, !flying);
+  else arms.pose();
   // the head. (In VR three.js keeps `camera` on the head pose inside the rig; the XR camera's
   // own world position is only rig-relative here, between renders.)
   camera.getWorldPosition(focus);
@@ -1579,7 +1688,7 @@ function frame(time, xrFrame) {
 
   // ---- HUD
   let stateLabel = { prone: 'Paddling', popup: 'Popping up', standing: 'Surfing', wipeout: 'Wipeout!', sitting: 'Sitting up' }[surfer.state];
-  if (surfer.diving) stateLabel = 'Duck diving';
+  if (surfer.diving) stateLabel = surfer.turtle > 0 || surfer.board.walk ? 'Turtle roll' : 'Duck diving';
   else if (surfer.air) stateLabel = 'Airborne';
   else if (surfer.state === STATE.STANDING && surfer.crouch > 0.5) stateLabel = 'Surfing · crouched';
   else if (surfer.state === STATE.STANDING && surfer.onWhitewater) stateLabel = 'Surfing the whitewater';
@@ -1700,6 +1809,7 @@ window.__surf = {
   },
   gamepad,
   touch,
+  hud,
   get device() {
     return device;
   },
