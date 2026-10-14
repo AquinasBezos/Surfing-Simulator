@@ -161,26 +161,62 @@ export class Arms {
     this.next = this.left;
     this.onStroke = null;
     this.effort = 0;
+    // strokes asked for one arm at a time (a controller's triggers, swipes on a phone)
+    this.manualEffort = 0; // 0..1, from how often and how hard
+    this.manualAt = -1e9; // time of the last one
+    this.time = 0;
+    this.turn = 0; // rad/s, + = left: a right-arm stroke turns you left
+    this.left.power = this.right.power = 1;
+  }
+
+  // One stroke with one arm (side -1 left, +1 right), strength 0..1 (how hard the pull or
+  // swipe was). Ignored while that arm is still pulling. Returns whether it started.
+  stroke(side, strength = 1) {
+    const a = side < 0 ? this.left : this.right;
+    if (a.phase >= 0 && a.phase < 0.6) return false;
+    a.phase = 0;
+    a.power = 0.55 + 0.6 * strength;
+    this.manualAt = this.time;
+    // effort builds with each stroke and fades between them: about three good strokes a
+    // second is flat out
+    this.manualEffort = Math.min(1, this.manualEffort + 0.22 + 0.2 * strength);
+    if (this.onStroke) this.onStroke(side, strength);
+    return true;
+  }
+
+  // paddling one stroke at a time just now (rather than paced by an effort level)
+  get manual() {
+    return this.time - this.manualAt < 1.6;
   }
 
   // effort: 0..1 paddling intensity (sets the stroke cadence). dive: duck-dive grip.
   // Returns the stroke pulse: power of the pulling arms, averaging ~1 while paddling
-  // continuously, whatever the cadence.
+  // continuously, whatever the cadence. Strokes asked for with stroke() take over from the
+  // automatic ones for a while.
   update(dt, active, effort = 0, dive = false) {
-    this.effort = active ? effort : 0;
+    this.time += dt;
+    this.manualEffort *= Math.exp(-dt / 1.3);
+    const manual = this.manual;
+    this.effort = active ? (manual ? Math.max(effort, this.manualEffort) : effort) : 0;
     const strokeTime = mix(1.15, 0.52, this.effort);
     let pulse = 0;
+    let turn = 0;
     for (const a of [this.left, this.right]) {
       if (a.phase >= 0) {
         a.phase += dt / strokeTime;
-        if (a.phase < 0.55) pulse += Math.sin((Math.PI * a.phase) / 0.55) / 0.7;
+        if (a.phase < 0.55) {
+          const p = (Math.sin((Math.PI * a.phase) / 0.55) / 0.7) * (manual ? a.power : 1);
+          pulse += p;
+          turn += a.side * p;
+        }
         if (a.phase >= 1) a.phase = -1;
       }
       const target = a.phase >= 0 ? 1 : 0;
       a.blend += (target - a.blend) * Math.min(1, dt * 9);
       a.dive += ((dive ? 1 : 0) - a.dive) * Math.min(1, dt * 10);
     }
-    if (active && !dive && this.effort > 0.04) {
+    this.turn = manual && active && !dive ? turn * 0.28 : 0;
+    if (active && !dive && this.effort > 0.04 && !manual) {
       // alternate arms: the next stroke starts as the other arm passes mid-stroke
       const other = this.next === this.left ? this.right : this.left;
       if (this.next.phase < 0 && (other.phase < 0 || other.phase > 0.5)) {

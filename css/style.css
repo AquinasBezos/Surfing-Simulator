@@ -35,6 +35,195 @@ body {
 
 #app canvas {
   display: block;
+  touch-action: none; /* swipes are the game's, not the page's */
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+/* ================================================================ touch controls */
+#touch-ui {
+  position: fixed;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.t-btn {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  background: rgba(10, 20, 28, 0.38);
+  color: #fff;
+  font: 600 14px var(--font);
+  letter-spacing: 0.04em;
+  -webkit-tap-highlight-color: transparent;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+
+.t-btn.on {
+  background: rgba(143, 208, 238, 0.75);
+  border-color: var(--sky);
+  color: #072230;
+}
+
+.t-pause {
+  top: max(12px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  gap: 5px;
+}
+
+.t-pause span {
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: #fff;
+}
+
+.t-lineup {
+  top: max(12px, env(safe-area-inset-top));
+  left: calc(max(12px, env(safe-area-inset-left)) + 54px);
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  font-size: 20px;
+}
+
+/* standing: crouch (toggle) and snap (hold) on the left */
+.t-crouch,
+.t-charge {
+  left: max(16px, env(safe-area-inset-left));
+  width: 76px;
+  height: 76px;
+  border-radius: 50%;
+  display: none;
+}
+
+.t-crouch {
+  top: 34%;
+}
+
+.t-charge {
+  top: calc(34% + 92px);
+}
+
+#touch-ui[data-mode='standing'] .t-crouch,
+#touch-ui[data-mode='standing'] .t-charge {
+  display: flex;
+}
+
+/* drone: climb and descend, on the right */
+.t-up,
+.t-down {
+  right: max(16px, env(safe-area-inset-right));
+  width: 60px;
+  height: 60px;
+  border-radius: 50%;
+  font-size: 18px;
+  display: none;
+}
+
+.t-up {
+  top: 26%;
+}
+
+.t-down {
+  top: calc(26% + 72px);
+}
+
+#touch-ui[data-mode='drone'] .t-up,
+#touch-ui[data-mode='drone'] .t-down {
+  display: flex;
+}
+
+#touch-ui[data-mode='drone'] .t-lineup {
+  display: none;
+}
+
+/* a guide to the touch zones, shown for the first few seconds */
+.t-guide {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.6s;
+  color: rgba(255, 255, 255, 0.9);
+  font: 600 13px/1.4 var(--font);
+  text-align: center;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+#touch-ui.guide .t-guide {
+  opacity: 1;
+}
+
+.t-guide span {
+  position: absolute;
+  padding: 8px 10px;
+  border: 1.5px dashed rgba(255, 255, 255, 0.5);
+  border-radius: 12px;
+  background: rgba(10, 20, 28, 0.25);
+}
+
+.g-left {
+  left: 8%;
+  top: 40%;
+}
+
+.g-board {
+  left: 50%;
+  top: 40%;
+  transform: translateX(-50%);
+}
+
+.g-right {
+  right: 8%;
+  top: 18%;
+}
+
+.g-look {
+  right: 8%;
+  bottom: 14%;
+}
+
+#touch-ui:not([data-mode='prone']) .g-left,
+#touch-ui:not([data-mode='prone']) .g-right,
+#touch-ui[data-mode='drone'] .t-guide {
+  display: none;
+}
+
+/* phones held upright: ask for sideways */
+#rotate-hint {
+  display: none;
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  body.playing #rotate-hint {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    background: rgba(10, 16, 20, 0.92);
+    color: var(--ink);
+    font: 600 18px var(--font);
+  }
+
+  body.playing #rotate-hint span {
+    font-size: 54px;
+    color: var(--sky);
+  }
 }
 
 button {
@@ -1268,13 +1457,6 @@ button.keycap:focus-visible {
 }
 
 @media (max-width: 860px) {
-  .mode-cards {
-    grid-template-columns: 1fr;
-    max-width: 420px;
-  }
-  .mode-shot {
-    aspect-ratio: 16 / 9;
-  }
   .mp-grid {
     grid-template-columns: 1fr;
   }
@@ -1557,4 +1739,80 @@ body:not(.ready) .crumb::after {
   right: 20px;
   font: 12px/1.3 ui-monospace, Consolas, monospace;
   color: #e8fffd;
+}
+
+/* ================================================================ phones and short screens */
+/* playing by touch: the HUD's top left moves over for the pause and lineup buttons */
+body[data-device='touch'] .hud-tl {
+  top: 14px;
+  left: calc(max(12px, env(safe-area-inset-left)) + 112px);
+}
+
+body[data-device='touch'] .hud-bl {
+  display: none;
+}
+
+@media (max-height: 520px) {
+  .menu-inner {
+    padding: 10px max(14px, env(safe-area-inset-right)) 8px max(14px, env(safe-area-inset-left));
+  }
+
+  .brand {
+    min-height: 30px;
+  }
+
+  .logo {
+    font-size: 24px;
+  }
+
+  .crumb {
+    font-size: 12px;
+  }
+
+  .rule {
+    margin: 6px 0 10px;
+  }
+
+  /* the cards: a row of short landscape tiles, each image filling its card */
+  .mode-cards {
+    flex-wrap: nowrap;
+    gap: 10px;
+  }
+
+  .mode-card {
+    height: calc(100vh - 150px);
+    max-height: 230px;
+    aspect-ratio: auto;
+    flex: 1 1 0;
+    max-width: 260px;
+  }
+
+  .mode-head {
+    height: 34px;
+    font-size: 12px;
+  }
+
+  .menu-foot {
+    margin-top: 8px;
+    padding-top: 6px;
+    min-height: 34px;
+  }
+
+  .panel-head {
+    min-height: 40px;
+  }
+
+  .panel-body {
+    padding: 12px 14px 14px;
+  }
+
+  .t-crouch,
+  .t-charge {
+    width: 64px;
+    height: 64px;
+  }
+
+  .t-charge {
+    top: calc(34% + 76px);
+  }
 }

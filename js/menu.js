@@ -1,11 +1,11 @@
 // LINEUP menus: main mode cards, singleplayer / multiplayer / settings sub-screens, the
 // multiplayer room browser and lobby, and the in-game pause screen. Pure DOM; the game
 // is driven through the handler callbacks passed to the constructor.
-import { controls, PC_ACTIONS, QUEST_ACTIONS, QUEST_OPTIONS, RESERVED_KEYS, keyLabel, questLabel } from './bindings.js';
+import { controls, PC_ACTIONS, QUEST_ACTIONS, QUEST_OPTIONS, PAD_ACTIONS, RESERVED_KEYS, keyLabel, questLabel, padLabel } from './bindings.js';
 import { SPOTS, SPOT_IDS, cleanSpot } from './spots.js';
 import { SKIN_TONES, HAIR_COLORS, BOARD_COLORS, cleanLook, randomLook } from './character.js';
 import { CharacterPreview } from './preview.js';
-import { cleanLean, drawLeanGraph, AXES, LEAN_LIMITS, LEAN_DEFAULTS } from './lean.js';
+import { cleanLean, cleanPad, cleanTilt, drawLeanGraph, AXES, LEAN_LIMITS, LEAN_DEFAULTS, PAD_DEFAULTS, TILT_DEFAULTS } from './lean.js';
 
 const BOARD_SVG = {
   shortboard:
@@ -19,7 +19,22 @@ const BOARD_INFO = {
 };
 const CRUMBS = { main: '', single: 'Singleplayer', multi: 'Multiplayer', lobby: 'Multiplayer', settings: 'Controls and settings', pause: '' };
 
-const DEFAULT_SETTINGS = { quality: 'auto', volume: 0.8, sensitivity: 1, invertY: false, fullscreen: true, time: 'day', lean: LEAN_DEFAULTS, droneVR: 'camera' };
+const DEFAULT_SETTINGS = { quality: 'auto', volume: 0.8, sensitivity: 1, invertY: false, fullscreen: true, time: 'day', lean: LEAN_DEFAULTS, pad: PAD_DEFAULTS, tilt: TILT_DEFAULTS, droneVR: 'camera' };
+
+// Sensitivity curves: VR leaning, controller sticks, phone tilt. Each: where its editors go,
+// its axes (setting key -> graph axis, lean.js), and its reset button.
+const CURVE_SETS = {
+  lean: { el: 'lean-set', axes: { x: 'x', z: 'z' }, clean: cleanLean, defaults: LEAN_DEFAULTS, reset: 'lean-reset' },
+  pad: { el: 'pad-curves', axes: { x: 'pad.x', z: 'pad.z', look: 'pad.look' }, clean: cleanPad, defaults: PAD_DEFAULTS, reset: 'pad-curves-reset' },
+  tilt: { el: 'tilt-curves', axes: { x: 'tilt.x', z: 'tilt.z' }, clean: cleanTilt, defaults: TILT_DEFAULTS, reset: 'tilt-reset' },
+};
+
+// the keys on the prompts along the bottom, for what you're playing with
+const PROMPT_KEYS = {
+  kbm: { choose: '\u2190 \u2192', select: 'Enter', back: 'Esc' },
+  pad: { choose: 'D-pad', select: 'A', back: 'B' },
+  touch: { choose: '', select: '', back: '' },
+};
 
 function load(key, fallback) {
   try {
@@ -130,6 +145,10 @@ export class Menu {
     this.board = 'shortboard';
     this.settings = { ...DEFAULT_SETTINGS, ...load('lineup.settings', {}) };
     this.settings.lean = cleanLean(this.settings.lean);
+    this.settings.pad = cleanPad(this.settings.pad);
+    this.settings.tilt = cleanTilt(this.settings.tilt);
+    this.device = 'kbm'; // what you're playing with (the prompts follow it)
+    this.touchDevice = false;
     this.settings.droneVR = this.settings.droneVR === 'fpv' ? 'fpv' : 'camera';
     this.name = load('lineup.name', null) || `Surfer ${100 + Math.floor(Math.random() * 900)}`;
     this.rooms = [];
@@ -197,6 +216,114 @@ export class Menu {
     this.syncPreview();
   }
 
+  // keyboard and mouse, a controller or touch: the prompts show its buttons
+  setDevice(d) {
+    this.device = d;
+    this.root.dataset.device = d;
+    if (this.current) this.showPrompts(this.current);
+  }
+
+  setTouchDevice(on) {
+    this.touchDevice = on;
+    this.playLabels();
+  }
+
+  // ---------------------------------------------------------------- with a controller
+  // cmd: up, down, left, right, accept, back, start. On the main screen the directions move
+  // the selected card; elsewhere they move the focus to the nearest control that way (left
+  // and right change a focused slider or list instead).
+  navigate(cmd) {
+    if (!this.isOpen || this.capture || this.padCapture) return;
+    const dlg = document.getElementById('pass-dialog');
+    const scope = dlg.hidden ? this.screens[this.current] : dlg;
+    if (cmd === 'back') {
+      if (!dlg.hidden) return this.closePass();
+      if (this.current === 'pause') return this.h.onResume && this.h.onResume();
+      if (this.current !== 'main' && this.current !== 'lobby') this.back();
+      return;
+    }
+    if (cmd === 'start') {
+      if (this.current === 'pause') this.h.onResume && this.h.onResume();
+      return;
+    }
+    if (this.current === 'main' && dlg.hidden) {
+      const i = this.cards.indexOf(this.sel);
+      if (cmd === 'accept') return this.sel && this.sel.click();
+      const step = cmd === 'right' || cmd === 'down' ? 1 : -1;
+      const next = this.cards[(i + step + this.cards.length) % this.cards.length];
+      this.select(next);
+      next.focus({ preventScroll: true });
+      return;
+    }
+    const el = document.activeElement;
+    const inScope = el && el !== document.body && scope.contains(el) && this.focusables(scope).includes(el);
+    if (!inScope) return this.focusFirst(scope);
+    if (cmd === 'accept') {
+      if (el.tagName === 'SELECT') return this.stepSelect(el, 1);
+      return el.click();
+    }
+    if ((cmd === 'left' || cmd === 'right') && (el.type === 'range' || el.tagName === 'SELECT')) {
+      const dir = cmd === 'right' ? 1 : -1;
+      if (el.tagName === 'SELECT') return this.stepSelect(el, dir);
+      if (el.disabled) return;
+      const st = Number(el.step) || 1;
+      el.value = Math.min(Number(el.max), Math.max(Number(el.min), Number(el.value) + dir * st));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return;
+    }
+    const next = this.nearest(scope, el, cmd);
+    if (next) {
+      next.focus({ preventScroll: true });
+      next.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }
+
+  focusables(scope) {
+    return [...scope.querySelectorAll('button, input, select, a[href]')].filter((e) => !e.disabled && e.type !== 'hidden' && !e.classList.contains('visually-hidden') && e.getClientRects().length && !e.closest('[hidden]'));
+  }
+
+  focusFirst(scope) {
+    const f = scope.querySelector('[data-resume]:not([disabled])') || scope.querySelector('.btn.primary:not([disabled])') || this.focusables(scope)[0];
+    if (f) {
+      f.focus({ preventScroll: true });
+      f.scrollIntoView({ block: 'nearest' });
+    }
+  }
+
+  // the closest control in that direction (straight ahead counts for more than off to the side)
+  nearest(scope, from, dir) {
+    const r0 = from.getBoundingClientRect();
+    const c0 = [r0.left + r0.width / 2, r0.top + r0.height / 2];
+    let best = null,
+      bestScore = Infinity;
+    for (const e of this.focusables(scope)) {
+      if (e === from) continue;
+      const r = e.getBoundingClientRect();
+      const c = [r.left + r.width / 2, r.top + r.height / 2];
+      const dx = c[0] - c0[0],
+        dy = c[1] - c0[1];
+      let along, across;
+      if (dir === 'right') [along, across] = [dx, dy];
+      else if (dir === 'left') [along, across] = [-dx, dy];
+      else if (dir === 'down') [along, across] = [dy, dx];
+      else [along, across] = [-dy, dx];
+      if (along < 4) continue;
+      const score = along + Math.abs(across) * 2.2;
+      if (score < bestScore) {
+        bestScore = score;
+        best = e;
+      }
+    }
+    return best;
+  }
+
+  stepSelect(el, dir) {
+    const n = el.options.length;
+    el.selectedIndex = (el.selectedIndex + dir + n) % n;
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
   // the main screen's selected card
   select(card) {
     if (!card) return;
@@ -206,16 +333,17 @@ export class Menu {
 
   // the key prompts along the bottom, for this screen
   showPrompts(name) {
+    const K = PROMPT_KEYS[this.device] || PROMPT_KEYS.kbm;
     const list = [];
     if (name === 'main') {
-      list.push({ key: '\u2190 \u2192', label: 'Choose' });
-      list.push({ key: 'Enter', label: 'Select', cls: 'p-go', act: () => this.sel && this.sel.click() });
+      if (K.choose) list.push({ key: K.choose, label: 'Choose' });
+      list.push({ key: K.select, label: 'Select', cls: 'p-go', act: () => this.sel && this.sel.click() });
     } else if (name === 'pause') {
-      list.push({ key: 'Esc', label: 'Resume', cls: 'p-back', act: () => this.h.onResume && this.h.onResume() });
+      list.push({ key: K.back, label: 'Resume', cls: 'p-back', act: () => this.h.onResume && this.h.onResume() });
     } else if (name !== 'lobby') {
-      list.push({ key: 'Esc', label: 'Back', cls: 'p-back', act: () => this.back() });
+      list.push({ key: K.back, label: 'Back', cls: 'p-back', act: () => this.back() });
     }
-    this.prompts.innerHTML = list.map((p, i) => `<button type="button" class="prompt ${p.cls || ''}" data-prompt="${i}" ${p.act ? '' : 'disabled'}><kbd>${esc(p.key)}</kbd>${esc(p.label)}</button>`).join('');
+    this.prompts.innerHTML = list.map((p, i) => `<button type="button" class="prompt ${p.cls || ''}" data-prompt="${i}" ${p.act ? '' : 'disabled'}>${p.key ? `<kbd>${esc(p.key)}</kbd>` : ''}${esc(p.label)}</button>`).join('');
     this.prompts.onclick = (e) => {
       const b = e.target.closest('[data-prompt]');
       const p = b && list[+b.dataset.prompt];
@@ -300,6 +428,7 @@ export class Menu {
         return this.h.onPlay && this.h.onPlay(mode, play.dataset.play);
       }
       if (e.target.closest('[data-resume]')) return this.h.onResume && this.h.onResume();
+      if (e.target.closest('[data-lineup]')) return this.h.onLineup && this.h.onLineup();
       if (e.target.closest('[data-quit]')) return this.h.onQuit && this.h.onQuit();
       if (e.target.closest('[data-leave]')) return this.h.onLeaveRoom && this.h.onLeaveRoom();
     });
@@ -531,65 +660,93 @@ export class Menu {
       t.addEventListener('click', () => this.selectSettingsTab(t.dataset.stab));
     }
     this.bindKeybinds();
-    this.buildLean();
+    this.buildCurves();
     this.bindDroneVR();
   }
 
-  // ---------------------------------------------------------------- VR leaning sensitivity
-  buildLean() {
-    const set = document.getElementById('lean-set');
-    const row = (axis, key, label) => {
+  // ---------------------------------------------------------------- sensitivity curves
+  // VR leaning, controller sticks and phone tilt: a centre and a max slider per axis, and a
+  // graph of what it does
+  buildCurves() {
+    const row = (group, k, key, label) => {
       const [lo, hi] = LEAN_LIMITS[key];
-      return `<label class="field"><span>${label} <output data-lean-out="${axis}.${key}"></output></span><input type="range" min="${lo}" max="${hi}" step="0.05" data-lean="${axis}.${key}" /></label>`;
+      return `<label class="field"><span>${label} <output data-curve-out="${group}.${k}.${key}"></output></span><input type="range" min="${lo}" max="${hi}" step="0.05" data-curve="${group}.${k}.${key}" /></label>`;
     };
-    set.innerHTML = ['x', 'z']
-      .map((a) => `<div class="lean-axis"><b>${AXES[a].title} <small>· ${AXES[a].what}</small></b>${row(a, 'centre', 'Centre sensitivity')}${row(a, 'max', 'Max sensitivity')}<canvas data-lean-graph="${a}"></canvas></div>`)
-      .join('');
-    set.addEventListener('input', (e) => {
-      const r = e.target.closest('[data-lean]');
-      if (!r) return;
-      const [axis, key] = r.dataset.lean.split('.');
-      const lean = cleanLean(this.settings.lean);
-      lean[axis][key] = +r.value;
-      this.setLean(lean, true);
-    });
-    document.getElementById('lean-reset').addEventListener('click', () => this.setLean(LEAN_DEFAULTS, true));
-    // (the graphs are sized to their boxes: redraw when shown or resized)
-    this.leanResize = new ResizeObserver(() => this.drawLean());
-    for (const c of set.querySelectorAll('canvas')) this.leanResize.observe(c);
-    this.setLean(this.settings.lean);
+    this.curveResize = new ResizeObserver(() => this.drawCurves());
+    for (const [group, C] of Object.entries(CURVE_SETS)) {
+      const set = document.getElementById(C.el);
+      set.innerHTML = Object.entries(C.axes)
+        .map(([k, axis]) => `<div class="lean-axis"><b>${AXES[axis].title} <small>· ${AXES[axis].what}</small></b>${row(group, k, 'centre', 'Centre sensitivity')}${row(group, k, 'max', 'Max sensitivity')}<canvas data-curve-graph="${group}.${k}"></canvas></div>`)
+        .join('');
+      set.addEventListener('input', (e) => {
+        const r = e.target.closest('[data-curve]');
+        if (!r) return;
+        const [g, k, key] = r.dataset.curve.split('.');
+        const v = C.clean(this.settings[g]);
+        v[k][key] = +r.value;
+        this.setCurves(g, v, true);
+      });
+      document.getElementById(C.reset).addEventListener('click', () => this.setCurves(group, { ...C.defaults, invertY: this.settings[group].invertY }, true));
+      for (const c of set.querySelectorAll('canvas')) this.curveResize.observe(c);
+    }
+    // the controller's look speed and invert, the touch look sensitivity
+    const extra = (id, group, key, read) =>
+      document.getElementById(id).addEventListener('input', (e) => {
+        const v = CURVE_SETS[group].clean(this.settings[group]);
+        v[key] = read(e.target);
+        this.setCurves(group, v, true);
+      });
+    extra('set-pad-look', 'pad', 'lookSpeed', (el) => +el.value);
+    extra('set-pad-invert', 'pad', 'invertY', (el) => el.checked);
+    extra('set-touch-look', 'tilt', 'look', (el) => +el.value);
+    for (const g of Object.keys(CURVE_SETS)) this.setCurves(g, this.settings[g]);
   }
 
-  // the leaning curves (from the page or the headset menu); fromUser: save and apply
-  setLean(lean, fromUser = false) {
-    this.settings.lean = cleanLean(lean);
-    for (const r of this.root.querySelectorAll('[data-lean]')) {
-      const [axis, key] = r.dataset.lean.split('.');
-      if (document.activeElement !== r) r.value = this.settings.lean[axis][key];
+  // a set of curves (from the page, or the headset menu for leaning); fromUser: save and apply
+  setCurves(group, value, fromUser = false) {
+    const v = (this.settings[group] = CURVE_SETS[group].clean(value));
+    for (const r of this.root.querySelectorAll(`[data-curve^="${group}."]`)) {
+      const [, k, key] = r.dataset.curve.split('.');
+      if (document.activeElement !== r) r.value = v[k][key];
     }
-    for (const o of this.root.querySelectorAll('[data-lean-out]')) {
-      const [axis, key] = o.dataset.leanOut.split('.');
-      o.textContent = `${this.settings.lean[axis][key].toFixed(2)}×`;
+    for (const o of this.root.querySelectorAll(`[data-curve-out^="${group}."]`)) {
+      const [, k, key] = o.dataset.curveOut.split('.');
+      o.textContent = `${v[k][key].toFixed(2)}×`;
     }
-    this.drawLean();
+    if (group === 'pad') {
+      document.getElementById('set-pad-look').value = v.lookSpeed;
+      document.getElementById('out-pad-look').textContent = `${v.lookSpeed}°/s`;
+      document.getElementById('set-pad-invert').checked = v.invertY;
+    } else if (group === 'tilt') {
+      document.getElementById('set-touch-look').value = v.look;
+      document.getElementById('out-touch-look').textContent = `${v.look.toFixed(2)}×`;
+    }
+    this.drawCurves();
     if (fromUser) {
       save('lineup.settings', this.settings);
       if (this.h.onSettings) this.h.onSettings(this.settings);
     }
   }
 
-  drawLean() {
-    for (const c of this.root.querySelectorAll('[data-lean-graph]')) {
+  setLean(lean, fromUser = false) {
+    this.setCurves('lean', lean, fromUser);
+  }
+
+  drawCurves() {
+    const font = getComputedStyle(document.body).fontFamily;
+    for (const c of this.root.querySelectorAll('[data-curve-graph]')) {
       const w = c.clientWidth,
         h = c.clientHeight;
       if (!w || !h) continue;
+      const [group, k] = c.dataset.curveGraph.split('.');
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       c.width = Math.round(w * dpr);
       c.height = Math.round(h * dpr);
       const g = c.getContext('2d');
       g.setTransform(dpr, 0, 0, dpr, 0, 0);
       g.clearRect(0, 0, w, h);
-      drawLeanGraph(g, 0, 0, w, h, c.dataset.leanGraph, this.settings.lean[c.dataset.leanGraph], { font: getComputedStyle(document.body).fontFamily });
+      const axis = CURVE_SETS[group].axes[k];
+      drawLeanGraph(g, 0, 0, w, h, axis, this.settings[group][k], { font, out: axis === 'pad.look' ? this.settings.pad.lookSpeed : null });
     }
   }
 
@@ -606,10 +763,11 @@ export class Menu {
       b.classList.toggle('on', on);
       b.setAttribute('aria-checked', String(on));
     }
-    document.getElementById('dronevr-note').textContent =
-      this.settings.droneVR === 'fpv'
-        ? 'FPV: flown like a racing drone in acro mode. Left stick: throttle (centre hovers) and yaw. Right stick: pitch and roll, as rates: the drone keeps its angle when you let go. The camera is fixed to the drone, tilted up, and ignores your head, like FPV goggles. That is intense in a headset: stop if you feel unwell.'
-        : 'Camera drone: it holds its height and stays level. Left stick climbs and turns, right stick flies, and the camera follows your head.';
+    for (const n of this.root.querySelectorAll('.dronevr-note'))
+      n.textContent =
+        this.settings.droneVR === 'fpv'
+          ? 'FPV: flown like a racing drone in acro mode, in VR or with a controller. Left stick: throttle (the middle hovers) and yaw. Right stick: pitch and roll, as rates: the drone keeps its angle when you let go. The camera is fixed to the drone, tilted up, and in a headset ignores your head, like FPV goggles. That is intense in VR: stop if you feel unwell.'
+          : 'Camera drone: it holds its height and stays level, and the camera stays level on its gimbal. In VR it follows your head. With keyboard and mouse or touch the drone is always the camera drone.';
     if (fromUser) {
       save('lineup.settings', this.settings);
       if (this.h.onSettings) this.h.onSettings(this.settings);
@@ -624,6 +782,7 @@ export class Menu {
 
   selectSettingsTab(tab) {
     this.endCapture();
+    this.endPadCapture();
     for (const t of this.screens.settings.querySelectorAll('[data-stab]')) {
       t.classList.toggle('on', t.dataset.stab === tab);
       t.setAttribute('aria-selected', String(t.dataset.stab === tab));
@@ -639,6 +798,18 @@ export class Menu {
     this.pcNote = document.getElementById('binds-pc-note');
     this.pcNoteDefault = this.pcNote.textContent;
     this.questNote = document.getElementById('binds-quest-note');
+    this.padNote = document.getElementById('binds-pad-note');
+    this.padNoteDefault = this.padNote.textContent;
+    this.padCapture = null; // { id, slot, btn } while waiting for a controller button
+    document.querySelector('#binds-pad tbody').addEventListener('click', (e) => {
+      const b = e.target.closest('[data-padbind]');
+      if (b && !this.padCapture) this.startPadCapture(b);
+    });
+    document.getElementById('binds-pad-reset').addEventListener('click', () => {
+      this.endPadCapture();
+      controls.resetPad();
+      this.padNote.textContent = 'Buttons reset to the defaults.';
+    });
 
     pcBody.addEventListener('click', (e) => {
       const b = e.target.closest('[data-bind]');
@@ -649,6 +820,19 @@ export class Menu {
     window.addEventListener(
       'keydown',
       (e) => {
+        if (this.padCapture) {
+          // (binding a controller button: the keyboard can only cancel or clear)
+          if (e.code === 'Escape') {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            this.endPadCapture();
+          } else if (e.code === 'Backspace' || e.code === 'Delete') {
+            e.preventDefault();
+            e.stopImmediatePropagation();
+            this.finishPadCapture(-1);
+          }
+          return;
+        }
         if (!this.capture) return;
         e.preventDefault();
         e.stopImmediatePropagation();
@@ -665,6 +849,7 @@ export class Menu {
     window.addEventListener(
       'mousedown',
       (e) => {
+        if (this.padCapture && e.target !== this.padCapture.btn) this.endPadCapture();
         if (!this.capture) return;
         if (e.target === this.capture.btn) {
           e.preventDefault();
@@ -723,6 +908,46 @@ export class Menu {
       return `<tr><td>${esc(a.label)}</td><td><select data-quest="${a.id}" aria-label="${esc(a.label)}">${opts}</select></td></tr>`;
     }).join('');
     if (!this.questNote.textContent) this.questNote.textContent = `You can change these in VR too: ${controls.questText('pause')} opens the pause menu.`;
+    const pcell = (id, slot) => {
+      const b = controls.pad[id][slot];
+      return `<button type="button" class="keycap${b >= 0 ? '' : ' empty'}" data-padbind="${id}" data-slot="${slot}">${b >= 0 ? esc(padLabel(b)) : 'Not set'}</button>`;
+    };
+    document.querySelector('#binds-pad tbody').innerHTML =
+      fixed('Steer, carve, lean, walk the longboard (pull back to sit up)', 'Left stick') +
+      fixed('Look around (flick it, holding a trick button, for a snap)', 'Right stick') +
+      PAD_ACTIONS.map((a) => `<tr><td>${esc(a.label)}</td><td>${pcell(a.id, 0)}</td><td>${pcell(a.id, 1)}</td></tr>`).join('');
+  }
+
+  startPadCapture(btn) {
+    this.padCapture = { id: btn.dataset.padbind, slot: +btn.dataset.slot, btn };
+    btn.classList.add('listening');
+    btn.textContent = 'Press a button…';
+    this.padNote.textContent = 'Press the controller button you want. Backspace clears it, Esc cancels.';
+    if (this.h.onCapturePad) this.h.onCapturePad((i) => this.finishPadCapture(i));
+  }
+
+  finishPadCapture(i) {
+    const { id, slot } = this.padCapture;
+    this.padCapture = null;
+    if (this.h.onCapturePad) this.h.onCapturePad(null);
+    const r = controls.setPad(id, slot, i); // re-renders the table
+    if (r && r.refused) {
+      this.padNote.textContent = r.refused;
+      this.renderKeybinds();
+    } else this.padNote.textContent = r.length ? moveText(r) : this.padNoteDefault;
+  }
+
+  endPadCapture() {
+    if (!this.padCapture) return;
+    this.padCapture = null;
+    if (this.h.onCapturePad) this.h.onCapturePad(null);
+    this.renderKeybinds();
+    this.padNote.textContent = this.padNoteDefault;
+  }
+
+  // which controller is connected (the Controller tab says)
+  setPadStatus(name) {
+    document.getElementById('pad-status').textContent = name ? `Connected: ${name}` : 'No controller found. Connect one and press any button on it.';
   }
 
   startCapture(btn) {
@@ -759,7 +984,8 @@ export class Menu {
 
   playLabels() {
     const fly = this.role === 'drone';
-    for (const b of this.root.querySelectorAll('[data-play="pc"]')) b.textContent = fly && b.closest('[data-screen="lobby"]') ? 'Fly on PC' : 'Play on PC';
+    const where = this.touchDevice ? '' : ' on PC';
+    for (const b of this.root.querySelectorAll('[data-play="pc"]')) b.textContent = fly && b.closest('[data-screen="lobby"]') ? `Fly${where}` : `Play${where}`;
     for (const b of this.root.querySelectorAll('.vr-launch')) {
       b.textContent = !this.vrSupported ? 'VR: open on Meta Quest' : fly && b.closest('[data-screen="lobby"]') ? 'Fly in VR' : 'Play in VR';
     }

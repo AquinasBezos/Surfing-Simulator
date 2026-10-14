@@ -12,7 +12,7 @@ Paddle into glassy waves, pop up, and race the peeling lip through the barrel, o
 - Duck dive under breaking waves. Underwater you get Snell's window, the seabed (at Teahupo'o, the coral reef sloping away into the deep), light shafts and bubbles. In the ocean, a school of fish sometimes swims past (silvery baitfish at Margaret River, reef fish at Teahupo'o) and scatters if you get close.
 - Shortboard or longboard. On the longboard you walk to the nose to hang five, or to the tail for tight turns.
 - You can crouch under the lip and spring off the top of the wave for an air. Snaps, cutbacks and tailslides come from flicking your view.
-- Two control schemes: keyboard and mouse on PC, and body movement on Quest (paddle with your arms, stand up to pop up, lean to carve).
+- Four ways to play: keyboard and mouse, a game controller, touch on a phone or tablet (swipe to paddle, tilt to steer), and body movement on Quest (paddle with your arms, stand up to pop up, lean to carve).
 - Pick the wave size, from knee high to well overhead, or let it wander: sets build and fade over a few minutes. On small waves you can keep riding the whitewater after the wave breaks.
 - Your surfer is a rigged, animated character (paddling, popping up, a surf stance that crouches and leans with you). Choose skin tone, hair colour and board colour; a turntable preview shows your look.
 - Sit up on your board to wait for waves. Your head turns with your view, and on a wave your upper body twists to follow it, so other players can see where you're looking.
@@ -23,7 +23,7 @@ There is no build step. Textures, terrain and sound are generated at start-up, a
 
 ## Controls
 
-In the menus, the arrow keys move between the cards, `Enter` picks one and `Esc` goes back. The prompts along the bottom can be clicked too.
+In the menus, the arrow keys move between the cards, `Enter` picks one and `Esc` goes back. With a controller, the D-pad (or left stick) moves, `A` picks and `B` goes back. The prompts along the bottom show the buttons for whatever you last used, and can be clicked or tapped too.
 
 | Action | PC | Meta Quest |
 | :-- | :-- | :-- |
@@ -48,6 +48,43 @@ On Quest, kneel or lie down before you start, then press the trigger to calibrat
 Sitting up and popping up are told apart by speed: rise slowly and hold still for half a second to sit, spring up quickly to pop up. To catch a wave from sitting, lie back down and paddle. Sitting in the whitewater of a big wave wipes you out, the same as standing in it.
 
 On PC the game goes fullscreen and locks the keyboard when you start, so `Ctrl` combinations such as `Ctrl+W` reach the game instead of closing the tab. If that isn't available (e.g. Firefox), the browser asks before leaving the page, and `C` works instead of `Ctrl`. Fullscreen can be turned off in **Controls and settings**, which also has graphics quality, volume and mouse sensitivity.
+
+### Controller
+
+Any controller the browser recognises works on PC (Xbox, PlayStation, Switch Pro and others, by the standard layout; buttons are named as on an Xbox pad). Press a button and the hints switch to it.
+
+| Action | Controller (defaults) |
+| :-- | :-- |
+| Paddle | Pull `LT` for a left-arm stroke and `RT` for a right-arm stroke, again and again. Faster pulls are harder strokes, and a stronger right stroke turns you left |
+| Steer, carve, trim, walk | Left stick (the same as `W` `A` `S` `D`) |
+| Sit up / lie down | Pull the left stick back while paddling / push it forward |
+| Stand up / lie down | `A` |
+| Duck dive / crouch | Hold `B` (duck dive while paddling, crouch while surfing) |
+| Snap, cutback, tailslide | Hold `LB` or `RB` and flick the right stick: straight out and back for a tailslide, a short flick for a snap, held out for a cutback |
+| Look around | Right stick (the view drifts back to straight ahead when you let go) |
+| Back to the lineup | `Y` |
+| Pause menu | `Menu` (Start) |
+
+Every button can be changed in **Controls and settings → Controller**: click a box and press the button you want. There's also a sensitivity curve with a graph for each stick axis (as for VR leaning), the look speed, and inverted look. With a controller you can fly the drone as the camera drone (left stick flies, right stick turns and tilts the camera, `RT` / `LT` climb and descend) or, set to FPV, in acro mode exactly as in VR.
+
+### Phones and tablets
+
+Hold the phone sideways. Where your finger first touches decides what it does until you lift it, so a paddle stroke that starts high on the right and runs down into the look area never turns the view.
+
+| Action | Touch |
+| :-- | :-- |
+| Paddle | Swipe down beside the board: on the left for your left arm, high on the right for your right arm. Faster swipes are harder strokes |
+| Steer and carve | Tilt the phone left and right (while paddling, too) |
+| Trim, stall, walk the longboard | Tilt it forward and back. The way you hold it when you start, or resume, counts as level |
+| Stand up | Swipe up on the board. Swipe down on it to go back to paddling |
+| Duck dive | While paddling, swipe down on the board and keep your finger on the screen; lift it to come up |
+| Sit up | Tap the board while paddling; tap again to lie down |
+| Look around | Drag in the bottom right quarter of the screen |
+| Crouch | The Crouch button on the left while you're surfing (tap on, tap off) |
+| Snap, cutback, tailslide | Hold Snap on the left and swipe sideways in the look area |
+| Pause, back to the lineup | The buttons at the top left |
+
+A guide to the touch zones shows for the first few seconds. **Controls and settings → Touch** has sensitivity curves with graphs for the tilt, and the look sensitivity. iPhones ask for permission to use the motion sensors the first time. Phones get the lighter graphics setting automatically. As a drone, drag on the left half to fly and on the right half to turn and tilt the camera; ▲ ▼ climb and descend.
 
 ### How to catch and ride a wave
 
@@ -106,11 +143,11 @@ In the room lobby, pick **Join as drone** instead of Surfer to fly a camera dron
 | Go faster | Hold `Shift` (your trick key) | |
 | Relaunch | `R` (your lineup key) | `B` (your lineup button) |
 
-**FPV drone (VR).** In Controls and settings → Meta Quest (or the headset's settings), set **Drone in VR** to **FPV drone** to fly like a racing drone in acro mode instead.
+**FPV drone (VR or a controller).** In Controls and settings → Meta Quest or Controller (or the headset's settings), set the drone to **FPV drone** to fly like a racing drone in acro mode instead.
 - **Sticks:** the left stick is throttle (up for more; it springs back to the middle, which hovers) and yaw. The right stick is pitch and roll.
 - **Rate control:** the sticks set how fast it rotates, not its angle. Let go and it holds whatever attitude it's in, so you fly it like a real FPV quad: tilt, then add throttle to go.
 - **Camera:** fixed in the nose, tilted up 25°, and it ignores your head, like goggles with no head tracking. That's intense in a headset, so take it easy at first.
-- On PC the drone is always the camera drone.
+- With keyboard and mouse or touch, the drone is always the camera drone.
 
 ### How it works
 
@@ -172,6 +209,8 @@ To check the relay works, open the game with `?relay` on two devices and join th
 | `js/surfer.js` | Board physics and the prone / pop-up / standing / wipeout state machine. Also paddling effort, duck dives, crouching and airs, longboard walking, and manoeuvres |
 | `js/underwater.js` | Shows the body through the water (a stencil-masked second pass), plus the underwater view: seabed dome, light shafts, bubbles |
 | `js/input.js`, `js/xr.js` | PC input; Quest head/hand gesture input with calibration |
+| `js/gamepad.js`, `js/touch.js` | Controller input (paddling strokes on the triggers, stick flicks for tricks, menu navigation); touch input (swipe zones, phone tilt, the on-screen buttons) |
+| `js/lean.js` | Sensitivity curves for VR leaning, controller sticks and phone tilt, and their graphs |
 | `js/body.js`, `js/board.js` | First-person arms (IK paddling), VR hands, parametric shortboard and longboard |
 | `js/sky.js` | Procedural HDR sky (rendered once into a cube map), midday and sunset |
 | `js/terrain.js` | Each spot's land and seabed (and its GLSL copy for the water shader); Margaret River's beach, headland, island and trees |

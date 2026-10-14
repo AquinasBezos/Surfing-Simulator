@@ -23,17 +23,21 @@ import { controls } from './bindings.js';
 import { Drone, createDroneModel, animateDrone } from './drone.js';
 import { loadSurferModel, randomLook } from './character.js';
 import { Fish } from './fish.js';
-import { cleanLean } from './lean.js';
+import { cleanLean, cleanPad, cleanTilt } from './lean.js';
+import { GamepadInput } from './gamepad.js';
+import { TouchInput } from './touch.js';
 
 const params = new URLSearchParams(location.search);
 const isMobileXR = /OculusBrowser|Quest|Pico/i.test(navigator.userAgent);
+// phones and tablets: touch controls, and the lighter graphics by default
+const isTouchDevice = !isMobileXR && (navigator.maxTouchPoints || 0) > 0 && window.matchMedia('(pointer: coarse)').matches;
 let savedQuality = 'auto';
 try {
   savedQuality = JSON.parse(localStorage.getItem('lineup.settings') || '{}').quality || 'auto';
 } catch (e) {
   /* storage unavailable */
 }
-const qualityName = params.get('q') || (savedQuality !== 'auto' ? savedQuality : isMobileXR ? 'low' : 'high');
+const qualityName = params.get('q') || (savedQuality !== 'auto' ? savedQuality : isMobileXR || isTouchDevice ? 'low' : 'high');
 const quality = QUALITY[qualityName] || QUALITY.high;
 const debug = params.has('debug');
 
@@ -161,6 +165,8 @@ const hud = new Hud(camera);
 const audio = new OceanAudio();
 const surfer = new Surfer(model);
 const pc = new PCInput(renderer.domElement);
+const gamepad = new GamepadInput();
+const touch = new TouchInput(renderer.domElement, document.getElementById('touch-ui'));
 const xr = new XRControls(renderer, rig);
 xr.onHandModel = (m) => addUnderwaterPass(m);
 
@@ -222,13 +228,20 @@ const menu = new Menu({
     menu.show('multi', { push: false });
   },
   onResume: () => resume(),
+  onLineup: () => {
+    resume();
+    respawn(true);
+  },
   onQuit: () => quitToMenu(),
+  onCapturePad: (fn) => (gamepad.capture = fn), // (binding a controller button)
 });
 let settings = menu.settings;
 function applySettings(s) {
   settings = s;
   audio.setVolume(s.volume);
   xr.lean = cleanLean(s.lean);
+  gamepad.settings = cleanPad(s.pad);
+  touch.settings = cleanTilt(s.tilt);
   applyTimeOfDay(inRoom() ? net.time : s.time); // a room's time of day is the same for everyone
 }
 const inRoom = () => !!(net && net.room);
@@ -326,9 +339,30 @@ function closeVRMenu() {
   game.paused = false;
 }
 
+// What you're playing with (the last one used): keyboard and mouse, a controller, or touch.
+// It picks the hints, the menu's button prompts, the touch buttons, and whether a drone set
+// to FPV flies FPV (with a controller, as in VR).
+let device = isTouchDevice ? 'touch' : 'kbm';
+function setDevice(d) {
+  if (d === device) return;
+  device = d;
+  document.body.dataset.device = d;
+  menu.setDevice(d);
+  updateHints();
+}
+document.body.dataset.device = device;
+menu.setDevice(device);
+menu.setTouchDevice(isTouchDevice);
+window.addEventListener('keydown', () => setDevice('kbm'), true);
+window.addEventListener('mousemove', (e) => (e.movementX || e.movementY) && !isTouchDevice && setDevice('kbm'));
+window.addEventListener('touchstart', () => setDevice('touch'), { capture: true, passive: true });
+
 // on-screen hints follow the key bindings
 function updateHints() {
-  document.getElementById('hud-hint').textContent = `${controls.pcKey('lineup')} lineup · Esc menu`;
+  const el = document.getElementById('hud-hint');
+  if (device === 'pad') el.textContent = `${controls.padText('lineup')}: lineup · ${controls.padText('pause')}: menu`;
+  else if (device === 'touch') el.textContent = '';
+  else el.textContent = `${controls.pcKey('lineup')} lineup · Esc menu`;
 }
 controls.onChange(updateHints);
 updateHints();
@@ -450,10 +484,28 @@ function startGame(mode, platform) {
     enterVR(); // must stay synchronous with the click for the browser to allow it
   } else if (platform === 'pc') {
     resume();
+    startToast(flying);
+  } else menu.hide(); // a VR session that started on its own
+}
+
+// how to play, for what you're playing with
+function startToast(flying) {
+  if (device === 'touch') {
+    TouchInput.askForTilt();
+    touch.ui.classList.add('guide'); // the zones, for a few seconds
+    setTimeout(() => touch.ui.classList.remove('guide'), 6000);
+    if (flying) hud.toast('Drag on the left to fly, on the right to turn · ▲ ▼ climb and descend', 6);
+    else hud.toast('Swipe down beside the board to paddle · tilt your phone to steer · swipe up on the board to stand', 7);
+  } else if (device === 'pad') {
+    const b = (id) => controls.padText(id);
+    if (flying && settings.droneVR === 'fpv') hud.toast('FPV, acro mode. Left stick: throttle (the middle hovers) and yaw · right stick: pitch and roll', 7);
+    else if (flying) hud.toast(`Left stick flies · right stick turns and tilts the camera · ${b('paddleR')} / ${b('paddleL')} climb and descend`, 6);
+    else hud.toast(`Pull ${b('paddleL')} and ${b('paddleR')} to paddle (faster = harder) · left stick steers · ${b('popup')} to stand up · pull the stick back to sit`, 7);
+  } else {
     const k = (id) => controls.pcKey(id);
     if (flying) hud.toast(`${k('forward')} ${k('left')} ${k('back')} ${k('right')} fly · ${k('popup')} up · ${k('crouch')} down · mouse turns and tilts the camera`, 6);
     else hud.toast(`Scroll to paddle (faster = harder) · ${k('left')} / ${k('right')} steer · ${k('popup')} to pop up · ${k('back')} sit up and wait`, 6);
-  } else menu.hide(); // a VR session that started on its own
+  }
 }
 
 function resume() {
@@ -462,7 +514,11 @@ function resume() {
   game.paused = false;
   menu.hide();
   pc.enabled = true;
-  pc.capture(settings.fullscreen);
+  touch.reset();
+  touch.calibrate(); // the way the phone is held now is level
+  if (device === 'touch') TouchInput.askForTilt();
+  // (a controller can't grab the mouse or go fullscreen: that needs a click or a key)
+  if (device !== 'pad') pc.capture(settings.fullscreen);
 }
 
 function pause() {
@@ -951,7 +1007,7 @@ function detectFlickPC(dt, lx) {
       surfer.flick(f.dir, f.peak, f.sweep);
       game.flick = null;
     }
-  } else if (pc.charge && surfer.state === STATE.STANDING && !surfer.move && Math.abs(game.lookRate) > 4) {
+  } else if ((pc.charge || touch.charge) && surfer.state === STATE.STANDING && !surfer.move && Math.abs(game.lookRate) > 4) {
     game.flick = { dir: Math.sign(game.lookRate), t: 0, sweep: 0, peak: 0 };
   }
 }
@@ -966,11 +1022,25 @@ function updateCameraPC(dt) {
     return;
   }
   const [lx0, ly0] = pc.consumeLook();
+  const [tx, ty] = touch.consumeLook();
   const sens = settings.sensitivity;
-  const lx = lx0 * sens;
-  const ly = ly0 * sens * (settings.invertY ? -1 : 1);
+  const lx = lx0 * sens + tx;
+  const ly = ly0 * sens * (settings.invertY ? -1 : 1) + ty;
   game.look.yaw = clamp(game.look.yaw - lx * 0.0024, -2.9, 2.9);
   game.look.pitch = clamp(game.look.pitch - ly * 0.0024, -1.35, 1.35);
+  // the right stick turns the view at a speed (its tricks are flicks: gamepad.js)
+  const [gy, gp] = gamepad.lookRate();
+  game.look.yaw = clamp(game.look.yaw + gy * dt, -2.9, 2.9);
+  game.look.pitch = clamp(game.look.pitch + gp * dt, -1.35, 1.35);
+  // with a controller or a touch screen the view drifts back to straight ahead once you
+  // stop looking around (a mouse leaves it where you put it)
+  if (lx || ly || gy || gp) game.lookIdle = 0;
+  else game.lookIdle = (game.lookIdle || 0) + dt;
+  if ((device === 'pad' || device === 'touch') && game.lookIdle > 1.2 && !game.flick) {
+    const k = Math.exp(-dt * 1.6);
+    game.look.yaw *= k;
+    game.look.pitch *= k;
+  }
   detectFlickPC(dt, lx);
 
   updateCamYaw(dt, false);
@@ -1185,13 +1255,26 @@ const FPV_IDLE = { fpv: true, throttle: 0.5, yaw: 0, pitch: 0, roll: 0 };
 
 // ---------------------------------------------------------------- drone
 // PC: strafe on the movement keys, climb / descend on the pop-up / crouch keys, the mouse
-// turns the drone and tilts the gimbal camera.
-function droneInputPC() {
+// turns the drone and tilts the gimbal camera. Controller: left stick flies, right stick
+// turns and tilts the camera, the paddle triggers climb (right) and descend (left); or, set
+// to FPV, acro mode as in VR (left stick throttle and yaw, right stick pitch and roll).
+// Touch: drag on the left half to fly, on the right half to turn and tilt; ▲ ▼ climb.
+function droneInputPC(dt) {
+  const [Lx, Ly, Rx, Ry] = gamepad.sticks;
+  if (drone.fpv) return { fpv: true, throttle: clamp((1 - Ly) / 2, 0, 1), yaw: Lx, pitch: -Ry, roll: Rx };
   const [lx, ly] = pc.consumeLook();
+  touch.consumeLook();
   const sens = settings.sensitivity;
+  const T = touch.sticks;
   drone.yaw -= lx * sens * 0.0024;
-  drone.camPitch = clamp(drone.camPitch - ly * sens * 0.0024 * (settings.invertY ? -1 : 1), -1.5, 0.6);
-  return { fwd: pc.leanZ, right: pc.steer, up: (pc.down('popup') ? 1 : 0) - (pc.down('crouch') ? 1 : 0), yawRate: 0, boost: pc.charge };
+  drone.camPitch = clamp(drone.camPitch - ly * sens * 0.0024 * (settings.invertY ? -1 : 1) - (Ry * (gamepad.settings.invertY ? -1 : 1) + T[3]) * 1.1 * dt, -1.5, 0.6);
+  return {
+    fwd: clamp(pc.leanZ - Ly - T[1], -1, 1),
+    right: clamp(pc.steer + Lx + T[0], -1, 1),
+    up: clamp((pc.down('popup') ? 1 : 0) - (pc.down('crouch') ? 1 : 0) + gamepad.value('paddleR') - gamepad.value('paddleL') + touch.climb, -1, 1),
+    yawRate: -(Rx + T[2]) * 1.5,
+    boost: pc.charge || gamepad.down('charge'),
+  };
 }
 
 // Quest: left stick climbs / descends and turns, right stick strafes; the head aims.
@@ -1226,6 +1309,14 @@ function updateDrone(dt, fly) {
 }
 
 function updateCameraDronePC() {
+  if (drone.fpv) {
+    // FPV: the camera in the nose, tilted up, turning with the drone
+    drone.fpvCameraPosition(rig.position);
+    drone.fpvCameraQuat(rig.quaternion);
+    camera.position.set(0, 0, 0);
+    camera.rotation.set(0, 0, 0);
+    return;
+  }
   // level gimbal: only the drone's heading and the camera tilt, never the body's tilt
   drone.cameraPosition(rig.position);
   rig.quaternion.setFromAxisAngle(Yaxis, drone.yaw);
@@ -1258,6 +1349,22 @@ function frame(time, xrFrame) {
   const dt = Math.min(clock.getDelta(), 0.05);
   const inXR = renderer.xr.isPresenting;
   if (game.onFrame) game.onFrame(dt);
+  // the controller: polled every frame, menus or not
+  const padWas = gamepad.lastActive;
+  gamepad.poll(dt);
+  touch.update(dt);
+  if (gamepad.lastActive !== padWas) setDevice('pad');
+  const padName = gamepad.connected ? gamepad.pad.id : '';
+  if (padName !== game.padName) {
+    game.padName = padName;
+    menu.setPadStatus(padName);
+  }
+  if (!inXR && menu.isOpen) {
+    for (const c of gamepad.consumeNav()) menu.navigate(c);
+    gamepad.consumeEvents(); // (a press the menu used, like A on Play or Start to resume, isn't also a move)
+  } else gamepad.consumeNav();
+  touch.enabled = game.started && !game.paused && !inXR;
+  document.body.classList.toggle('playing', game.started && !inXR && !menu.isOpen);
   // behind the opaque menu nothing is visible: don't simulate or render
   const hidden = menu.opaque && !inXR && game.warmup <= 0 && !game.started;
   if (hidden) return;
@@ -1270,8 +1377,10 @@ function frame(time, xrFrame) {
   let fly = NO_FLIGHT;
   pc.update(dt);
 
-  // the drone flies FPV in VR if you chose that (the camera drone everywhere else)
-  drone.setFPV(flying && inXR && settings.droneVR === 'fpv');
+  // the drone flies FPV in VR, or with a controller, if you chose that (else the camera drone)
+  drone.setFPV(flying && settings.droneVR === 'fpv' && (inXR || device === 'pad'));
+  touch.mode = flying ? 'drone' : surfer.state === STATE.POPUP ? 'standing' : surfer.state;
+  touch.showButtons(touch.enabled && device === 'touch');
   if (inXR) {
     const gestures = xr.update(dt, xrFrame, surfer.state, surfer.board);
     if (acceptInput) {
@@ -1295,33 +1404,53 @@ function frame(time, xrFrame) {
       else if (e === 'toggleStand') surfer.state === STATE.PRONE ? surfer.popUp() : surfer.layDown();
     }
   } else if (acceptInput && flying) {
-    fly = droneInputPC();
-    for (const e of pc.consumeEvents()) if (e === 'reset') respawn(true);
+    fly = droneInputPC(dt);
+    for (const e of [...pc.consumeEvents(), ...gamepad.consumeEvents(), ...touch.consumeEvents()]) {
+      if (e === 'reset') respawn(true);
+      else if (e === 'pause') pause();
+    }
   } else if (acceptInput) {
-    const steer = pc.steer;
+    // keyboard and mouse, a controller and a touch screen all at once (the phone's tilt
+    // only while you're playing by touch)
+    const tilt = device === 'touch';
+    const steer = clamp(pc.steer + gamepad.steer + (tilt ? touch.steer : 0), -1, 1);
+    const leanZ = clamp(pc.leanZ + gamepad.leanZ + (tilt ? touch.leanZ : 0), -1, 1);
+    const prone = surfer.state === STATE.PRONE;
     inp = {
       paddle: pc.paddle,
       pulse: 0,
       turn: 0,
       steer,
       leanX: steer,
-      leanZ: pc.leanZ,
-      walk: pc.leanZ,
+      leanZ,
+      walk: leanZ,
       walkTo: null,
-      crouch: pc.down('crouch') ? 1 : 0,
-      duck: pc.down('duck') && surfer.state === STATE.PRONE,
-      charge: pc.charge,
+      crouch: pc.down('crouch') || gamepad.down('crouch') || touch.crouch ? 1 : 0,
+      duck: (pc.down('duck') || gamepad.down('duck') || touch.duck) && prone,
+      charge: pc.charge || gamepad.down('charge') || touch.charge,
     };
-    for (const e of pc.consumeEvents()) {
-      if (e === 'toggleStand') {
+    for (const e of [...pc.consumeEvents(), ...gamepad.consumeEvents(), ...touch.consumeEvents()]) {
+      if (typeof e === 'object') {
+        // one arm's stroke (a trigger pulled, a swipe): paddling lies you down from sitting
+        if (e.stroke) {
+          if (surfer.state === STATE.SITTING) surfer.layDown();
+          if (surfer.state === STATE.PRONE && !surfer.diving) arms.stroke(e.stroke, e.strength);
+        } else if (e.flick) surfer.flick(e.flick, e.omega, e.sweep);
+      } else if (e === 'toggleStand') {
         if (surfer.state === STATE.PRONE) surfer.popUp();
         else surfer.layDown(); // (from sitting too)
       } else if (e === 'reset') respawn(true);
+      else if (e === 'pause') pause();
       else if (e === 'back' && surfer.state === STATE.PRONE) surfer.sit();
       else if (e === 'forward' && surfer.state === STATE.SITTING) surfer.layDown();
     }
     // starting to paddle lies you back down
     if (surfer.state === STATE.SITTING && pc.paddle > 0.15) surfer.layDown();
+  } else {
+    // paused: nothing carries over
+    pc.consumeEvents();
+    gamepad.consumeEvents();
+    touch.consumeEvents();
   }
 
   if (running && flying) {
@@ -1331,7 +1460,8 @@ function frame(time, xrFrame) {
     model.update(dt);
     const paddling = !inXR && acceptInput && surfer.state === STATE.PRONE;
     const pulse = arms.update(dt, paddling, inp.paddle, surfer.diving);
-    if (!inXR) inp = { ...inp, pulse };
+    // (strokes one arm at a time: their effort, and a harder right stroke turns you left)
+    if (!inXR) inp = { ...inp, pulse, turn: arms.turn, paddle: Math.max(inp.paddle, arms.manual ? arms.manualEffort : 0) };
     surfer.update(dt, inp);
     updateGame(dt);
   } else arms.update(0, false);
@@ -1567,6 +1697,11 @@ window.__surf = {
   ensureNet,
   get net() {
     return net;
+  },
+  gamepad,
+  touch,
+  get device() {
+    return device;
   },
   get spot() {
     return spot;

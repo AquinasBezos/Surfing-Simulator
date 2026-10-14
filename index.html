@@ -46,6 +46,23 @@
       <div id="debug"></div>
     </div>
 
+    <!-- touch screens: on-screen buttons (what the swipes do is in js/touch.js) -->
+    <div id="touch-ui" hidden>
+      <button type="button" class="t-btn t-pause" data-t="pause" aria-label="Pause"><span></span><span></span></button>
+      <button type="button" class="t-btn t-lineup" data-t="lineup" aria-label="Back to the lineup">↺</button>
+      <button type="button" class="t-btn t-crouch" data-t="crouch">Crouch</button>
+      <button type="button" class="t-btn t-charge" data-t="charge">Snap</button>
+      <button type="button" class="t-btn t-up" data-t="up" aria-label="Climb">▲</button>
+      <button type="button" class="t-btn t-down" data-t="down" aria-label="Descend">▼</button>
+      <div class="t-guide" aria-hidden="true">
+        <span class="g-left">Swipe down<br />to paddle</span>
+        <span class="g-board">Swipe up: stand<br />Down: duck dive<br />Tap: sit</span>
+        <span class="g-right">Swipe down<br />to paddle</span>
+        <span class="g-look">Drag to look</span>
+      </div>
+    </div>
+    <div id="rotate-hint" aria-hidden="true"><span>⟲</span>Turn your phone sideways</div>
+
     <div id="menu" class="menu">
       <div class="menu-bg" aria-hidden="true"></div>
       <div class="menu-inner">
@@ -181,7 +198,9 @@
             <div class="panel-body">
               <div class="tabs settings-tabs" role="tablist">
                 <button type="button" role="tab" class="tab on" data-stab="pc" aria-selected="true">Keyboard and mouse</button>
+                <button type="button" role="tab" class="tab" data-stab="pad" aria-selected="false">Controller</button>
                 <button type="button" role="tab" class="tab" data-stab="quest" aria-selected="false">Meta Quest</button>
+                <button type="button" role="tab" class="tab" data-stab="touch" aria-selected="false">Touch</button>
                 <button type="button" role="tab" class="tab" data-stab="general" aria-selected="false">General</button>
               </div>
 
@@ -196,6 +215,29 @@
                   <p class="note" id="binds-pc-note">Click a key, then press the new key or click with the mouse button you want. Backspace clears it, Esc cancels.</p>
                   <button type="button" class="btn small" id="binds-pc-reset">Reset to defaults</button>
                 </div>
+              </div>
+
+              <div class="stab-body" data-stab-body="pad" hidden>
+                <p class="note" id="pad-status"></p>
+                <table class="binds" id="binds-pad">
+                  <thead>
+                    <tr><th>Action</th><th>Button</th><th>Alternate</th></tr>
+                  </thead>
+                  <tbody></tbody>
+                </table>
+                <div class="binds-foot">
+                  <p class="note" id="binds-pad-note">Click a box, then press the controller button you want. Backspace clears it, Esc cancels.</p>
+                  <button type="button" class="btn small" id="binds-pad-reset">Reset to defaults</button>
+                </div>
+                <h3>Sticks</h3>
+                <p class="note lean-note">How much the sticks do for how far you push them. <b>Centre</b> is how much small pushes count, <b>max</b> how quickly a bigger push builds to the full amount: a low centre gives fine control near the middle and still a full turn at the edge. The dashed line is a straight response.</p>
+                <div class="lean-set" id="pad-curves"></div>
+                <label class="field"><span>Look speed (right stick pushed all the way) <output id="out-pad-look"></output></span><input type="range" id="set-pad-look" min="60" max="400" step="10" /></label>
+                <label class="check"><input type="checkbox" id="set-pad-invert" /> <span>Invert looking up and down</span></label>
+                <div class="binds-foot"><span></span><button type="button" class="btn small" id="pad-curves-reset">Reset sticks to defaults</button></div>
+                <h3>Flying a drone</h3>
+                <div class="wave-row"><span class="wave-label">Drone (with a controller, or in VR)</span><div class="seg" role="radiogroup" aria-label="Drone"><button type="button" role="radio" data-dronevr="camera">Camera drone</button><button type="button" role="radio" data-dronevr="fpv">FPV drone</button></div></div>
+                <p class="note dronevr-note"></p>
               </div>
 
               <div class="stab-body" data-stab-body="quest" hidden>
@@ -225,9 +267,32 @@
                 <p class="note lean-note">How hard the board carves and trims for how far you lean. <b>Centre</b> is how much small movements count, <b>max</b> how quickly a bigger lean builds to a full turn: a low centre and a high max keep small wobbles gentle and still let you turn hard. The dashed line is the old straight response. You can change these in VR too, and see where your own lean sits on the graph.</p>
                 <div class="lean-set" id="lean-set"></div>
                 <div class="binds-foot"><span></span><button type="button" class="btn small" id="lean-reset">Reset leaning to defaults</button></div>
-                <h3>Drone in VR</h3>
-                <div class="wave-row"><span class="wave-label">When you join a room as a drone and play in VR</span><div class="seg" role="radiogroup" aria-label="Drone in VR"><button type="button" role="radio" data-dronevr="camera">Camera drone</button><button type="button" role="radio" data-dronevr="fpv">FPV drone</button></div></div>
-                <p class="note" id="dronevr-note"></p>
+                <h3>Flying a drone</h3>
+                <div class="wave-row"><span class="wave-label">Drone (in VR, or with a controller)</span><div class="seg" role="radiogroup" aria-label="Drone"><button type="button" role="radio" data-dronevr="camera">Camera drone</button><button type="button" role="radio" data-dronevr="fpv">FPV drone</button></div></div>
+                <p class="note dronevr-note"></p>
+              </div>
+
+              <div class="stab-body" data-stab-body="touch" hidden>
+                <p class="note">On a phone or tablet, held sideways. Where your finger first touches decides what it does until you lift it, so a paddle stroke that starts high on the right and runs down into the look area never turns the view.</p>
+                <table class="binds gestures">
+                  <tbody>
+                    <tr><td>Paddle</td><td>Swipe down beside the board: on the left for your left arm, high on the right for your right arm. Faster swipes are harder strokes</td></tr>
+                    <tr><td>Steer and carve</td><td>Tilt the phone left and right</td></tr>
+                    <tr><td>Trim, stall, walk</td><td>Tilt it forward and back (the way you hold it when you start counts as level)</td></tr>
+                    <tr><td>Stand up / lie down</td><td>Swipe up on the board to stand; swipe down on it to go back to paddling</td></tr>
+                    <tr><td>Duck dive</td><td>While paddling, swipe down on the board and keep your finger there</td></tr>
+                    <tr><td>Sit up</td><td>Tap the board while paddling (tap again to lie down)</td></tr>
+                    <tr><td>Look around</td><td>Drag in the bottom right corner</td></tr>
+                    <tr><td>Crouch</td><td>The Crouch button on the left (it stays on until you tap it again)</td></tr>
+                    <tr><td>Tricks</td><td>Hold Snap on the left and swipe sideways in the look area: quick for a snap or tailslide, long for a cutback</td></tr>
+                    <tr><td>Pause, lineup</td><td>The buttons at the top left</td></tr>
+                  </tbody>
+                </table>
+                <h3>Tilt</h3>
+                <p class="note lean-note">How much tilting the phone does. <b>Centre</b> is how much small tilts count, <b>max</b> how quickly a bigger tilt builds to the full amount.</p>
+                <div class="lean-set" id="tilt-curves"></div>
+                <label class="field"><span>Look sensitivity (dragging) <output id="out-touch-look"></output></span><input type="range" id="set-touch-look" min="0.3" max="3" step="0.05" /></label>
+                <div class="binds-foot"><span></span><button type="button" class="btn small" id="tilt-reset">Reset tilt to defaults</button></div>
               </div>
 
               <div class="stab-body settings" data-stab-body="general" hidden>
@@ -262,6 +327,7 @@
             <div class="panel-body stack">
               <p class="room-meta" id="pause-room" hidden></p>
               <button type="button" class="btn primary" data-resume>Resume</button>
+              <button type="button" class="btn" data-lineup>Back to the lineup</button>
               <button type="button" class="btn" data-go="settings">Controls and settings</button>
               <div class="wave-pick"></div>
               <div class="tod-pick pause-tod"></div>

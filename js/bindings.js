@@ -44,6 +44,23 @@ const QUEST_BUTTON_NAMES = {
 };
 export const QUEST_OPTIONS = ['none', ...Object.keys(QUEST_BUTTON_NAMES).flatMap((b) => ['any', 'right', 'left'].map((h) => `${b}:${h}`))];
 
+// Game controller (standard mapping, Xbox names): two buttons per action, by button index.
+// The sticks are fixed: the left one is your movement keys, the right one looks around.
+export const PAD_ACTIONS = [
+  { id: 'paddleL', label: 'Paddle with your left arm (pull it, again and again)', when: 'prone', buttons: [6, -1] },
+  { id: 'paddleR', label: 'Paddle with your right arm', when: 'prone', buttons: [7, -1] },
+  { id: 'popup', label: 'Stand up / lie down', when: 'any', buttons: [0, -1] },
+  { id: 'duck', label: 'Duck dive (hold, while paddling)', when: 'prone', buttons: [1, -1] },
+  { id: 'crouch', label: 'Crouch (hold, while surfing)', when: 'standing', buttons: [1, -1] },
+  { id: 'charge', label: 'Trick: hold, then flick the right stick', when: 'standing', buttons: [4, 5] },
+  { id: 'lineup', label: 'Back to the lineup', when: 'any', buttons: [3, -1] },
+  { id: 'pause', label: 'Pause menu', when: 'any', buttons: [9, -1], required: true },
+];
+const PAD_NAMES = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu (Start)', 'Left stick click', 'Right stick click', 'D-pad up', 'D-pad down', 'D-pad left', 'D-pad right', 'Home'];
+export function padLabel(i) {
+  return i == null || i < 0 ? '' : PAD_NAMES[i] || `Button ${i}`;
+}
+
 const MODIFIERS = { ControlLeft: 'Control', ControlRight: 'Control', ShiftLeft: 'Shift', ShiftRight: 'Shift', AltLeft: 'Alt', AltRight: 'Alt' };
 export const normCode = (code) => MODIFIERS[code] || code;
 
@@ -72,6 +89,7 @@ export function questLabel(value) {
 // ---------------------------------------------------------------- state
 const defaultsPC = () => Object.fromEntries(PC_ACTIONS.map((a) => [a.id, [...a.keys]]));
 const defaultsQuest = () => Object.fromEntries(QUEST_ACTIONS.map((a) => [a.id, a.def]));
+const defaultsPad = () => Object.fromEntries(PAD_ACTIONS.map((a) => [a.id, [...a.buttons]]));
 
 function load() {
   let saved = {};
@@ -90,7 +108,13 @@ function load() {
     const v = saved.quest && saved.quest[a.id];
     if (QUEST_OPTIONS.includes(v) && !(a.required && v === 'none')) quest[a.id] = v;
   }
-  return { pc, quest };
+  const pad = defaultsPad();
+  const okButton = (v) => Number.isInteger(v) && v >= -1 && v < 32;
+  for (const a of PAD_ACTIONS) {
+    const b = saved.pad && saved.pad[a.id];
+    if (Array.isArray(b) && okButton(b[0]) && okButton(b[1]) && !(a.required && b[0] < 0 && b[1] < 0)) pad[a.id] = [b[0], b[1]];
+  }
+  return { pc, quest, pad };
 }
 
 export const controls = {
@@ -102,7 +126,7 @@ export const controls = {
   },
   _changed() {
     try {
-      localStorage.setItem(STORE, JSON.stringify({ pc: this.pc, quest: this.quest }));
+      localStorage.setItem(STORE, JSON.stringify({ pc: this.pc, quest: this.quest, pad: this.pad }));
     } catch (e) {
       /* storage unavailable */
     }
@@ -160,6 +184,47 @@ export const controls = {
     this.quest = next;
     this._changed();
     return { moved };
+  },
+
+  // Controller: is button i bound to this action?
+  padHas(id, i) {
+    return this.pad[id].includes(i);
+  },
+
+  // Bind controller button i to slot 0/1 of an action; like setPC, others that had it (and
+  // are active at the same time) get this slot's old button. Returns [{ label, now }], or
+  // { refused } if that would leave the pause menu without a button.
+  setPad(id, slot, i) {
+    const old = this.pad[id][slot];
+    if (i === old) return [];
+    const me = PAD_ACTIONS.find((a) => a.id === id);
+    const next = Object.fromEntries(Object.entries(this.pad).map(([k, v]) => [k, [...v]]));
+    next[id][slot] = i;
+    const moved = [];
+    if (i >= 0) {
+      for (const a of PAD_ACTIONS) {
+        if (a.id === id || !overlaps(a.when, me.when)) continue;
+        const j = next[a.id].indexOf(i);
+        if (j < 0) continue;
+        const free = old >= 0 && !PAD_ACTIONS.some((c) => c.id !== a.id && overlaps(c.when, a.when) && next[c.id].includes(old)) && !next[a.id].includes(old);
+        next[a.id][j] = free ? old : -1;
+        moved.push({ label: a.label, now: this.padText(a.id, next) });
+      }
+      if (next[id][1 - slot] === i) next[id][1 - slot] = -1;
+    }
+    for (const a of PAD_ACTIONS) if (a.required && next[a.id].every((b) => b < 0)) return { refused: `${a.label} needs a button` };
+    this.pad = next;
+    this._changed();
+    return moved;
+  },
+
+  resetPad() {
+    this.pad = defaultsPad();
+    this._changed();
+  },
+
+  padText(id, pad = this.pad) {
+    return pad[id].filter((b) => b >= 0).map(padLabel).join(' or ') || 'nothing';
   },
 
   resetPC() {
