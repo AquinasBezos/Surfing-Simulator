@@ -7,9 +7,10 @@ import { createTerrain, seabedY, setLandSpot, spotCollider } from './terrain.js'
 import { SPOTS, cleanSpot } from './spots.js';
 import { reefTexture } from './teahupoo.js';
 import { createWaterNormalTexture, createNoiseTexture } from './textures.js';
-import { createBoard } from './board.js';
+import { createBoard, railHalfWidth } from './board.js';
 import { Arms, setSkinColor } from './body.js';
 import { Spray } from './spray.js';
+import { SpraySheets } from './spraysheet.js';
 import { Surfer, STATE } from './surfer.js';
 import { PCInput } from './input.js';
 import { XRControls } from './xr.js';
@@ -145,6 +146,14 @@ const eyeSit = new THREE.Vector3(...EYE.sitting);
 
 const spray = new Spray(model, quality.particles);
 scene.add(spray.points);
+// sheets of water off the board (high quality): the bow wave along each front rail as you
+// paddle in, and the fan off the tail in a turn
+const sheets = quality.sheets ? new SpraySheets() : null;
+if (sheets) scene.add(sheets.group);
+const BOW_LOOK = { scale: [4, 4], churn: 1 };
+const FAN_LOOK = { scale: [7, 1], churn: 0 };
+const bowSheets = sheets ? [sheets.stream(48, 10, 0.045, BOW_LOOK), sheets.stream(48, 10, 0.045, BOW_LOOK)] : [];
+const tailFan = sheets ? [sheets.stream(120, 9, 0.035, FAN_LOOK), sheets.stream(120, 9, 0.035, { scale: [7, 1.3], churn: 0 })] : [];
 const remote = new RemotePlayers(scene, model);
 // fetch the character early (other players, the menu preview, and your own first-person arms)
 loadSurferModel()
@@ -302,6 +311,7 @@ function applyTimeOfDay(name) {
   waterUniforms.uUWLight.value.set(...T.underwater);
   underwater.setSun(T.sunDir, T.underwater);
   spray.material.uniforms.uColor.value.setRGB(...T.spray);
+  if (sheets) sheets.setLight(T.spray, sunDir, T.sunColor.map((c) => c * 1.6));
 }
 applySettings(settings);
 if (params.has('spot')) menu.setSpot(params.get('spot')); // (?spot=teahupoo: testing, not saved)
@@ -495,6 +505,7 @@ function startGame(mode, platform) {
   game.invulnerable = false;
   game.ride = null;
   spray.clear();
+  if (sheets) sheets.clear();
   underwater.clearBubbles();
   respawn(false);
   menu.setInGame(true);
@@ -693,16 +704,20 @@ function endRide(reason) {
   sendEvent({ k: 'ride', time: Math.round(r.time * 10) / 10, tube: Math.round(r.tube * 10) / 10, score });
 }
 
-// Dropping in: the nose knifes down the face and throws white water off both sides of it,
-// more the faster and steeper you go (and when you're caught and sliding down lying down).
-function noseSpray(dt) {
+// how hard the nose is driving into the water as you drop in (0..1)
+function dropPower() {
   const s = surfer.s;
   const st = surfer.state;
   const up = st === STATE.STANDING || st === STATE.POPUP;
-  if (surfer.air || !s.wave || !(up || surfer.catching) || s.un < -0.2 || s.un > 1.8) return;
+  if (surfer.air || !s.wave || !(up || surfer.catching) || s.un < -0.2 || s.un > 1.8) return 0;
   const down = Math.max(0, -surfer.vy); // m/s down the face
   const steep = Math.max(surfer.effPitch, Math.atan(down / Math.max(1, surfer.speed)));
-  const power = smoothstep(3.5, 9, surfer.speed) * smoothstep(0.1, 0.45, steep) * (up ? 1 : 0.6);
+  return smoothstep(3.5, 9, surfer.speed) * smoothstep(0.1, 0.45, steep) * (up ? 1 : 0.6);
+}
+
+// Dropping in: the nose knifes down the face and throws white water off both sides of it,
+// more the faster and steeper you go (and when you're caught and sliding down lying down).
+function noseSpray(dt, power) {
   if (power <= 0.01) return;
   const [fx, fz] = surfer.forward;
   const L = surfer.board.length;
@@ -731,6 +746,173 @@ function noseSpray(dt) {
       clump ? 0.07 + R() * 0.09 : 0.02 + R() * R() * 0.035,
       clump ? 0.7 : 1.3,
     );
+  }
+}
+
+// Sheets of water off the board (high quality).
+// - The bow wave: lying down and going fast through the water (paddling into a wave), the
+//   nose shoves it up into a churning wall along each front rail; standing, the same as the
+//   nose drives in on the drop.
+// - The fan: in a hard carve, and in a snap, cutback or tailslide, the tail throws a fan of
+//   spray out of the turn (other surfers' too).
+const _src = new THREE.Vector3();
+const _camVel = new THREE.Vector3();
+const _camLast = new THREE.Vector3();
+const _vin = new THREE.Vector3();
+const _vout = new THREE.Vector3();
+const _rp = new THREE.Vector3();
+const _re = new THREE.Euler();
+// a point on a board's rail: t along it (0 tail, 1 nose), side -1 left / +1 right
+function railPoint(t, side, out, pos, quat, type) {
+  return out
+    .set(side * railHalfWidth(type, t), 0, (0.5 - t) * (BOARDS[type] || BOARDS.shortboard).length)
+    .applyQuaternion(quat)
+    .add(pos);
+}
+function sheetFrom(S, p, dt, rate, emit) {
+  const prev = S.prev || (S.prev = p.clone());
+  S.run(dt, rate, (f) => emit(prev.x + (p.x - prev.x) * f, prev.y + (p.y - prev.y) * f, prev.z + (p.z - prev.z) * f));
+  prev.copy(p);
+}
+// drops thrown along with a sheet's column (somewhere across it, a little scattered), drawn
+// as streaks blurred over `blur` seconds
+function sheetDrops(x, y, z, n, width, dur, blur) {
+  const R = Math.random;
+  for (let i = 0; i < n; i++) {
+    const f = Math.pow(R(), 0.7),
+      j = 0.3 * f;
+    sheets.streaks.emit(
+      x,
+      y,
+      z,
+      (_vin.x + (_vout.x - _vin.x) * f) * (1 + (R() - 0.5) * j) + (R() - 0.5) * j * 4,
+      (_vin.y + (_vout.y - _vin.y) * f) * (1 + (R() - 0.5) * j) + (R() - 0.5) * j * 2,
+      (_vin.z + (_vout.z - _vin.z) * f) * (1 + (R() - 0.5) * j) + (R() - 0.5) * j * 4,
+      dur * (0.55 + R() * 0.6),
+      width * (0.5 + R() * R() * 1.5),
+      0.9 + R() * 0.8,
+      blur,
+    );
+  }
+}
+
+// The fan out of a turn, from a board at pos / quat moving at vel (heading fx, fz): `turn`
+// 0..1 how hard, `side` +1 turning left (the spray goes out to the right) or -1. F is the
+// fan's pair of streams (a high, wide curtain and a lower one inside it).
+function turnFan(F, dt, turn, side, pos, quat, type, vel, fx, fz) {
+  if (turn < 0.05 || !side) {
+    for (const S of F) S.idle();
+    return null;
+  }
+  for (const S of F)
+    if (side !== S.side) {
+      S.idle();
+      S.lastT = -1; // (the other way: a new sheet)
+      S.side = side;
+    }
+  const p = railPoint(0.17, side, _src, pos, quat, type);
+  p.y = model.heightAt(p.x, p.z) + 0.02;
+  const ox = -fz * side,
+    oz = fx * side;
+  const { x: vx, y: vy, z: vz } = vel;
+  for (let k = 0; k < F.length; k++) {
+    const S = F[k],
+      h = k ? 0.72 : 1; // (the inner curtain: lower and not so far out)
+    // out of the turn, up, and a little back
+    _vin.set(vx * 0.6 + ox * (1.5 + 3 * turn) * h - fx * 0.6 * turn, vy * 0.5 + (1.2 + 2 * turn) * h, vz * 0.6 + oz * (1.5 + 3 * turn) * h - fz * 0.6 * turn);
+    _vout.set(vx * 0.35 + ox * (3 + 5 * turn) * h - fx * 1.4 * turn, vy * 0.3 + (4 + 6 * turn) * h, vz * 0.35 + oz * (3 + 5 * turn) * h - fz * 1.4 * turn);
+    sheetFrom(S, p, dt, 80, (x, y, z) => {
+      S.emit(x, y, z, _vin, _vout, (0.9 + 0.6 * turn) * (k ? 0.85 : 1), Math.min(1, 0.4 + turn) * (k ? 0.8 : 1), 0.08, 0.5, 1.1);
+      sheetDrops(x, y, z, Math.round(turn * 12), 0.026, 1.1, 0.022);
+    });
+  }
+  return p;
+}
+
+function boardSheets(dt, drop) {
+  if (!sheets) return;
+  const st = surfer.state;
+  const ok = !surfer.air && !surfer.diving && surfer.turtle === 0 && (st === STATE.PRONE || st === STATE.POPUP || st === STATE.STANDING);
+  const vel = _rp.set(surfer.vx, surfer.vy, surfer.vz);
+  const [fx, fz] = surfer.forward;
+  const rx = -fz,
+    rz = fx;
+  // the bow wave
+  const rel = Math.hypot(vel.x, vel.z - (surfer.s.waterVz || 0)); // through the water
+  const bow = !ok ? 0 : st === STATE.STANDING ? drop * 0.75 : smoothstep(2.8, 5, rel);
+  for (let k = 0; k < 2; k++) {
+    const S = bowSheets[k],
+      side = k ? 1 : -1;
+    if (bow < 0.04) {
+      S.idle();
+      continue;
+    }
+    const ox = rx * side,
+      oz = rz * side;
+    const p = railPoint(0.87, side, _src, surfer.position, surfer.quat, boardType);
+    p.x += ox * 0.02;
+    p.z += oz * 0.02;
+    p.y = model.heightAt(p.x, p.z) + 0.01;
+    // up the rail in a wall that falls away outward, trailing back past you
+    _vin.set(vel.x * 0.78 + ox * (0.25 + 0.25 * bow), vel.y * 0.8 + 1.2 + 1.6 * bow, vel.z * 0.78 + oz * (0.25 + 0.25 * bow));
+    _vout.set(vel.x * 0.62 + ox * (1 + 1.6 * bow), vel.y * 0.7 + 1.5 + 1.9 * bow, vel.z * 0.62 + oz * (1 + 1.6 * bow));
+    sheetFrom(S, p, dt, 75, (x, y, z) => {
+      S.emit(x, y, z, _vin, _vout, 0.38 + 0.2 * bow, Math.min(1, bow * 1.3), 0.07, 0.8, 2.4);
+      sheetDrops(x, y, z, Math.round(bow * 4 * Math.random() + 0.3), 0.007, 0.5, 0.008);
+    });
+  }
+  // the fan out of a turn
+  let turn = 0,
+    side = 0;
+  if (ok && st === STATE.STANDING) {
+    // (a carve throws a smaller fan than a snap, cutback or tailslide)
+    turn = 0.6 * smoothstep(4, 12, Math.abs(surfer.yawRate) * surfer.speed) * smoothstep(3, 6, surfer.speed);
+    side = Math.sign(surfer.yawRate);
+    const m = surfer.move;
+    if (m && m.t < m.dur + m.slide) {
+      turn = Math.max(turn, (m.kind === 'cutback' ? 0.75 : 1) * smoothstep(2, 5, surfer.speed));
+      side = m.dir;
+    }
+  }
+  const p = turnFan(tailFan, dt, turn, side, surfer.position, surfer.quat, boardType, vel, fx, fz);
+  // loose drops around it in a carve (the moves throw their own: see the main loop)
+  if (p && !surfer.move) spray.fan(p.x, p.y, p.z, -fz * side - fx * 0.3, fx * side - fz * 0.3, turn * 0.35, dt);
+}
+
+// Other surfers' fans: how hard they're turning, from their board as it's shown here
+const remoteFans = new Map(); // avatar id -> { F, yaw, yawRate, p, v }
+const fanPool = [];
+function otherSheets(dt) {
+  if (!sheets) return;
+  for (const [id, m] of remoteFans)
+    if (!remote.avatars.has(id)) {
+      for (const S of m.F) S.clear();
+      fanPool.push(m.F);
+      remoteFans.delete(id);
+    }
+  if (dt <= 0) return;
+  for (const a of remote.avatars.values()) {
+    const c = a.cur;
+    let m = remoteFans.get(a.id);
+    if (!m) remoteFans.set(a.id, (m = { F: null, yaw: null, yawRate: 0, p: new THREE.Vector3(c.x, c.y, c.z), v: new THREE.Vector3() }));
+    const yaw = _re.setFromQuaternion(c.q, 'YXZ').y;
+    if (m.yaw !== null) {
+      const d = Math.atan2(Math.sin(yaw - m.yaw), Math.cos(yaw - m.yaw));
+      m.yawRate += (d / dt - m.yawRate) * (1 - Math.exp(-dt * 12));
+      const dv = _src.set(c.x - m.p.x, c.y - m.p.y, c.z - m.p.z).divideScalar(dt);
+      if (dv.lengthSq() > 900) dv.set(0, 0, 0); // (a jump)
+      m.v.lerp(dv, 1 - Math.exp(-dt * 8));
+    }
+    m.yaw = yaw;
+    m.p.set(c.x, c.y, c.z);
+    const speed = Math.hypot(m.v.x, m.v.z);
+    const up = a.visible && (c.state === POSE.STANDING || c.state === POSE.POPUP);
+    // (as yours: a carve throws a smaller fan than the sharper turn of a snap)
+    const a2 = Math.abs(m.yawRate) * speed;
+    const turn = up ? (0.6 * smoothstep(4, 12, a2) + 0.4 * smoothstep(14, 24, a2)) * smoothstep(3, 6, speed) : 0;
+    if (turn < 0.05 && !m.F) continue;
+    if (!m.F) m.F = fanPool.pop() || [sheets.stream(100, 9, 0.035, FAN_LOOK), sheets.stream(100, 9, 0.035, FAN_LOOK)];
+    turnFan(m.F, dt, turn, Math.sign(m.yawRate), m.p, c.q, a.boardType || 'shortboard', m.v, -Math.sin(yaw), -Math.cos(yaw));
   }
 }
 
@@ -825,6 +1007,7 @@ function wireNet(n) {
       model.setSchedule(n.seed, () => n.now(), n.waves);
       for (const a of remote.avatars.values()) a.snaps.length = 0;
       spray.clear();
+      if (sheets) sheets.clear();
       respawn(true); // the waves just changed under us: fade back to the lineup
     }
   });
@@ -1191,6 +1374,7 @@ function onResize() {
   renderer.setSize(w, h);
   document.documentElement.style.setProperty('--vh', `${h / 100}px`);
   spray.setViewportHeight(renderer.domElement.height);
+  if (sheets) sheets.setView(camera.fov, renderer.domElement.height);
   underwater.setViewportHeight(renderer.domElement.height);
 }
 window.addEventListener('resize', onResize);
@@ -1567,7 +1751,9 @@ function frame(time, xrFrame) {
     // (strokes one arm at a time: their effort, and a harder right stroke turns you left)
     if (!inXR) inp = { ...inp, pulse, turn: arms.turn, paddle: Math.max(inp.paddle, arms.manual ? arms.manualEffort : 0) };
     surfer.update(dt, inp);
-    noseSpray(dt);
+    const drop = dropPower();
+    noseSpray(dt, drop);
+    boardSheets(dt, drop);
     updateGame(dt);
   } else arms.update(0, false);
 
@@ -1599,6 +1785,14 @@ function frame(time, xrFrame) {
   vrMenu.update();
   ocean.update(focus);
   spray.update(running ? dt : 0, focus);
+  if (sheets) {
+    // (the camera's speed, for the drops' blur; not across a jump)
+    const cv = _camVel.subVectors(focus, _camLast).divideScalar(Math.max(dt, 1e-3));
+    if (!running || cv.lengthSq() > 900) cv.set(0, 0, 0);
+    _camLast.copy(focus);
+    sheets.setCameraVelocity(cv);
+    sheets.update(running ? dt : 0);
+  }
 
   // ---- other surfers
   if (game.mode === 'multi' && net && net.room) {
@@ -1608,6 +1802,7 @@ function frame(time, xrFrame) {
       sendPose();
     }
     remote.update(net.now(), focus, dt);
+    otherSheets(running ? dt : 0);
     hud.setPlayers(roomLine());
     // motor whine: your own drone, or the nearest one buzzing past
     const ds = flying ? { level: 0.7, throttle: drone.throttle } : remote.droneSound(focus);
@@ -1615,6 +1810,7 @@ function frame(time, xrFrame) {
   } else if (game.bots) {
     updateBots();
     remote.update(model.time, focus, dt);
+    otherSheets(running ? dt : 0);
   }
 
   // ---- water around the body, and is the camera under it?
@@ -1818,6 +2014,7 @@ window.__surf = {
   },
   applySpot,
   fish,
+  sheets,
   WAVE,
   peelPoints,
   begin: () => startGame('single', 'pc'),

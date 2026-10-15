@@ -424,3 +424,40 @@ export function createSoftDotTexture() {
   g.fillRect(0, 0, 64, 64);
   return new THREE.CanvasTexture(c);
 }
+
+// Spray sheets (spraysheet.js), tileable. R: broad noise that becomes streaks once stretched;
+// G: droplets of a few sizes; B: lacy, bubbly whitewater; A: fine grain (glints).
+export function createSprayTexture(size = 256) {
+  const rand = rng(4242);
+  const fbm = fbmFactory(4, 5, rand);
+  const dropsA = worleyFactory(12, rand);
+  const dropsB = worleyFactory(28, rand);
+  const lace = worleyFactory(9, rand);
+  const grain = fbmFactory(32, 2, rand);
+  const ss = (a, b, x) => {
+    const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++)
+    for (let x = 0; x < size; x++) {
+      const u = x / size,
+        v = y / size;
+      const i = (y * size + x) * 4;
+      data[i] = Math.max(0, Math.min(255, ((fbm(u, v) - 0.5) * 1.9 + 0.5) * 255));
+      const a = dropsA(u, v)[0],
+        b = dropsB(u, v)[0];
+      const drops = Math.max(1 - ss(0.1, 0.3, a), 0.8 * (1 - ss(0.08, 0.26, b)));
+      data[i + 1] = drops * 255;
+      const [l1, l2] = lace(u, v);
+      data[i + 2] = Math.max(0, 1 - (l2 - l1) / 0.3) * 255;
+      data[i + 3] = grain(u, v) * 255;
+    }
+  const tex = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  tex.magFilter = THREE.LinearFilter;
+  tex.minFilter = THREE.LinearMipmapLinearFilter;
+  tex.generateMipmaps = true;
+  tex.needsUpdate = true;
+  return tex;
+}

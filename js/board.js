@@ -67,6 +67,11 @@ function outlineAt(table, t) {
   return 0;
 }
 
+// half the board's width at t along it (0 = tail, 1 = nose), in metres: where the rail is
+export function railHalfWidth(type, t) {
+  return Math.max(outlineAt((SHAPES[type] || SHAPES.shortboard).outline, Math.min(1, Math.max(0, t))), 0);
+}
+
 // color: deck colour (#rrggbb), or null for the classic finish
 export function createBoard(type = 'shortboard', color = null) {
   const spec = SHAPES[type] || SHAPES.shortboard;

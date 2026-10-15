@@ -1,8 +1,9 @@
 // Global tunables for the simulator. Units are metres, seconds, radians.
 
 export const QUALITY = {
-  high: { rows: 384, cols: 300, cubeSize: 1024, particles: 1600, trees: 1400, pixelRatio: 2 },
-  low: { rows: 232, cols: 196, cubeSize: 512, particles: 600, trees: 500, pixelRatio: 1 },
+  // sheets: the sheets of spray off the board (the bow wave, the fan in a turn)
+  high: { rows: 384, cols: 300, cubeSize: 1024, particles: 1600, trees: 1400, pixelRatio: 2, sheets: true },
+  low: { rows: 232, cols: 196, cubeSize: 512, particles: 600, trees: 500, pixelRatio: 1, sheets: false },
 };
 
 // Breaking wave behaviour. The wave travels toward the beach (+z). The timing below is the
