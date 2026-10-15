@@ -37,30 +37,51 @@ export async function hashPasscode(roomId, passcode) {
 // ?relay sends everything through the TURN relay: a way to check the relay works.
 const RELAY_ONLY = new URLSearchParams(location.search).has('relay');
 
-// TURN servers for players whose networks block direct connections: the static list
-// plus whatever MP.turnCredentialsURL hands out (fetched once, reused for half an hour).
+// TURN servers for players whose networks block direct connections: the fixed list, the
+// relay login kept in the database at MP.turnPath (not in the code: see config.js), and
+// whatever MP.turnCredentialsURL hands out. Fetched when you join a room (alongside the
+// rest of joining: it takes about 0.1 s) and reused for half an hour; a failed fetch is
+// tried again next time. Only call it with the database online: a read started offline
+// waits until it's back.
 let fetchedRelays = null; // { servers, expires }
 let fetchingRelays = null;
+const timeout = (p, ms) => Promise.race([p, new Promise((_, no) => setTimeout(() => no(new Error('timed out')), ms))]);
+async function relaysFromDatabase() {
+  if (!MP.turnPath) return [];
+  const v = (await timeout(get(ref(db, MP.turnPath)), 6000)).val();
+  if (!v) return [];
+  // "username:password", or { username, credential }
+  let username, credential;
+  if (typeof v === 'string') {
+    const i = v.indexOf(':');
+    if (i < 1) return [];
+    username = v.slice(0, i).trim();
+    credential = v.slice(i + 1).trim();
+  } else ({ username, credential } = v);
+  if (!username || !credential) return [];
+  return [{ urls: MP.turnStun }, ...MP.turnHosts.map((urls) => ({ urls, username: String(username), credential: String(credential) }))];
+}
+async function relaysFromURL() {
+  if (!MP.turnCredentialsURL) return [];
+  const res = await fetch(MP.turnCredentialsURL, { signal: AbortSignal.timeout(6000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const data = await res.json();
+  let list = Array.isArray(data) ? data : data && data.iceServers;
+  if (list && !Array.isArray(list)) list = [list];
+  return (list || []).filter((s) => s && s.urls);
+}
 async function relayServers() {
   const servers = [...MP.turnServers];
-  if (!MP.turnCredentialsURL) return servers;
   if (!fetchedRelays || fetchedRelays.expires < Date.now()) {
     fetchingRelays ||= (async () => {
-      try {
-        const res = await fetch(MP.turnCredentialsURL, { signal: AbortSignal.timeout(6000) });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        let list = Array.isArray(data) ? data : data && data.iceServers;
-        if (list && !Array.isArray(list)) list = [list];
-        fetchedRelays = { servers: (list || []).filter((s) => s && s.urls), expires: Date.now() + 30 * 60 * 1000 };
-      } catch (e) {
-        console.warn('LINEUP: could not get TURN relay credentials', e);
-        fetchedRelays = { servers: [], expires: Date.now() + 60 * 1000 };
-      } finally {
-        fetchingRelays = null;
-      }
+      const got = await Promise.allSettled([relaysFromDatabase(), relaysFromURL()]);
+      for (const r of got) if (r.status === 'rejected') console.warn('LINEUP: could not get the TURN relay login', r.reason);
+      const list = got.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
+      fetchedRelays = list.length || got.every((r) => r.status === 'fulfilled') ? { servers: list, expires: Date.now() + 30 * 60 * 1000 } : null;
+      fetchingRelays = null;
+      return list;
     })();
-    await fetchingRelays;
+    return servers.concat(await fetchingRelays);
   }
   return servers.concat(fetchedRelays.servers);
 }
@@ -106,7 +127,6 @@ export class Net {
     this._unwatch = null;
     this._online = true;
     this.hasRelay = false; // a TURN relay was configured for the current room
-    relayServers(); // warm up: fetch relay credentials while the player browses rooms
   }
 
   on(event, fn) {

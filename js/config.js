@@ -174,12 +174,23 @@ export const MULTIPLAYER = {
   // TURN relay. Players connect directly when they can, but strict NATs and many
   // university, office and mobile networks block that; those players need a relay or
   // they can't see each other ("could not connect to peer ... after exchanging SDP").
-  // Free option: Metered Open Relay (20 GB a month). Sign up at
-  // https://dashboard.metered.ca/signup?tool=turnserver and paste the credentials URL
-  // it gives you, like 'https://yourapp.metered.live/api/v1/turn/credentials?apiKey=KEY'.
-  // Any URL returning a list of ICE servers (or { iceServers }) works here.
+  // The relay's username and password are NOT in this repo: they're kept in the database
+  // at turnPath (readable, but only writable from the Firebase console), as the string
+  // "username:password", and the game reads them when you join a room. See the README.
+  // To change them (say they leak), just edit that value: no code change.
+  turnPath: 'lineup/turn',
+  turnHosts: [
+    // Metered's relay (the addresses aren't secret; the username and password are)
+    'turn:standard.relay.metered.ca:80',
+    'turn:standard.relay.metered.ca:80?transport=tcp',
+    'turn:standard.relay.metered.ca:443',
+    'turns:standard.relay.metered.ca:443?transport=tcp',
+  ],
+  turnStun: 'stun:stun.relay.metered.ca:80',
+  // Alternatives: a URL returning a list of ICE servers (or { iceServers }), for example a
+  // small server that hands out short-lived credentials...
   turnCredentialsURL: '',
-  // ...or list TURN servers directly:
-  // { urls: 'turn:turn.example.com:3478', username: 'user', credential: 'pass' }
+  // ...or fixed TURN servers: { urls: 'turn:turn.example.com:3478', username: 'user', credential: 'pass' }
+  // (anything here is public, so only for servers that don't need protecting)
   turnServers: [],
 };

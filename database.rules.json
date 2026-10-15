@@ -1,6 +1,9 @@
 {
   "rules": {
     "lineup": {
+      "turn": {
+        ".read": true
+      },
       "rooms": {
         ".read": true,
         "$room": {

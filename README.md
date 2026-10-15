@@ -175,21 +175,25 @@ The Spark plan allows 100 simultaneous connections, 1 GB of storage and 10 GB of
 
 ### Database rules
 
-Test-mode rules expire after 30 days and leave the whole database open until then. Paste [database.rules.json](database.rules.json) into **Realtime Database → Rules** in the Firebase console. The rules allow only the room list and Trystero's handshake data, and limit each player entry to the fields and sizes the game writes. If you pasted them before locations were added, paste them again: with the old rules rooms still work, but the room list shows every room as Margaret River at midday. Players pick up the room's real location and time of day once they're connected.
+Test-mode rules expire after 30 days and leave the whole database open until then. Paste [database.rules.json](database.rules.json) into **Realtime Database → Rules** in the Firebase console. The rules allow only the room list, Trystero's handshake data and reading the relay login (see below), and limit each player entry to the fields and sizes the game writes. If you pasted them before locations were added, paste them again: with the old rules rooms still work, but the room list shows every room as Margaret River at midday. Players pick up the room's real location and time of day once they're connected.
 
 To use your own Firebase project instead, create a Realtime Database, paste in the rules, and set `MULTIPLAYER.databaseURL` in `js/config.js`.
 
 ### If players can't connect
 
-WebRTC connects players directly when it can, using public STUN servers to find a route. Strict NATs and many university, office and mobile networks block that, and then players in the same room can't see each other ("Couldn't connect to … one of your networks blocks direct connections"). The fix is a TURN relay, which passes the traffic through a server when a direct route fails. There are no reliable free relays that need no sign-up, so you need a (free) account:
+WebRTC connects players directly when it can, using public STUN servers to find a route. Strict NATs and many university, office and mobile networks block that, and then players in the same room can't see each other ("Couldn't connect to … one of your networks blocks direct connections"). The fix is a TURN relay, which passes the traffic through a server when a direct route fails. Players who can connect directly still do; only blocked connections use the relay.
 
-1. Sign up for Metered's Open Relay at <https://dashboard.metered.ca/signup?tool=turnserver> (20 GB of relay traffic a month free; a pair of players going through the relay uses roughly 20 MB an hour, so that's about 1,000 hours).
-2. Copy the TURN credentials URL from the dashboard. It looks like `https://yourapp.metered.live/api/v1/turn/credentials?apiKey=…`.
-3. Paste it into `MULTIPLAYER.turnCredentialsURL` in `js/config.js`, and push.
+The game uses Metered's TURN relay (<https://dashboard.metered.ca/signup?tool=turnserver>; 20 GB of relay traffic a month free, and a pair of players going through the relay uses roughly 20 MB an hour). **Its username and password are not in this repository.** They're kept in the Firebase database at `lineup/turn`, which the rules let anyone read but nobody write except from the Firebase console, and the game reads them when you join a room. To set it up:
 
-The game fetches relay credentials from that URL when you open Multiplayer. Players who can connect directly still do; only blocked connections use the relay. The key is visible to anyone who reads the page, which is how Metered expects it to be used, but it means others could use up your monthly allowance.
+1. In the Metered dashboard, create a TURN credential and copy its username and password.
+2. Paste the rules from [database.rules.json](database.rules.json) into **Realtime Database → Rules** and publish.
+3. In **Realtime Database → Data**, add a child `turn` under `lineup` (add `lineup` first if it isn't there) whose value is the text `username:password`.
 
-Any URL that returns a list of ICE servers works, for example a small Cloudflare Worker that mints Cloudflare TURN credentials (1,000 GB a month free). Fixed TURN servers can go in `MULTIPLAYER.turnServers` instead.
+That's all: no code change and nothing to push. To change the login (for example if it's being misused), make a new credential in Metered, delete the old one, and edit that value.
+
+Keeping the login out of the code means it isn't sitting in the repository for bots that scan GitHub for keys. It still isn't fully secret: a browser has to be given it to use the relay, so a determined player could find it in their browser's network tools. Without a server of your own, that can't be avoided. The most it can cost is your Metered allowance (and any balance you've topped up).
+
+Other options in `js/config.js`: `MULTIPLAYER.turnHosts` lists the relay addresses (change them for another TURN provider), `turnCredentialsURL` takes any URL that returns a list of ICE servers (such as a small server of your own that hands out short-lived logins), and `turnServers` takes fixed servers (these are public, so only for ones that don't need protecting).
 
 To check the relay works, open the game with `?relay` on two devices and join the same room. That forces every connection through the relay, so if the two players see each other, it's working.
 
