@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://simulator.surf/sitemap.xml
