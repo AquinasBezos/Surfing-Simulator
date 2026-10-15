@@ -77,7 +77,8 @@ async function relayServers() {
       const got = await Promise.allSettled([relaysFromDatabase(), relaysFromURL()]);
       for (const r of got) if (r.status === 'rejected') console.warn('LINEUP: could not get the TURN relay login', r.reason);
       const list = got.flatMap((r) => (r.status === 'fulfilled' ? r.value : []));
-      fetchedRelays = list.length || got.every((r) => r.status === 'fulfilled') ? { servers: list, expires: Date.now() + 30 * 60 * 1000 } : null;
+      // (only a login that was found is kept: with none, the next room you join looks again)
+      fetchedRelays = list.length ? { servers: list, expires: Date.now() + 30 * 60 * 1000 } : null;
       fetchingRelays = null;
       return list;
     })();
