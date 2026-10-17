@@ -18,7 +18,8 @@ import { OceanAudio } from './audio.js';
 import { Hud } from './hud.js';
 import { waterUniforms, addUnderwaterPass, addUnderwaterFog, UnderwaterEnv } from './underwater.js';
 import { Menu } from './menu.js';
-import { RemotePlayers, POSE } from './remote.js';
+import { RemotePlayers, POSE, POSE_DELAY } from './remote.js';
+import { ReplayBuffer, REPLAY_SECONDS, F as RF } from './replay.js';
 import { VRMenu } from './vrmenu.js';
 import { controls } from './bindings.js';
 import { Drone, createDroneModel, animateDrone } from './drone.js';
@@ -243,6 +244,17 @@ const menu = new Menu({
     menu.show('multi', { push: false });
   },
   onResume: () => resume(),
+  onReplay: () => {
+    if (startReplay()) {
+      resume();
+      replayToast();
+    }
+  },
+  onEndReplay: () => {
+    endReplay();
+    menu.setReplay({ can: canReplay(), active: false });
+    menu.focusFirst(menu.screens.pause);
+  },
   onLineup: () => {
     resume();
     respawn(true);
@@ -333,6 +345,19 @@ const vrMenu = new VRMenu(renderer, rig, camera, {
     closeVRMenu();
     respawn(true);
   },
+  onReplay: () => {
+    if (!startReplay()) return;
+    closeVRMenu();
+    replayToast();
+  },
+  onReplayControl: (c) => {
+    replayControl(c);
+    vrMenu.go('pause'); // (its labels change)
+  },
+  onEndReplay: () => {
+    endReplay();
+    vrMenu.go('pause');
+  },
   onRecalibrate: () => {
     closeVRMenu();
     xr.calibrate();
@@ -352,7 +377,9 @@ const vrMenu = new VRMenu(renderer, rig, camera, {
   setDroneVR: (mode) => menu.setDroneVR(mode, true),
   info: () => ({
     inRoom: game.mode === 'multi',
-    drone: game.role === 'drone',
+    drone: game.role === 'drone' || !!game.replay,
+    canReplay: canReplay(),
+    replay: game.replay ? { playing: game.replay.playing, speed: game.replay.speed } : null,
     subtitle: game.mode === 'multi' && net && net.roomInfo ? roomLine() : 'Singleplayer',
   }),
 });
@@ -466,6 +493,7 @@ function respawn(fadeOut = true) {
     game.teleport = 1.4;
     return;
   }
+  if (game.replay) return placeReplayDrone(game.replay.t);
   const s = lineupSpot();
   if (game.role === 'drone') {
     // hovering inside the break, looking out at the faces of the incoming waves
@@ -485,6 +513,8 @@ function respawn(fadeOut = true) {
 function startGame(mode, platform) {
   if (mode === 'multi' && (!net || !net.room)) return;
   audio.start();
+  endReplay();
+  replayBuf.clear();
   game.mode = mode;
   game.role = mode === 'multi' ? menu.role : 'surfer';
   if (net) net.setRole(game.role);
@@ -557,10 +587,13 @@ function pause() {
   game.paused = true;
   pc.enabled = false;
   menu.setInGame(true);
+  menu.setReplay({ can: canReplay(), active: !!game.replay });
   menu.show('pause');
 }
 
 function quitToMenu() {
+  endReplay();
+  replayBuf.clear();
   if (game.mode === 'multi') leaveRoom(); // finishes in the background
   game.started = false;
   game.paused = true;
@@ -623,6 +656,7 @@ renderer.xr.addEventListener('sessionstart', () => {
 });
 renderer.xr.addEventListener('sessionend', () => {
   vrMenu.hide();
+  menu.setReplay({ can: canReplay(), active: !!game.replay });
   ocean.setQuality(quality, qualityName === 'high');
   bodyFrame.add(arms.group);
   rig.position.set(0, 0, 0);
@@ -704,25 +738,78 @@ function endRide(reason) {
   sendEvent({ k: 'ride', time: Math.round(r.time * 10) / 10, tube: Math.round(r.tube * 10) / 10, score });
 }
 
-// how hard the nose is driving into the water as you drop in (0..1)
-function dropPower() {
+// What your board is doing to the water this frame. The spray off it all comes from this,
+// whether it's you now or a replay. position / quat / vel: the board; fx, fz: its heading;
+// type, L: which board; drop: how hard the nose drives in as you drop (0..1); bow: the bow
+// wave as you paddle in (0..1); turn, side: the fan out of a turn (0..1; side +1 turning
+// left); move, moveDir: a snap, cutback or tailslide throwing spray off the rail.
+const boardFx = { position: new THREE.Vector3(), quat: new THREE.Quaternion(), vel: new THREE.Vector3(), fx: 0, fz: -1, type: 'shortboard', L: 1.86, drop: 0, bow: 0, turn: 0, side: 0, move: 0, moveDir: 0 };
+
+// ...from you, now
+function liveBoardFx(out = boardFx) {
   const s = surfer.s;
   const st = surfer.state;
+  out.position.copy(surfer.position);
+  out.quat.copy(surfer.quat);
+  out.vel.set(surfer.vx, surfer.vy, surfer.vz);
+  [out.fx, out.fz] = surfer.forward;
+  out.type = boardType;
+  out.L = surfer.board.length;
+  // dropping in: the nose knifes down the face (lying down too, once you're caught)
   const up = st === STATE.STANDING || st === STATE.POPUP;
-  if (surfer.air || !s.wave || !(up || surfer.catching) || s.un < -0.2 || s.un > 1.8) return 0;
-  const down = Math.max(0, -surfer.vy); // m/s down the face
-  const steep = Math.max(surfer.effPitch, Math.atan(down / Math.max(1, surfer.speed)));
-  return smoothstep(3.5, 9, surfer.speed) * smoothstep(0.1, 0.45, steep) * (up ? 1 : 0.6);
+  out.drop = 0;
+  if (!surfer.air && s.wave && (up || surfer.catching) && s.un >= -0.2 && s.un <= 1.8) {
+    const down = Math.max(0, -surfer.vy); // m/s down the face
+    const steep = Math.max(surfer.effPitch, Math.atan(down / Math.max(1, surfer.speed)));
+    out.drop = smoothstep(3.5, 9, surfer.speed) * smoothstep(0.1, 0.45, steep) * (up ? 1 : 0.6);
+  }
+  const ok = !surfer.air && !surfer.diving && surfer.turtle === 0 && (st === STATE.PRONE || st === STATE.POPUP || st === STATE.STANDING);
+  // the bow wave: going fast through the water lying down, or the nose driving in on the drop
+  const rel = Math.hypot(surfer.vx, surfer.vz - (s.waterVz || 0));
+  out.bow = !ok ? 0 : st === STATE.STANDING ? out.drop * 0.75 : smoothstep(2.8, 5, rel);
+  // the fan out of a turn (a carve throws a smaller one than a snap, cutback or tailslide)
+  out.turn = 0;
+  out.side = 0;
+  out.move = 0;
+  out.moveDir = 0;
+  const m = surfer.move;
+  if (ok && st === STATE.STANDING) {
+    out.turn = 0.6 * smoothstep(4, 12, Math.abs(surfer.yawRate) * surfer.speed) * smoothstep(3, 6, surfer.speed);
+    out.side = Math.sign(surfer.yawRate);
+    if (m && m.t < m.dur + m.slide) {
+      out.turn = Math.max(out.turn, (m.kind === 'cutback' ? 0.75 : 1) * smoothstep(2, 5, surfer.speed));
+      out.side = m.dir;
+    }
+  }
+  if (m && m.t < m.dur + m.slide) {
+    out.move = m.kind === 'cutback' ? 0.6 : 1;
+    out.moveDir = m.dir;
+  }
+  return out;
+}
+
+// All the spray off the board
+function boardSpray(b, dt) {
+  noseSpray(b, dt);
+  // off the rail in a snap, cutback or tailslide
+  if (b.move) {
+    const ox = -b.fz * b.moveDir - b.fx * 0.5,
+      oz = b.fx * b.moveDir - b.fz * 0.5;
+    const n = Math.hypot(ox, oz);
+    spray.fan(b.position.x - b.fx * b.L * 0.35, b.position.y, b.position.z - b.fz * b.L * 0.35, ox / n, oz / n, b.move, dt);
+  }
+  boardSheets(b, dt);
 }
 
 // Dropping in: the nose knifes down the face and throws white water off both sides of it,
 // more the faster and steeper you go (and when you're caught and sliding down lying down).
-function noseSpray(dt, power) {
+function noseSpray(b, dt) {
+  const power = b.drop;
   if (power <= 0.01) return;
-  const [fx, fz] = surfer.forward;
-  const L = surfer.board.length;
-  const nx = surfer.x + fx * L * 0.42,
-    nz = surfer.z + fz * L * 0.42,
+  const { fx, fz, L } = b;
+  const { x: vx, y: vy, z: vz } = b.vel;
+  const nx = b.position.x + fx * L * 0.42,
+    nz = b.position.z + fz * L * 0.42,
     ny = model.heightAt(nx, nz) + 0.05;
   const R = Math.random;
   let n = 900 * (spray.max / 1600) * power * dt + R();
@@ -739,9 +826,9 @@ function noseSpray(dt, power) {
       nx - fx * along + (R() - 0.5) * 0.1,
       ny,
       nz - fz * along + (R() - 0.5) * 0.1,
-      surfer.vx * k + fx * fwd - fz * side * out,
-      surfer.vy * k + 1.2 + R() * 2 * power,
-      surfer.vz * k + fz * fwd + fx * side * out,
+      vx * k + fx * fwd - fz * side * out,
+      vy * k + 1.2 + R() * 2 * power,
+      vz * k + fz * fwd + fx * side * out,
       0.45 + R() * 0.5,
       clump ? 0.07 + R() * 0.09 : 0.02 + R() * R() * 0.035,
       clump ? 0.7 : 1.3,
@@ -829,17 +916,13 @@ function turnFan(F, dt, turn, side, pos, quat, type, vel, fx, fz) {
   return p;
 }
 
-function boardSheets(dt, drop) {
+function boardSheets(b, dt) {
   if (!sheets) return;
-  const st = surfer.state;
-  const ok = !surfer.air && !surfer.diving && surfer.turtle === 0 && (st === STATE.PRONE || st === STATE.POPUP || st === STATE.STANDING);
-  const vel = _rp.set(surfer.vx, surfer.vy, surfer.vz);
-  const [fx, fz] = surfer.forward;
+  const { vel, fx, fz } = b;
   const rx = -fz,
     rz = fx;
   // the bow wave
-  const rel = Math.hypot(vel.x, vel.z - (surfer.s.waterVz || 0)); // through the water
-  const bow = !ok ? 0 : st === STATE.STANDING ? drop * 0.75 : smoothstep(2.8, 5, rel);
+  const bow = b.bow;
   for (let k = 0; k < 2; k++) {
     const S = bowSheets[k],
       side = k ? 1 : -1;
@@ -849,7 +932,7 @@ function boardSheets(dt, drop) {
     }
     const ox = rx * side,
       oz = rz * side;
-    const p = railPoint(0.87, side, _src, surfer.position, surfer.quat, boardType);
+    const p = railPoint(0.87, side, _src, b.position, b.quat, b.type);
     p.x += ox * 0.02;
     p.z += oz * 0.02;
     p.y = model.heightAt(p.x, p.z) + 0.01;
@@ -862,21 +945,9 @@ function boardSheets(dt, drop) {
     });
   }
   // the fan out of a turn
-  let turn = 0,
-    side = 0;
-  if (ok && st === STATE.STANDING) {
-    // (a carve throws a smaller fan than a snap, cutback or tailslide)
-    turn = 0.6 * smoothstep(4, 12, Math.abs(surfer.yawRate) * surfer.speed) * smoothstep(3, 6, surfer.speed);
-    side = Math.sign(surfer.yawRate);
-    const m = surfer.move;
-    if (m && m.t < m.dur + m.slide) {
-      turn = Math.max(turn, (m.kind === 'cutback' ? 0.75 : 1) * smoothstep(2, 5, surfer.speed));
-      side = m.dir;
-    }
-  }
-  const p = turnFan(tailFan, dt, turn, side, surfer.position, surfer.quat, boardType, vel, fx, fz);
-  // loose drops around it in a carve (the moves throw their own: see the main loop)
-  if (p && !surfer.move) spray.fan(p.x, p.y, p.z, -fz * side - fx * 0.3, fx * side - fz * 0.3, turn * 0.35, dt);
+  const p = turnFan(tailFan, dt, b.turn, b.side, b.position, b.quat, b.type, vel, fx, fz);
+  // loose drops around it in a carve (the moves throw their own: boardSpray)
+  if (p && !b.move) spray.fan(p.x, p.y, p.z, -fz * b.side - fx * 0.3, fx * b.side - fz * 0.3, b.turn * 0.35, dt);
 }
 
 // Other surfers' fans: how hard they're turning, from their board as it's shown here
@@ -886,8 +957,11 @@ function otherSheets(dt) {
   if (!sheets) return;
   for (const [id, m] of remoteFans)
     if (!remote.avatars.has(id)) {
-      for (const S of m.F) S.clear();
-      fanPool.push(m.F);
+      // (their streams go back to the pool; someone who never turned hard has none)
+      if (m.F) {
+        for (const S of m.F) S.clear();
+        fanPool.push(m.F);
+      }
       remoteFans.delete(id);
     }
   if (dt <= 0) return;
@@ -1529,6 +1603,232 @@ function updateBots() {
   }
 }
 
+// ---------------------------------------------------------------- replay
+// Singleplayer keeps the last REPLAY_SECONDS of the waves and your surfer (replay.js). A
+// replay freezes the game where you paused it, plays that back (slowed down, paused, skipped
+// through) with you as the full character on your board, and you fly the drone round it.
+// Ending it puts the game back exactly as it was.
+const replayBuf = new ReplayBuffer(WAVE.slots);
+const replayCast = new RemotePlayers(scene, null); // you, in the replay
+const REPLAY_SPEEDS = [0.25, 0.5, 1];
+
+function recordFrame(b) {
+  const vr = renderer.xr.isPresenting;
+  replayBuf.record(model.time, model.waves, (f, o) => {
+    const q = surfer.quat;
+    f[o + RF.x] = surfer.x;
+    f[o + RF.y] = surfer.y;
+    f[o + RF.z] = surfer.z;
+    f[o + RF.qx] = q.x;
+    f[o + RF.qy] = q.y;
+    f[o + RF.qz] = q.z;
+    f[o + RF.qw] = q.w;
+    f[o + RF.state] = STATE_CODE[surfer.state];
+    f[o + RF.crouch] = surfer.crouch;
+    f[o + RF.foot] = surfer.footPos;
+    f[o + RF.lean] = surfer.leanX;
+    f[o + RF.effort] = surfer.paddleEffort;
+    f[o + RF.dive] = surfer.diveDepth;
+    f[o + RF.lookYaw] = vr ? xr.lookYaw || 0 : game.look.yaw;
+    f[o + RF.lookPitch] = vr ? xr.lookPitch || 0 : game.look.pitch;
+    f[o + RF.vx] = surfer.vx;
+    f[o + RF.vy] = surfer.vy;
+    f[o + RF.vz] = surfer.vz;
+    f[o + RF.drop] = b.drop;
+    f[o + RF.bow] = b.bow;
+    f[o + RF.turn] = b.turn;
+    f[o + RF.side] = b.side;
+    f[o + RF.move] = b.move;
+    f[o + RF.moveDir] = b.moveDir;
+  });
+}
+
+function canReplay() {
+  return game.started && game.mode === 'single' && replayBuf.count > 1 && replayBuf.duration > 2;
+}
+
+function startReplay() {
+  if (game.replay || !canReplay()) return false;
+  const t1 = replayBuf.lastT;
+  const t0 = Math.max(replayBuf.firstT, t1 - REPLAY_SECONDS);
+  // the game as it is now, to come back to (the surfer just waits: nothing moves it)
+  game.replay = { t0, t1, t: t0, speed: 1, playing: true, live: { time: model.time, waves: model.waves.map((w) => ({ ...w })), teleport: game.teleport } };
+  game.teleport = 0;
+  const a = replayCast.ensure('you', false);
+  a.setLook(menu.look);
+  a.setBoard(boardType, a.look.board);
+  replayCast.group.visible = true;
+  bodyFrame.visible = false; // (your first-person board and arms)
+  seekReplay(t0);
+  placeReplayDrone(t0);
+  return true;
+}
+
+function endReplay() {
+  const R = game.replay;
+  if (!R) return;
+  game.replay = null;
+  model.time = R.live.time;
+  R.live.waves.forEach((w, i) => Object.assign(model.waves[i], w));
+  game.teleport = R.live.teleport;
+  replayCast.clear();
+  replayCast.group.visible = false;
+  spray.clear();
+  if (sheets) sheets.clear();
+  underwater.clearBubbles();
+  bodyFrame.visible = game.role !== 'drone';
+  droneBody.visible = false;
+  audio.drone(0, 0);
+  game.snapCam = true;
+}
+
+// what to show for the replay: the timeline bar, and a line for the headset
+function replayInfo() {
+  const R = game.replay;
+  const t = R.t - R.t0,
+    dur = R.t1 - R.t0;
+  const clockText = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  const speed = R.speed === 1 ? '' : ` · ${R.speed}×`;
+  return { t, dur, playing: R.playing, speed: R.speed, device, line: `Replay ${clockText(t)} / ${clockText(dur)}${speed}${R.playing ? '' : ' · paused'}` };
+}
+
+function replayToast() {
+  if (renderer.xr.isPresenting) hud.toast(`Replay: the last ${Math.round(game.replay.t1 - game.replay.t0)} s. Fly the drone round it. ${controls.questText('pause')}: menu (pause, slow motion, end).`, 6);
+  else if (device === 'touch') hud.toast('Replay: drag on the left to fly, on the right to turn · the bar at the bottom plays, pauses and skips', 6);
+  else if (device === 'pad') hud.toast('Replay: fly the drone · X pause · D-pad ◀ ▶ skip, ▲ ▼ speed · Y restart', 6);
+  else hud.toast(`Replay: fly the drone (${controls.pcKey('forward')} ${controls.pcKey('left')} ${controls.pcKey('back')} ${controls.pcKey('right')}, mouse) · K pause · J / L skip 5 s · [ ] speed · R restart`, 7);
+}
+
+// the drone near you at time t, looking at you from the beach side
+function placeReplayDrone(t) {
+  const i = Math.max(0, replayBuf.find(t));
+  const x = replayBuf.get(i, RF.x),
+    y = replayBuf.get(i, RF.y),
+    z = replayBuf.get(i, RF.z);
+  const cx = x + 4,
+    cy = Math.max(y, model.heightAt(x, z)) + 4.5,
+    cz = z + 10;
+  const dx = x - cx,
+    dy = y + 0.6 - cy,
+    dz = z - cz;
+  drone.reset(cx, cy, cz, Math.atan2(-dx, -dz), Math.atan2(dy, Math.hypot(dx, dz)));
+}
+
+// a jump in the replay's time: the spray in the air doesn't belong there
+function seekReplay(t) {
+  const R = game.replay;
+  R.t = Math.min(R.t1, Math.max(R.t0, t));
+  spray.clear();
+  if (sheets) sheets.clear();
+  underwater.clearBubbles();
+  showReplay(0);
+}
+
+function replayControl(c) {
+  const R = game.replay;
+  if (!R) return;
+  if (c === 'toggle') {
+    R.playing = !R.playing;
+    if (R.playing && R.t >= R.t1 - 0.01) seekReplay(R.t0);
+  } else if (c === 'back') seekReplay(R.t - 5);
+  else if (c === 'fwd') seekReplay(R.t + 5);
+  else if (c === 'restart') {
+    seekReplay(R.t0);
+    R.playing = true;
+  } else if (c === 'slower' || c === 'faster' || c === 'speed') {
+    const k = REPLAY_SPEEDS.indexOf(R.speed);
+    const n = c === 'speed' ? (k + 1) % REPLAY_SPEEDS.length : Math.min(REPLAY_SPEEDS.length - 1, Math.max(0, k + (c === 'faster' ? 1 : -1)));
+    R.speed = REPLAY_SPEEDS[n];
+  } else if (typeof c === 'number') seekReplay(R.t0 + c * (R.t1 - R.t0)); // (0..1 along the bar)
+  else if (c === 'end') {
+    endReplay();
+    pause();
+  }
+}
+
+// One frame of replay: move its clock on (round to the start again at the end). Returns how
+// far the world moves this frame (the spray, the fish and the water run on it).
+function updateReplay(dt) {
+  const R = game.replay;
+  const rdt = R.playing ? dt * R.speed : 0;
+  if (rdt > 0) {
+    R.t += rdt;
+    if (R.t > R.t1) {
+      seekReplay(R.t0);
+      return 0;
+    }
+  }
+  showReplay(rdt);
+  return rdt;
+}
+
+const _ra = {},
+  _rb = {};
+const _rq = new THREE.Quaternion();
+const _ry = new THREE.Euler(0, 0, 0, 'YXZ');
+function replaySnap(i, out) {
+  const g = (f) => replayBuf.get(i, f);
+  out.t = g(RF.t);
+  out.x = g(RF.x);
+  out.y = g(RF.y);
+  out.z = g(RF.z);
+  out.qx = g(RF.qx);
+  out.qy = g(RF.qy);
+  out.qz = g(RF.qz);
+  out.qw = g(RF.qw);
+  out.state = Math.round(g(RF.state));
+  out.crouch = g(RF.crouch);
+  out.foot = g(RF.foot);
+  out.lean = g(RF.lean);
+  out.effort = g(RF.effort);
+  out.dive = g(RF.dive);
+  out.lookYaw = g(RF.lookYaw);
+  out.lookPitch = g(RF.lookPitch);
+  out.vx = g(RF.vx);
+  out.vy = g(RF.vy);
+  out.vz = g(RF.vz);
+  return out;
+}
+
+// the waves, you and the spray off your board at the replay's time
+function showReplay(rdt) {
+  const R = game.replay;
+  const i = replayBuf.find(R.t);
+  const j = Math.min(i + 1, replayBuf.count - 1);
+  const k = replayBuf.applyWaves(model, i, R.t);
+  const a = replayCast.ensure('you', false);
+  const s0 = replaySnap(i, _ra),
+    s1 = replaySnap(j, _rb);
+  a.snaps.length = 0;
+  a.snaps.push(s0);
+  if (j !== i) a.snaps.push(s1);
+  replayCast.update(R.t + POSE_DELAY, focus, rdt);
+  if (rdt <= 0) return;
+  // what the board was doing to the water, between the two frames
+  const b = boardFx;
+  b.position.set(s0.x + (s1.x - s0.x) * k, s0.y + (s1.y - s0.y) * k, s0.z + (s1.z - s0.z) * k);
+  b.quat.set(s0.qx, s0.qy, s0.qz, s0.qw).slerp(_rq.set(s1.qx, s1.qy, s1.qz, s1.qw), k);
+  b.vel.set(s0.vx + (s1.vx - s0.vx) * k, s0.vy + (s1.vy - s0.vy) * k, s0.vz + (s1.vz - s0.vz) * k);
+  const yaw = _ry.setFromQuaternion(b.quat).y;
+  b.fx = -Math.sin(yaw);
+  b.fz = -Math.cos(yaw);
+  b.type = boardType;
+  b.L = (BOARDS[boardType] || BOARDS.shortboard).length;
+  const n = k < 0.5 ? i : j;
+  for (const f of ['drop', 'bow', 'turn', 'side', 'move', 'moveDir']) b[f] = replayBuf.get(n, RF[f]);
+  boardSpray(b, rdt);
+}
+
+// replay keys (not ones a control uses): K or P pause, J / L skip 5 s, [ ] speed
+const REPLAY_KEYS = { KeyK: 'toggle', KeyP: 'toggle', KeyJ: 'back', KeyL: 'fwd', BracketLeft: 'slower', BracketRight: 'faster' };
+window.addEventListener('keydown', (e) => {
+  const c = REPLAY_KEYS[e.code];
+  if (!c || !game.replay || game.paused || menu.isOpen || e.repeat) return;
+  if (Object.values(controls.pc).some((keys) => keys.includes(e.code))) return;
+  replayControl(c);
+});
+hud.onReplay = (c) => game.replay && replayControl(c);
+
 // ---------------------------------------------------------------- main loop
 const clock = new THREE.Clock();
 let fpsAcc = 0,
@@ -1657,7 +1957,8 @@ function frame(time, xrFrame) {
   // multiplayer keeps the shared world moving even while the menu is open
   const running = game.started && (!game.paused || game.mode === 'multi');
   const acceptInput = game.started && !game.paused;
-  const flying = game.started && game.role === 'drone';
+  const replaying = !!game.replay;
+  const flying = game.started && (game.role === 'drone' || replaying);
   let inp = NO_INPUT;
   let fly = NO_FLIGHT;
   pc.update(dt);
@@ -1676,7 +1977,7 @@ function frame(time, xrFrame) {
       if (e === 'pause') vrMenu.open ? closeVRMenu() : game.started && openVRMenu();
       else if (!acceptInput) continue; // the headset menu is open
       else if (flying) {
-        if (e === 'reset') respawn(true);
+        if (e === 'reset') replaying ? replayControl('restart') : respawn(true);
         else if (e === 'recalibrate') xr.calibrate(); // re-centre the view under the drone
       } else if (typeof e === 'object' && e.flick) surfer.flick(e.flick, e.omega, e.sweep);
       else if (e === 'recalibrate') {
@@ -1691,8 +1992,9 @@ function frame(time, xrFrame) {
   } else if (acceptInput && flying) {
     fly = droneInputPC(dt);
     for (const e of [...pc.consumeEvents(), ...gamepad.consumeEvents(), ...touch.consumeEvents()]) {
-      if (e === 'reset') respawn(true);
+      if (e === 'reset') replaying ? replayControl('restart') : respawn(true);
       else if (e === 'pause') pause();
+      else if (e && e.replay && replaying) replayControl(e.replay);
     }
   } else if (acceptInput) {
     // keyboard and mouse, a controller and a touch screen all at once (the phone's tilt
@@ -1741,7 +2043,11 @@ function frame(time, xrFrame) {
     touch.consumeEvents();
   }
 
-  if (running && flying) {
+  let simDt = running ? dt : 0;
+  if (running && replaying) {
+    simDt = updateReplay(dt);
+    updateDrone(dt, fly); // (the drone flies in real time, whatever the replay's speed)
+  } else if (running && flying) {
     model.update(dt);
     updateDrone(dt, fly);
   } else if (running) {
@@ -1751,9 +2057,8 @@ function frame(time, xrFrame) {
     // (strokes one arm at a time: their effort, and a harder right stroke turns you left)
     if (!inXR) inp = { ...inp, pulse, turn: arms.turn, paddle: Math.max(inp.paddle, arms.manual ? arms.manualEffort : 0) };
     surfer.update(dt, inp);
-    const drop = dropPower();
-    noseSpray(dt, drop);
-    boardSheets(dt, drop);
+    boardSpray(liveBoardFx(), dt);
+    if (game.mode === 'single') recordFrame(boardFx);
     updateGame(dt);
   } else arms.update(0, false);
 
@@ -1784,14 +2089,14 @@ function frame(time, xrFrame) {
   camera.getWorldPosition(focus);
   vrMenu.update();
   ocean.update(focus);
-  spray.update(running ? dt : 0, focus);
+  spray.update(simDt, focus);
   if (sheets) {
-    // (the camera's speed, for the drops' blur; not across a jump)
+    // (the camera's speed, for the drops' blur, on the spray's clock; not across a jump)
     const cv = _camVel.subVectors(focus, _camLast).divideScalar(Math.max(dt, 1e-3));
     if (!running || cv.lengthSq() > 900) cv.set(0, 0, 0);
     _camLast.copy(focus);
-    sheets.setCameraVelocity(cv);
-    sheets.update(running ? dt : 0);
+    sheets.setCameraVelocity(cv.multiplyScalar(simDt / Math.max(dt, 1e-3)));
+    sheets.update(simDt);
   }
 
   // ---- other surfers
@@ -1812,6 +2117,7 @@ function frame(time, xrFrame) {
     remote.update(model.time, focus, dt);
     otherSheets(running ? dt : 0);
   }
+  if (replaying) audio.drone(running ? 0.7 : 0, drone.throttle); // (your drone's motors)
 
   // ---- water around the body, and is the camera under it?
   const hBoard = model.heightAt(surfer.x, surfer.z);
@@ -1829,25 +2135,13 @@ function frame(time, xrFrame) {
   const gx = surfer._gx || 0,
     gz = surfer._gz || 0;
   const waterY = (x, z) => hBoard + gx * (x - surfer.x) + gz * (z - surfer.z);
-  if (running) emitBubbles(dt, camUnder, camDepth);
+  if (running && !replaying) emitBubbles(dt, camUnder, camDepth);
   camera.getWorldDirection(_v);
-  fish.update(running ? dt : 0, camUnder, focus, _v, (x, z) => model.heightAt(x, z), seabedY);
-  underwater.update(running ? dt : 0, focus, camUnder, camDepth, focus.y - seabedY(focus.x, focus.z), waterY, model.time);
+  fish.update(simDt, camUnder, focus, _v, (x, z) => model.heightAt(x, z), seabedY);
+  underwater.update(simDt, focus, camUnder, camDepth, focus.y - seabedY(focus.x, focus.z), waterY, model.time);
   if (camUnder !== game.wasUnder) {
     game.splash = 0.18; // crossing the surface
     game.wasUnder = camUnder;
-  }
-
-  // ---- spray off the rail during manoeuvres
-  if (surfer.move && running) {
-    const m = surfer.move;
-    const [fx, fz] = surfer.forward;
-    const L = surfer.board.length;
-    const ox = -fz * m.dir - fx * 0.5,
-      oz = fx * m.dir - fz * 0.5;
-    const n = Math.hypot(ox, oz);
-    const power = m.kind === 'cutback' ? 0.6 : 1;
-    if (m.t < m.dur + m.slide) spray.fan(surfer.x - fx * L * 0.35, surfer.y, surfer.z - fz * L * 0.35, ox / n, oz / n, power, dt);
   }
 
   // ---- fades: teleports, whitewater flash on wipeouts, surface crossings
@@ -1859,7 +2153,7 @@ function frame(time, xrFrame) {
     if (before > 0.7 && game.teleport <= 0.7) respawn(false);
     fadeAlpha = Math.max(0, 1 - Math.abs(game.teleport - 0.7) / 0.7);
   }
-  if (surfer.state === STATE.WIPEOUT && fadeAlpha < 0.5) {
+  if (surfer.state === STATE.WIPEOUT && fadeAlpha < 0.5 && !replaying) {
     fadeColor = 0xcdeee9;
     fadeAlpha = Math.max(fadeAlpha, 0.7 * Math.exp(-surfer.stateTime * 1.6));
   } else if (game.splash > 0 && fadeAlpha < 0.2) {
@@ -1908,6 +2202,7 @@ function frame(time, xrFrame) {
     dbg = `${fps.toFixed(0)} fps | x ${surfer.x.toFixed(1)} z ${surfer.z.toFixed(1)} | un ${s.un?.toFixed(2)} yb ${s.yb?.toFixed(2)} b ${s.b?.toFixed(2)} k ${s.kappa?.toFixed(2)} H ${s.H?.toFixed(2)} | v ${surfer.speed.toFixed(2)} pitch ${((surfer.effPitch * 180) / Math.PI).toFixed(0)}° ceil ${surfer.ceiling.toFixed(2)}`;
   }
   if (game.mode !== 'multi') hud.setPlayers('');
+  hud.setReplay(replaying ? replayInfo() : null);
   hud.update(
     dt,
     {
@@ -1920,6 +2215,7 @@ function frame(time, xrFrame) {
       paddle: !flying && surfer.state === STATE.PRONE && !surfer.diving ? surfer.paddleEffort : null,
       foot: !flying && B.walk && surfer.state === STATE.STANDING ? (surfer.footPos - B.footMin) / (B.footMax - B.footMin) : null,
       debug: dbg,
+      vrLine: replaying ? replayInfo().line : '',
     },
     inXR && !vrMenu.open,
   );
@@ -1955,6 +2251,7 @@ function waveLabelFor(w) {
 }
 
 function nextWaveInfo() {
+  if (game.replay) return '';
   if (surfer.state === STATE.WIPEOUT) return '';
   if (surfer.state !== STATE.PRONE) {
     const r = game.ride;
@@ -2015,6 +2312,11 @@ window.__surf = {
   applySpot,
   fish,
   sheets,
+  replayBuf,
+  startReplay,
+  endReplay,
+  replayControl,
+  replayCast,
   WAVE,
   peelPoints,
   begin: () => startGame('single', 'pc'),

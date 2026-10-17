@@ -43,6 +43,21 @@
       <div id="hud-ride"></div>
       <div id="toast"></div>
       <ul id="hud-feed"></ul>
+      <!-- a replay's timeline (singleplayer) -->
+      <div id="replay-bar" hidden>
+        <div class="rp-row">
+          <span class="rp-tag">Replay</span>
+          <button type="button" class="rp-btn" data-rp="restart" aria-label="Restart">⏮</button>
+          <button type="button" class="rp-btn" data-rp="back" aria-label="Back 5 seconds">−5</button>
+          <button type="button" class="rp-btn rp-play" data-rp="toggle" aria-label="Play or pause">❚❚</button>
+          <button type="button" class="rp-btn" data-rp="fwd" aria-label="Forward 5 seconds">+5</button>
+          <div class="rp-track" aria-label="Replay timeline"><i></i><b></b></div>
+          <span class="rp-time">0:00 / 0:30</span>
+          <button type="button" class="rp-btn rp-speed" data-rp="speed" aria-label="Speed">1×</button>
+          <button type="button" class="rp-btn rp-end" data-rp="end">End</button>
+        </div>
+        <div class="rp-keys"></div>
+      </div>
       <div class="hud-bl" id="hud-hint">R lineup · Esc menu</div>
       <div id="debug"></div>
     </div>
@@ -338,6 +353,8 @@
             <div class="panel-body stack">
               <p class="room-meta" id="pause-room" hidden></p>
               <button type="button" class="btn primary" data-resume>Resume</button>
+              <button type="button" class="btn" data-replay hidden>Replay the last 30 s</button>
+              <button type="button" class="btn" data-endreplay hidden>End replay</button>
               <button type="button" class="btn" data-lineup>Back to the lineup</button>
               <button type="button" class="btn touch-only" data-level>Recalibrate tilt</button>
               <button type="button" class="btn" data-go="settings">Controls and settings</button>

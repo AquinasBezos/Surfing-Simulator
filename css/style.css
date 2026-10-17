@@ -2192,3 +2192,182 @@ body[data-device='touch'] #toast {
     grid-template-columns: 1fr;
   }
 }
+
+/* ---------- replay (singleplayer): the timeline bar along the bottom ---------- */
+#replay-bar {
+  position: absolute;
+  left: 50%;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  width: min(760px, calc(100vw - 24px));
+  padding: 8px 12px 6px;
+  border-radius: 16px;
+  background: rgba(6, 22, 30, 0.62);
+  backdrop-filter: blur(6px);
+  pointer-events: auto;
+  text-shadow: none;
+}
+
+#replay-bar[hidden] {
+  display: none;
+}
+
+/* (the bar takes the bottom of the screen: the corner hints and feed move up) */
+#hud:has(#replay-bar:not([hidden])) .hud-bl {
+  display: none;
+}
+
+#hud:has(#replay-bar:not([hidden])) #hud-feed {
+  bottom: 96px;
+}
+
+.rp-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.rp-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px 2px;
+  border-radius: 8px;
+  background: #e8483a;
+  color: #fff;
+  font: 400 13px/1.2 var(--chunky);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transform: rotate(-3deg);
+}
+
+.rp-tag::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #fff;
+  animation: rp-blink 1.2s steps(2, jump-none) infinite;
+}
+
+#replay-bar.paused .rp-tag::before {
+  animation: none;
+  opacity: 0.4;
+}
+
+@keyframes rp-blink {
+  50% {
+    opacity: 0.25;
+  }
+}
+
+.rp-btn {
+  flex: none;
+  min-width: 36px;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--ink);
+  font: 600 13px/1 var(--font);
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+.rp-btn:hover,
+.rp-btn:focus-visible {
+  border-color: var(--sky);
+  background: rgba(143, 208, 238, 0.16);
+  outline: none;
+}
+
+.rp-play {
+  min-width: 44px;
+  background: var(--sky);
+  border: none;
+  color: #072230;
+}
+
+.rp-track {
+  position: relative;
+  flex: 1;
+  min-width: 60px;
+  height: 22px;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.rp-track::before,
+.rp-track i {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 9px;
+  height: 4px;
+  border-radius: 2px;
+}
+
+.rp-track::before {
+  right: 0;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.rp-track i {
+  width: 0;
+  background: #e8483a;
+}
+
+.rp-track b {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
+}
+
+.rp-time {
+  flex: none;
+  min-width: 78px;
+  color: var(--ink-dim);
+  font: 600 13px/1 var(--font);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.rp-keys {
+  margin-top: 5px;
+  color: var(--ink-faint);
+  font-size: 11.5px;
+  text-align: center;
+}
+
+.rp-keys:empty {
+  display: none;
+}
+
+/* small screens: fewer, bigger targets */
+@media (max-width: 560px) {
+  #replay-bar {
+    padding: 6px 8px;
+  }
+
+  .rp-row {
+    gap: 6px;
+  }
+
+  .rp-tag,
+  .rp-time,
+  .rp-btn[data-rp='restart'] {
+    display: none;
+  }
+}
+
+body[data-device='touch'] .rp-btn {
+  min-width: 42px;
+  height: 38px;
+}

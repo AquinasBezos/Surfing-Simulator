@@ -8,6 +8,8 @@
 //                   is a tailslide, a flick a snap, held over longer a cutback
 //   Y             : back to the lineup
 //   Menu (Start)  : pause menu
+//   (in a replay) X play / pause, D-pad left / right skip, up / down speed: unless an action
+//                 has been put on one of those
 // and the sticks (fixed): the left one is your movement keys (steer / carve, lean forward and
 // back or walk the longboard; while paddling, pull it back to sit up and push it up to lie
 // down), the right one looks around. Both go through the sensitivity curves (settings).
@@ -117,6 +119,16 @@ export class GamepadInput {
     if (edge('popup')) this.events.push('toggleStand');
     if (edge('lineup')) this.events.push('reset');
     if (edge('pause')) this.events.push('pause');
+    // replay controls, on buttons no action uses
+    const free = (i) => pressed[i] && !this.prev[i] && !Object.values(controls.pad).some((list) => list.includes(i));
+    for (const [i, c] of [
+      [2, 'toggle'],
+      [14, 'back'],
+      [15, 'fwd'],
+      [12, 'faster'],
+      [13, 'slower'],
+    ])
+      if (free(i)) this.events.push({ replay: c });
     // the left stick like W / S: pushed up / pulled back (sits you up while paddling)
     const ed = ly < -0.7 ? 1 : ly > 0.7 ? -1 : Math.abs(ly) < 0.4 ? 0 : this.stickEdge;
     if (ed !== this.stickEdge && ed) this.events.push(ed > 0 ? 'forward' : 'back');

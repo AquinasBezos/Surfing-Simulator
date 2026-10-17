@@ -369,6 +369,17 @@ export class Menu {
     this.root.classList.toggle('ingame', on);
   }
 
+  // The pause screen's replay buttons: can (there's something to replay: singleplayer),
+  // active (a replay is on: resume it or end it)
+  setReplay({ can, active }) {
+    const q = (sel) => this.root.querySelector(sel);
+    q('[data-replay]').hidden = active || !can;
+    q('[data-endreplay]').hidden = !active;
+    q('[data-lineup]').hidden = active;
+    q('[data-resume]').textContent = active ? 'Resume replay' : 'Resume';
+    document.getElementById('pause-title').textContent = active ? 'Replay paused' : 'Paused';
+  }
+
   onKey(e) {
     if (!this.isOpen) return;
     const tag = document.activeElement && document.activeElement.tagName;
@@ -428,6 +439,8 @@ export class Menu {
         return this.h.onPlay && this.h.onPlay(mode, play.dataset.play);
       }
       if (e.target.closest('[data-resume]')) return this.h.onResume && this.h.onResume();
+      if (e.target.closest('[data-replay]')) return this.h.onReplay && this.h.onReplay();
+      if (e.target.closest('[data-endreplay]')) return this.h.onEndReplay && this.h.onEndReplay();
       if (e.target.closest('[data-lineup]')) return this.h.onLineup && this.h.onLineup();
       if (e.target.closest('[data-level]')) return this.h.onLevel && this.h.onLevel(true);
       if (e.target.closest('[data-quit]')) return this.h.onQuit && this.h.onQuit();

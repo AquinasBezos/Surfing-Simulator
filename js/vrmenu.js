@@ -112,8 +112,16 @@ export class VRMenu {
     const items = [];
     const add = (o) => items.push(o);
     if (this.screen === 'pause') {
-      const drone = this.h.info().drone;
-      add({ label: 'Resume', primary: true, onClick: () => this.h.onResume() });
+      const info = this.h.info();
+      const drone = info.drone;
+      const R = info.replay;
+      add({ label: R ? 'Resume replay' : 'Resume', primary: true, onClick: () => this.h.onResume() });
+      if (R) {
+        add({ label: R.playing ? 'Pause the replay' : 'Play the replay', onClick: () => this.h.onReplayControl('toggle') });
+        add({ label: 'Restart the replay', onClick: () => this.h.onReplayControl('restart') });
+        add({ label: `Speed: ${R.speed === 1 ? 'normal' : `${R.speed}×`}`, sub: 'Slow motion: 1×, 0.5×, 0.25×', onClick: () => this.h.onReplayControl('speed') });
+        add({ label: 'End replay', sub: 'Back to surfing, where you left off', onClick: () => this.h.onEndReplay() });
+      } else if (info.canReplay) add({ label: 'Replay the last 30 s', sub: 'Fly the drone round it', onClick: () => this.h.onReplay() });
       add({ label: drone ? 'Relaunch the drone' : 'Back to the lineup', onClick: () => this.h.onLineup() });
       if (drone) add({ label: 'Re-centre the view', sub: 'Puts the camera back where your head is now', onClick: () => this.h.onRecalibrate() });
       else add({ label: 'Recalibrate paddling height', sub: 'Lie or kneel in your paddling position first', onClick: () => this.h.onRecalibrate() });
@@ -174,7 +182,7 @@ export class VRMenu {
       add({ label: 'Back', primary: true, onClick: () => this.go('settings') });
     }
     // lay out the rows under the header
-    const big = this.screen === 'pause' || this.screen === 'settings';
+    const big = (this.screen === 'pause' || this.screen === 'settings') && items.length <= 7; // (more: compact rows, to fit)
     const gap = big ? 22 : 10;
     const h = big ? 76 : ROW_H;
     let y = 128;
@@ -307,7 +315,7 @@ export class VRMenu {
     g.fillStyle = SKY;
     g.font = `500 44px ${FONT}`;
     g.textAlign = 'left';
-    g.fillText(TITLES[this.screen], 44, 54);
+    g.fillText(this.screen === 'pause' && info.replay ? 'REPLAY PAUSED' : TITLES[this.screen], 44, 54);
     g.font = `400 26px ${FONT}`;
     g.fillStyle = 'rgba(226, 236, 241, 0.72)';
     g.textAlign = 'right';

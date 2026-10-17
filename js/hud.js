@@ -25,6 +25,7 @@ export class Hud {
       feed: document.getElementById('hud-feed'),
       players: document.getElementById('hud-players'),
       debug: document.getElementById('debug'),
+      replay: document.getElementById('replay-bar'),
     };
     this.toastTimer = 0;
     this.toastText = '';
@@ -51,6 +52,53 @@ export class Hud {
     this.panel.visible = false;
     camera.add(this.panel);
     this._vrText = '';
+  }
+
+  // A replay's timeline bar, or null to hide it. r: { t, dur (s), playing, speed, device }.
+  // Its buttons (and clicking or dragging along the track) call this.onReplay(command).
+  setReplay(r) {
+    const el = this.el.replay;
+    if (!el) return;
+    if (!this.replayBound) {
+      this.replayBound = true;
+      el.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-rp]');
+        if (b && this.onReplay) this.onReplay(b.dataset.rp);
+      });
+      const track = el.querySelector('.rp-track');
+      const seek = (e) => {
+        const box = track.getBoundingClientRect();
+        if (this.onReplay) this.onReplay(Math.min(1, Math.max(0, (e.clientX - box.left) / box.width)));
+      };
+      track.addEventListener('pointerdown', (e) => {
+        track.setPointerCapture(e.pointerId);
+        seek(e);
+        const move = (ev) => seek(ev);
+        const up = () => {
+          track.removeEventListener('pointermove', move);
+          track.removeEventListener('pointerup', up);
+          track.removeEventListener('pointercancel', up);
+        };
+        track.addEventListener('pointermove', move);
+        track.addEventListener('pointerup', up);
+        track.addEventListener('pointercancel', up);
+      });
+    }
+    el.hidden = !r;
+    if (!r) return;
+    const clock = (s) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    const f = r.dur > 0 ? Math.min(1, r.t / r.dur) : 0;
+    const key = `${f.toFixed(3)}|${r.playing}|${r.speed}|${r.device}|${Math.floor(r.t)}`;
+    if (key === this.replayKey) return;
+    this.replayKey = key;
+    el.querySelector('.rp-track i').style.width = `${(f * 100).toFixed(2)}%`;
+    el.querySelector('.rp-track b').style.left = `${(f * 100).toFixed(2)}%`;
+    el.querySelector('.rp-time').textContent = `${clock(r.t)} / ${clock(r.dur)}`;
+    el.querySelector('.rp-play').textContent = r.playing ? '❚❚' : '▶';
+    el.querySelector('.rp-speed').textContent = `${r.speed}×`;
+    el.classList.toggle('paused', !r.playing);
+    el.querySelector('.rp-keys').textContent =
+      r.device === 'pad' ? 'X pause · D-pad ◀ ▶ skip 5 s · ▲ ▼ speed · Y restart · Menu: end' : r.device === 'touch' ? '' : 'K pause · J / L skip 5 s · [ ] slow motion · R restart · Esc: end';
   }
 
   toast(text, seconds = 3.5) {
@@ -191,6 +239,7 @@ export class Hud {
       else if (this.toastTimer > 0) t = this.toastText;
       else if (this.feedTimer > 0) t = this.feedText;
       else if (info.inTube) sticker = ['Tubed!', ''];
+      else if (info.vrLine) t = info.vrLine;
       this.drawVR(t, sticker);
       this.panel.material.opacity = t || sticker ? 1 : 0;
     }

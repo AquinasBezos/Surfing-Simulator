@@ -14,6 +14,7 @@ import { SurferCharacter, loadSurferModel, cleanLook } from './character.js';
 export const POSE = { PRONE: 0, POPUP: 1, STANDING: 2, WIPEOUT: 3, DRONE: 4, SITTING: 5 };
 const MAX_PLAYERS = 16;
 const DELAY = 0.15; // pose this far behind the newest snapshot (s)
+export const POSE_DELAY = DELAY; // (update(now) poses everyone as they were at now - POSE_DELAY)
 const _q2 = new THREE.Quaternion();
 const _Y = new THREE.Vector3(0, 1, 0);
 const _ea = new THREE.Euler(0, 0, 0, 'YXZ'),
@@ -245,13 +246,14 @@ export class RemotePlayers {
     return this.avatars.size;
   }
 
-  ensure(id) {
+  // tag: give them a name tag
+  ensure(id, tag = true) {
     let a = this.avatars.get(id);
     if (!a) {
       if (this.avatars.size >= MAX_PLAYERS) return null;
       a = new Avatar(id, this._slot++, this.group);
       a.setBoard('shortboard');
-      a.setName('Surfer');
+      if (tag) a.setName('Surfer');
       this.avatars.set(id, a);
     }
     return a;

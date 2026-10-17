@@ -16,6 +16,7 @@ Paddle into glassy waves, pop up, and race the peeling lip through the barrel, o
 - Pick the wave size, from knee high to well overhead, or let it wander: sets build and fade over a few minutes. On small waves you can keep riding the whitewater after the wave breaks.
 - Your surfer is a rigged, animated character (paddling, popping up, a surf stance that crouches and leans with you). Choose skin tone, hair colour and board colour; a turntable preview shows your look. In first person you see that character's own arms: on PC and phones they paddle in smooth, flowing strokes, and in VR they follow your controllers.
 - Tricks, hang fives and tens, airs and barrels pop up as early-2000s surf-mag stickers, and every ride ends with a score card (with a badge when you beat your best).
+- Replays (singleplayer): pause and pick **Replay the last 30 s** to watch your last 30 seconds again from a drone you fly around yourself, with slow motion.
 - Sit up on your board to wait for waves. Your head turns with your view, and on a wave your upper body twists to follow it, so other players can see where you're looking.
 - Surf at midday or at sunset: a low gold sun with a long path of light across the water, a dusk sky in the reflections, backlit crests and dimmer, warmer light under water.
 - Multiplayer: create or find a room, public or private with a passcode, and surf the same waves as up to seven other players, or join as a camera drone and film them from above. PC and Quest players can share a room.
@@ -92,6 +93,20 @@ A guide to the touch zones shows for the first few seconds. **Controls and setti
 1. Hold the device the way you play and tap ◎, or **Recalibrate tilt** on the pause screen. That makes the way you're holding it level. The game also works out which edge of the screen is up from gravity, so this alone fixes most tablets.
 2. If it's still wrong, open **Controls and settings → Touch**. Tilt the device and watch the dot on the bubble level: it should move the way you tilt.
 3. If the dot goes the wrong way, use **Tilt directions** (Turn 90°, 180°, Turn −90°) until it follows you. The choice is remembered. iPhones ask for permission to use the motion sensors the first time. Phones get the lighter graphics setting automatically. As a drone, drag on the left half to fly and on the right half to turn and tilt the camera; ▲ ▼ climb and descend.
+
+### Replay
+
+In singleplayer the game keeps the last 30 seconds. Pause (Esc, Menu on a controller, the pause button on a touch screen, or Y in the headset) and pick **Replay the last 30 s**. The game stops where you paused it, and the last 30 seconds play back: the same waves, you as the full character on your board, and the spray off your board. You fly the drone around it with the usual drone controls (FPV too, if you've chosen it for a controller or VR). The replay loops until you end it.
+
+| | Keyboard | Controller | Touch | Meta Quest |
+| :-- | :-- | :-- | :-- | :-- |
+| Play / pause | `K` (or `P`) | `X` | The bar at the bottom | Headset menu |
+| Skip 5 s back / forward | `J` / `L` | D-pad ◀ / ▶ | −5 / +5 on the bar, or tap the timeline | |
+| Slow motion (1×, 0.5×, 0.25×) | `[` / `]` | D-pad ▼ / ▲ | The speed button | Headset menu |
+| Restart | `R` | `Y` | ⏮ | Headset menu, or `B` |
+| End the replay | Esc, then **End replay** | Menu, then **End replay** | **End** | Headset menu |
+
+Ending the replay takes you back to the pause screen with everything exactly as you left it. (The replay keys only work if you haven't put a control on them; controller replay buttons likewise.)
 
 ### How to catch and ride a wave
 
@@ -230,6 +245,7 @@ To check the relay works, open the game with `?relay` on two devices and join th
 | `js/wavepool.js` | The Wave Pool: its floor (deep at the back, a shallow shelf along the break line, beaches, the trench by the pier), walls, the pier with its arch and the machine housing, clubhouse, cabins, canopies and fields, and keeping surfers off the walls and pier |
 | `js/landkit.js` | Shared pieces for building land: noise, ridges, the land mesh |
 | `js/spray.js`, `js/audio.js`, `js/hud.js`, `js/textures.js` | Spray particles, procedural sound, HUD, generated textures |
+| `js/replay.js` | Singleplayer replays: the last 30 seconds of the waves and your surfer, recorded every frame (main.js plays them back) |
 | `js/spraysheet.js` | High graphics: sheets of water off the board (the bow wave as you paddle in, the fan in a turn), and the streaking drops thrown with them |
 | `assets/surfer.glb` | The surfer: 19-bone rig with Idle, Walk, Run, Surf and Paddle clips |
 | `assets/menu/` | Menu art, rendered from the game with the debug views below |
