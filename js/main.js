@@ -25,6 +25,9 @@ import { controls } from './bindings.js';
 import { Drone, createDroneModel, animateDrone } from './drone.js';
 import { loadSurferModel, randomLook } from './character.js';
 import { Fish } from './fish.js';
+import { loadEisbach, eisbachSite, eisbachGroup } from './eisbach.js';
+import { River } from './river.js';
+import { Walker } from './walker.js';
 import { cleanLean, cleanPad, cleanTilt } from './lean.js';
 import { GamepadInput } from './gamepad.js';
 import { TouchInput } from './touch.js';
@@ -91,6 +94,10 @@ scene.add(fish.mesh);
 let spot = null;
 let terrain = null;
 const lands = {};
+// The Eisbach: its river (made once the model has loaded) and you on foot on its banks
+let river = null;
+let eisbachLoad = null;
+const walker = new Walker();
 function applySpot(id) {
   id = cleanSpot(id);
   if (spot && spot.id === id) return;
@@ -99,27 +106,65 @@ function applySpot(id) {
   setLandSpot(id);
   const reef = id === 'teahupoo' ? reefTexture().texture : null;
   ocean.setSpot(id, reef);
-  underwater.setWater(spot.water, !!reef); // (a reef is a 3D seabed of its own)
+  underwater.setWater(spot.water, !!reef || !!spot.river); // (a reef, a river's bed: seabeds of their own)
   if (terrain) {
     scene.remove(terrain);
     if (terrain.userData.underwater) scene.remove(terrain.userData.underwater);
   }
   terrain = lands[id] ||= buildLand(id);
   scene.add(terrain);
-  surfer.collide = spotCollider(); // (a pool's walls and pier)
+  surfer.collide = spotCollider(); // (a pool's walls and pier; a river's banks)
   fish.setKind(spot.fish);
+  // a river: no sea, and its own water (once the model has loaded: until then, Play waits)
+  ocean.mesh.visible = !spot.river;
+  model.setRiver(spot.river ? river : null);
+  if (spot.river && !river) startEisbachLoad();
+  else menu.setSpotLoading(null);
   if (terrain.userData.underwater) scene.add(terrain.userData.underwater);
   if (!model.schedule) model.reset(-62);
   applyTimeOfDay(timeOfDay); // (the sunset is somewhere else here)
   game.warmup = Math.max(game.warmup, 4); // compile the new shaders behind the menu
 }
+// The Eisbach's model is big: it's only fetched (and its Draco geometry decoded) when someone
+// picks the spot. Play waits for it.
+function startEisbachLoad() {
+  if (eisbachLoad) return;
+  const say = (f) => menu.setSpotLoading(f < 1 ? `Loading the Eisbach… ${Math.round(f * 100)}%` : 'Unpacking the Eisbach…');
+  say(0);
+  eisbachLoad = loadEisbach(say)
+    .then((site) => {
+      river = new River(site.channel, inRoom() ? net.waves.height : model.heights.height);
+      eisbachGroup.add(river.build({ env: sky.cube, normalTex, noiseTex, rows: site.waterRows, ground: site.solidModel }));
+      riverLight();
+      if (spot && spot.river) {
+        model.setRiver(river);
+        if (model.schedule) model.setSchedule(model.schedule.seed, model.schedule.clock, model.schedule.heights);
+      }
+      menu.setSpotLoading(null);
+      game.warmup = Math.max(game.warmup, 4); // (compile its shaders behind the menu)
+    })
+    .catch((e) => {
+      console.warn('LINEUP: could not load the Eisbach', e);
+      eisbachLoad = null;
+      menu.setSpotLoading(`Couldn't load the Eisbach: ${e.message || e}. Pick it again to retry.`, true);
+    });
+}
+
+// the river's water in this light
+function riverLight() {
+  if (!river || !river.uniforms) return;
+  const T = TIMES_OF_DAY[timeOfDay] || TIMES_OF_DAY.day;
+  river.uniforms.uEnv.value = sky.cube;
+  river.setLight(sunDir, new THREE.Vector3(...T.sunColor).multiplyScalar(T.waterSun), new THREE.Vector3(...T.skyAmb));
+}
+
 // Build the other spots' land while the player is still in the menus, so picking one (or
 // joining a room there) doesn't stall.
 function prebuildLands() {
   const idle = window.requestIdleCallback || ((fn) => setTimeout(fn, 200));
   for (const id of Object.keys(SPOTS))
     idle(() => {
-      if (!lands[id] && !game.started) lands[id] = buildLand(id);
+      if (!lands[id] && !game.started && !SPOTS[id].river) lands[id] = buildLand(id);
     });
 }
 setTimeout(prebuildLands, 4000);
@@ -324,6 +369,7 @@ function applyTimeOfDay(name) {
   underwater.setSun(T.sunDir, T.underwater);
   spray.material.uniforms.uColor.value.setRGB(...T.spray);
   if (sheets) sheets.setLight(T.spray, sunDir, T.sunColor.map((c) => c * 1.6));
+  riverLight();
 }
 applySettings(settings);
 if (params.has('spot')) menu.setSpot(params.get('spot')); // (?spot=teahupoo: testing, not saved)
@@ -494,6 +540,12 @@ function respawn(fadeOut = true) {
     return;
   }
   if (game.replay) return placeReplayDrone(game.replay.t);
+  if (spot && spot.river) {
+    // a river: back on the bank (a drone: hovering downstream, looking up at the wave)
+    if (game.role === 'drone') drone.reset(0, 5, -13, Math.PI, -0.28);
+    else toBank();
+    return;
+  }
   const s = lineupSpot();
   if (game.role === 'drone') {
     // hovering inside the break, looking out at the faces of the incoming waves
@@ -512,6 +564,7 @@ function respawn(fadeOut = true) {
 
 function startGame(mode, platform) {
   if (mode === 'multi' && (!net || !net.room)) return;
+  if (spot && spot.river && !river) return; // (still loading: Play is greyed out until it's there)
   audio.start();
   endReplay();
   replayBuf.clear();
@@ -534,6 +587,9 @@ function startGame(mode, platform) {
   game.started = true;
   game.invulnerable = false;
   game.ride = null;
+  game.bank = false;
+  game.jumpIn = null;
+  game.bankSide = 'east';
   spray.clear();
   if (sheets) sheets.clear();
   underwater.clearBubbles();
@@ -550,6 +606,14 @@ function startGame(mode, platform) {
 
 // how to play, for what you're playing with
 function startToast(flying) {
+  if (spot && spot.river && !flying) {
+    const touchy = device === 'touch';
+    const jump = touchy ? 'tap Jump in' : `${device === 'pad' ? controls.padText('popup') : controls.pcKey('popup')} jumps in`;
+    const walk = touchy ? 'Drag on the left to walk, on the right to look' : device === 'pad' ? 'Left stick walks, right stick looks' : `${controls.pcKey('forward')} ${controls.pcKey('left')} ${controls.pcKey('back')} ${controls.pcKey('right')} to walk (${controls.pcKey('charge')} runs)`;
+    const out = touchy ? 'tap Crouch, then tap it again' : device === 'pad' ? `hold ${controls.padText('crouch')} and let go` : `hold ${controls.pcKey('crouch')} and let go`;
+    hud.toast(`The Eisbach. ${walk} · at the edge beside the wave, ${jump} · near a bank, ${out} to jump out onto it`, 8);
+    return;
+  }
   if (device === 'touch') {
     TouchInput.askForTilt();
     touch.ui.classList.add('guide'); // the zones, for a few seconds
@@ -651,6 +715,10 @@ renderer.xr.addEventListener('sessionstart', () => {
     else hud.toast(`Left stick: climb and turn · right stick: fly · look around to aim the camera. ${press('pause')}: menu.`, 7);
     return;
   }
+  if (spot && spot.river) {
+    hud.toast(`The Eisbach: stand up. Left stick walks, right stick turns. At the edge beside the wave, ${press('popup')} jumps in. ${press('pause')}: menu.`, 8);
+    return;
+  }
   const calibrate = controls.quest.recalibrate === 'none' ? 'Lie or kneel down to start.' : `Lie or kneel down, then press ${press('recalibrate')} to calibrate.`;
   hud.toast(`${calibrate} Paddle with your arms, stand up to surf. ${press('pause')}: menu.`, 7);
 });
@@ -707,6 +775,7 @@ surfer.onEvent = (type, data) => {
     sendEvent({ k: 'air', t: Math.round(data.time * 10) / 10 });
   } else if (type === 'takeoff') {
     audio.splash(0.6);
+    if (spot && spot.river && river) riverExitJump();
   } else if (type === 'duckdive') {
     audio.plunge();
     const [fx, fz] = surfer.forward;
@@ -760,8 +829,8 @@ function liveBoardFx(out = boardFx) {
   out.drop = 0;
   if (!surfer.air && s.wave && (up || surfer.catching) && s.un >= -0.2 && s.un <= 1.8) {
     const down = Math.max(0, -surfer.vy); // m/s down the face
-    const steep = Math.max(surfer.effPitch, Math.atan(down / Math.max(1, surfer.speed)));
-    out.drop = smoothstep(3.5, 9, surfer.speed) * smoothstep(0.1, 0.45, steep) * (up ? 1 : 0.6);
+    const steep = Math.max(surfer.effPitch, Math.atan(down / Math.max(1, surfer.planeSpeed)));
+    out.drop = smoothstep(3.5, 9, surfer.planeSpeed) * smoothstep(0.1, 0.45, steep) * (up ? 1 : 0.6);
   }
   const ok = !surfer.air && !surfer.diving && surfer.turtle === 0 && (st === STATE.PRONE || st === STATE.POPUP || st === STATE.STANDING);
   // the bow wave: going fast through the water lying down, or the nose driving in on the drop
@@ -774,10 +843,10 @@ function liveBoardFx(out = boardFx) {
   out.moveDir = 0;
   const m = surfer.move;
   if (ok && st === STATE.STANDING) {
-    out.turn = 0.6 * smoothstep(4, 12, Math.abs(surfer.yawRate) * surfer.speed) * smoothstep(3, 6, surfer.speed);
+    out.turn = 0.6 * smoothstep(4, 12, Math.abs(surfer.yawRate) * surfer.planeSpeed) * smoothstep(3, 6, surfer.planeSpeed);
     out.side = Math.sign(surfer.yawRate);
     if (m && m.t < m.dur + m.slide) {
-      out.turn = Math.max(out.turn, (m.kind === 'cutback' ? 0.75 : 1) * smoothstep(2, 5, surfer.speed));
+      out.turn = Math.max(out.turn, (m.kind === 'cutback' ? 0.75 : 1) * smoothstep(2, 5, surfer.planeSpeed));
       out.side = m.dir;
     }
   }
@@ -997,7 +1066,7 @@ function updateGame(dt) {
     if (!game.ride) startRide();
     const r = game.ride;
     r.time += dt;
-    r.top = Math.max(r.top, surfer.speed);
+    r.top = Math.max(r.top, surfer.planeSpeed);
     if (surfer.inTube) r.tube += dt;
   } else if (game.ride && surfer.state === STATE.STANDING && !surfer.air) {
     const behind = s.un < -0.7 || !s.wave || s.H < 0.6;
@@ -1005,7 +1074,7 @@ function updateGame(dt) {
   } else if (game.ride && surfer.state === STATE.PRONE) endRide('over');
 
   // nose riding on the longboard
-  const onNose = surfer.board.walk && surfer.state === STATE.STANDING && surfer.footPos > 0.88 && surfer.speed > 3;
+  const onNose = surfer.board.walk && surfer.state === STATE.STANDING && surfer.footPos > 0.88 && surfer.planeSpeed > 3;
   if (onNose) {
     game.noseT += dt;
     if (game.ride) game.ride.nose += dt;
@@ -1026,6 +1095,7 @@ function updateGame(dt) {
 
   // wipeout -> back to the lineup
   if (surfer.state === STATE.WIPEOUT && surfer.stateTime > 2.4 && game.teleport <= 0) respawn(true);
+  if (spot.river) return; // (a river: riverRules)
 
   // drifted inside or far away (or washed up on a beach) without a ride: paddle back out
   const inside = surfer.z > spot.inside.z || Math.abs(surfer.x) > spot.inside.x || surfer.z < -260 || seabedY(surfer.x, surfer.z) > -0.45;
@@ -1135,6 +1205,7 @@ async function openMultiplayer() {
 function roomSettings(n) {
   if (!n.room) return;
   applySpot(n.spot);
+  if (river && spot.river) river.setHeight(n.waves.height); // (the room's, in the lobby too)
   menu.enterRoom(n.roomInfo);
   applyTimeOfDay(n.time);
 }
@@ -1210,6 +1281,13 @@ function sendPose() {
     // same packet; crouch carries the gimbal pitch and effort the throttle
     const q = drone.quat;
     poseBuf.set([net.now(), drone.pos.x, drone.pos.y, drone.pos.z, q.x, q.y, q.z, q.w, POSE.DRONE, drone.camPitch, 0, 0, drone.throttle, 0, 0, 0, 0, drone.vel.x, drone.vel.z]);
+    net.sendPose(poseBuf);
+    return;
+  }
+  if (game.bank || game.jumpIn) {
+    // on foot: crouch is unused, effort is how fast you're walking; no height above the water
+    const q = _wq.setFromAxisAngle(Yaxis, walker.yaw);
+    poseBuf.set([net.now(), walker.x, walker.y, walker.z, q.x, q.y, q.z, q.w, POSE.WALK, 0, 0, 0, walker.speed / 3.4, 0, 0, walker.pitch, NaN, walker.vx, walker.vz]);
     net.sendPose(poseBuf);
     return;
   }
@@ -1603,6 +1681,250 @@ function updateBots() {
   }
 }
 
+// ---------------------------------------------------------------- the Eisbach on foot
+// You start on a bank with your board under your arm. Walk to the edge beside the wave and
+// jump in (Space, A, the Jump in button, A / X in a headset): you land standing on the wave.
+// Crouch and let go near a bank and you jump out onto it, landing on your feet. Wipe out, or
+// get swept off the wave, and the river takes you away: you're back on the bank.
+const walkGround = (x, z) => {
+  const site = eisbachSite();
+  if (!site) return null;
+  if (river && river.inChannel(x, z, -0.15)) return null; // (the river, and its wall's edge: you jump in instead)
+  const g = site.groundAt(x, z);
+  return g !== null && g > -0.12 ? g : null;
+};
+
+// on a bank: at a spawn (side 'east' / 'west'), or where you landed ({ x, z, yaw })
+function toBank(side = game.bankSide || 'east', at = null) {
+  const site = eisbachSite();
+  if (!site) return;
+  if (game.ride) endRide('kickout');
+  game.bank = true;
+  game.jumpIn = null;
+  game.bankSide = side;
+  let x, z, yaw;
+  if (at) ({ x, z, yaw } = at);
+  else {
+    const p = site.spawns[side] || site.spawns.east;
+    x = p.z;
+    z = -p.x;
+    // looking across at the wave, a little up the river toward the bridge
+    yaw = side === 'east' ? Math.PI / 2 + 0.35 : -Math.PI / 2 - 0.35;
+  }
+  walker.reset(x, z, yaw, walkGround);
+  surfer.reset(x, z, yaw);
+  surfer.setState(STATE.PRONE);
+  game.look.yaw = 0;
+  game.look.pitch = 0;
+  game.snapCam = true;
+}
+
+// Close enough to jump in? Beside the wave, at the edge: returns where you'd land, or null.
+function jumpSpot() {
+  const site = eisbachSite();
+  if (!site || !river || !game.bank) return null;
+  const X = -walker.z,
+    Z = walker.x;
+  const [z0, z1] = site.channel(X);
+  const side = Z > (z0 + z1) / 2 ? 1 : -1; // (+ the east bank)
+  const toEdge = side > 0 ? Z - z1 : z0 - Z;
+  if (X < -4.5 || X > 4.5 || toEdge > 2.4 || toEdge < -0.2) return null;
+  const Xl = river.restX();
+  const [a, b] = site.channel(Xl);
+  const Zl = side > 0 ? b - 1.8 : a + 1.8;
+  // facing up the river into the wave, turned a little away from your bank
+  return { x: Zl, z: -Xl, yaw: Math.PI - side * 0.08, side: side > 0 ? 'east' : 'west' };
+}
+
+function jumpKey() {
+  if (renderer.xr.isPresenting) return controls.questText('popup');
+  if (device === 'touch') return 'Jump in';
+  if (device === 'pad') return controls.padText('popup');
+  return controls.pcKey('popup');
+}
+
+function jumpIn() {
+  const to = jumpSpot();
+  if (!to) {
+    hud.toast('Walk to the edge of the river beside the wave to jump in', 2.5);
+    return;
+  }
+  game.bankSide = to.side;
+  const vr = renderer.xr.isPresenting;
+  game.jumpIn = { t: 0, dur: vr ? 0.01 : 0.55, from: { x: walker.x, y: walker.eyeY(), z: walker.z, yaw: walker.yaw, pitch: walker.pitch }, to };
+  audio.whoosh(0.5);
+}
+
+// (the jump's over: you're on the wave)
+function landJump() {
+  const { to } = game.jumpIn;
+  game.jumpIn = null;
+  game.bank = false;
+  surfer.reset(to.x, to.z, to.yaw);
+  surfer.setState(STATE.STANDING);
+  surfer.y = model.heightAt(to.x, to.z);
+  game.standBlend = 1;
+  game.sitBlend = 0;
+  game.snapCam = true;
+  game.look.yaw = 0;
+  game.look.pitch = -0.1;
+  game.splash = 0.22;
+  audio.splash(1);
+  underwater.burst(to.x, surfer.y - 0.2, to.z, 30, 0.8, 0.3);
+  if (renderer.xr.isPresenting) xr.calibrateStanding();
+}
+
+function walkBank(dt, acceptInput, inXR) {
+  let fwd = 0,
+    right = 0,
+    run = false;
+  if (acceptInput) {
+    if (inXR) {
+      // the left thumbstick walks the way you're looking; the right one turns you
+      const L = xr.sticks.left,
+        Rs = xr.sticks.right;
+      fwd = -deadzone(L[1]);
+      right = deadzone(L[0]);
+      const turn = Math.abs(Rs[0]) > 0.7 ? Math.sign(Rs[0]) : 0;
+      if (turn && !game.snapTurned) game.bankTurn = (game.bankTurn || 0) - turn * (Math.PI / 6);
+      game.snapTurned = turn !== 0;
+      walker.yaw = (game.bankTurn || 0) + xr.headYaw;
+      run = Math.hypot(L[0], L[1]) > 0.95;
+    } else {
+      const [Lx, Ly] = gamepad.sticks;
+      const T = touch.sticks;
+      fwd = clamp(pc.leanZ - Ly - T[1], -1, 1);
+      right = clamp(pc.steer + Lx + T[0], -1, 1);
+      run = pc.charge || gamepad.down('charge') || Math.hypot(Lx, Ly) > 0.92 || Math.hypot(T[0], T[1]) > 0.92;
+    }
+  }
+  walker.update(dt, { fwd, right, run }, walkGround);
+}
+
+// the board under your right arm (in your body's frame), and your arms round it
+const BOARD_CARRY = { p: new THREE.Vector3(0.3, 0.98, 0.02), r: new THREE.Euler(0.12, 0, Math.PI / 2) };
+function carryBoard() {
+  const J = game.jumpIn;
+  bodyFrame.position.set(walker.x, walker.y, walker.z);
+  bodyFrame.quaternion.setFromAxisAngle(Yaxis, J ? J.from.yaw : walker.yaw);
+  if (!board.userData.carried) {
+    board.userData.carried = true;
+    board.position.copy(BOARD_CARRY.p);
+    board.rotation.copy(BOARD_CARRY.r);
+  }
+  arms.group.visible = !renderer.xr.isPresenting && !game.hideArms;
+}
+function uncarryBoard() {
+  board.userData.carried = false;
+  board.position.set(0, 0, 0);
+  board.rotation.set(0, 0, 0);
+}
+
+function updateCameraBankPC(dt) {
+  if (game.freeCam) return updateCameraPC(dt);
+  const [lx0, ly0] = pc.consumeLook();
+  const [tx, ty] = touch.consumeLook();
+  const sens = settings.sensitivity;
+  const T = touch.sticks;
+  const [gy, gp] = gamepad.lookRate();
+  walker.yaw += -(lx0 * sens + tx) * 0.0024 + gy * dt - T[2] * 1.8 * dt;
+  walker.pitch = clamp(walker.pitch - (ly0 * sens * (settings.invertY ? -1 : 1) + ty) * 0.0024 + gp * dt - T[3] * 1.2 * dt, -1.45, 1.4);
+  const J = game.jumpIn;
+  if (J) {
+    // the jump: up and out over the water, turning to face up the river
+    const e = Math.min(1, J.t / J.dur);
+    const k = e * e * (3 - 2 * e);
+    const ex = J.to.x + 0.32 * Math.sin(J.to.yaw),
+      ez = J.to.z + 0.32 * Math.cos(J.to.yaw);
+    const ey = model.heightAt(J.to.x, J.to.z) + EYE.standing[1];
+    rig.position.set(J.from.x + (ex - J.from.x) * k, J.from.y + (ey - J.from.y) * k + 0.55 * Math.sin(Math.PI * e), J.from.z + (ez - J.from.z) * k);
+    rig.quaternion.setFromAxisAngle(Yaxis, J.from.yaw + wrap(J.to.yaw - J.from.yaw) * k);
+    camera.position.set(0, 0, 0);
+    camera.rotation.set(J.from.pitch + (-0.25 - J.from.pitch) * k, 0, 0, 'YXZ');
+    return;
+  }
+  rig.position.set(walker.x, walker.eyeY(), walker.z);
+  rig.quaternion.setFromAxisAngle(Yaxis, walker.yaw);
+  camera.position.set(0, 0, 0);
+  camera.rotation.set(walker.pitch, 0, 0, 'YXZ');
+}
+
+function updateCameraBankXR() {
+  // your feet on the ground where the walker is; you can still step about for real
+  const rigYaw = game.bankTurn || 0;
+  rig.rotation.set(0, rigYaw, 0);
+  const h0 = _v.set(xr.h0.x, 0, xr.h0.z).applyAxisAngle(Yaxis, rigYaw);
+  rig.position.set(walker.x, walker.y, walker.z).sub(h0);
+}
+
+// After the physics: out of the channel and on a bank (a jump out), or taken away by the river
+function riverRules() {
+  const site = eisbachSite();
+  if (!site || game.bank) return;
+  const X = -surfer.z;
+  const [z0, z1] = site.channel(X);
+  if (surfer.x < z0 || surfer.x > z1) {
+    const g = site.groundAt(surfer.x, surfer.z);
+    if (g !== null && g > -0.3 && (!surfer.air || surfer.y <= g + 0.05)) {
+      // landed on the bank: on your feet, board under your arm (somewhere you can stand: a
+      // step further from the edge if you came down right on it)
+      const side = surfer.x > z1 ? 'east' : 'west';
+      const out = side === 'east' ? 1 : -1;
+      let x = surfer.x;
+      for (let k = 0; k < 8 && walkGround(x, surfer.z) === null; k++) x += out * 0.25;
+      toBank(side, { x, z: surfer.z, yaw: surfer.yaw });
+      hud.callout('Jumped out', 'back on the bank');
+      audio.thud();
+      return;
+    }
+  }
+  if (game.teleport > 0) return;
+  const wiped = surfer.state === STATE.WIPEOUT;
+  const off = surfer.state !== STATE.STANDING && !surfer.air;
+  if ((wiped && surfer.stateTime > 2.3) || (off && X > river.P.xC + 5) || X > river.P.xC + 14) {
+    game.teleport = 1.4; // (fades out; respawn() puts you back on the bank)
+    if (!wiped) hud.toast('Swept off down the river: back to the bank', 2.4);
+  }
+}
+
+// Crouched and sprang off the wave near a bank: over the wall and onto it
+function riverExitJump() {
+  const site = eisbachSite();
+  if (!site) return;
+  const X = -surfer.z;
+  const [z0, z1] = site.channel(X);
+  const toEast = z1 - surfer.x,
+    toWest = surfer.x - z0;
+  const side = toEast < toWest ? 1 : -1;
+  const dist = Math.min(toEast, toWest);
+  if (dist > 4.2) return; // (out in the middle: an air, back down on the wave)
+  const bx = side > 0 ? z1 + 1.1 : z0 - 1.1;
+  const g = site.groundAt(bx, surfer.z) ?? 0.3;
+  surfer.vy = Math.max(surfer.vy, 3.1);
+  const dy = surfer.y - g;
+  const t = (surfer.vy + Math.sqrt(surfer.vy * surfer.vy + 2 * 9.81 * Math.max(dy, -0.4))) / 9.81;
+  surfer.vx = (side * (dist + 1.1)) / Math.max(t, 0.3);
+  surfer.vz *= 0.2;
+}
+
+// mist and spray off the river's crest, and splashes against the walls
+function riverSpray(dt) {
+  const site = eisbachSite();
+  if (!site) return;
+  const R = Math.random;
+  const xC = river.P.xC;
+  let n = 90 * (spray.max / 1600) * dt + R();
+  while (n-- >= 1) {
+    const [z0, z1] = site.channel(xC);
+    const Z = z0 + R() * (z1 - z0);
+    const X = xC + (R() - 0.4) * 0.8;
+    const y = river.surface(X, Z) + 0.05;
+    const big = R() < 0.3;
+    // up out of the foam pile, and carried off downstream (-z)
+    spray.emit(Z, y, -X, (R() - 0.5) * 0.8, 0.8 + R() * (big ? 2.4 : 1.4), -1.2 - R() * 2.2, 0.5 + R() * 0.7, big ? 0.1 + R() * 0.15 : 0.03 + R() * 0.05, 1.4);
+  }
+}
+
 // ---------------------------------------------------------------- replay
 // Singleplayer keeps the last REPLAY_SECONDS of the waves and your surfer (replay.js). A
 // replay freezes the game where you paused it, plays that back (slowed down, paused, skipped
@@ -1612,8 +1934,29 @@ const replayBuf = new ReplayBuffer(WAVE.slots);
 const replayCast = new RemotePlayers(scene, null); // you, in the replay
 const REPLAY_SPEEDS = [0.25, 0.5, 1];
 
+const _wq = new THREE.Quaternion();
 function recordFrame(b) {
   const vr = renderer.xr.isPresenting;
+  if (game.bank || game.jumpIn) {
+    // on foot on the bank
+    replayBuf.record(model.time, model.waves, (f, o) => {
+      const q = _wq.setFromAxisAngle(Yaxis, walker.yaw);
+      f.fill(0, o, o + RF.moveDir + 1);
+      f[o + RF.x] = walker.x;
+      f[o + RF.y] = walker.y;
+      f[o + RF.z] = walker.z;
+      f[o + RF.qx] = q.x;
+      f[o + RF.qy] = q.y;
+      f[o + RF.qz] = q.z;
+      f[o + RF.qw] = q.w;
+      f[o + RF.state] = POSE.WALK;
+      f[o + RF.effort] = walker.speed / 3.4;
+      f[o + RF.lookPitch] = walker.pitch;
+      f[o + RF.vx] = walker.vx;
+      f[o + RF.vz] = walker.vz;
+    });
+    return;
+  }
   replayBuf.record(model.time, model.waves, (f, o) => {
     const q = surfer.quat;
     f[o + RF.x] = surfer.x;
@@ -1965,17 +2308,26 @@ function frame(time, xrFrame) {
 
   // the drone flies FPV in VR, or with a controller, if you chose that (else the camera drone)
   drone.setFPV(flying && settings.droneVR === 'fpv' && (inXR || device === 'pad'));
-  touch.mode = flying ? 'drone' : surfer.state === STATE.POPUP ? 'standing' : surfer.state;
+  const onBank = !flying && (game.bank || !!game.jumpIn);
+  touch.mode = flying ? 'drone' : onBank ? 'bank' : surfer.state === STATE.POPUP ? 'standing' : surfer.state;
   touch.showButtons(touch.enabled && device === 'touch');
   if (inXR) {
-    const gestures = xr.update(dt, xrFrame, surfer.state, surfer.board);
+    const gestures = xr.update(dt, xrFrame, onBank ? 'bank' : surfer.state, surfer.board);
     if (acceptInput) {
       if (flying) fly = droneInputXR();
-      else inp = gestures;
+      else if (!onBank) inp = gestures;
     }
     for (const e of xr.consumeEvents()) {
       if (e === 'pause') vrMenu.open ? closeVRMenu() : game.started && openVRMenu();
       else if (!acceptInput) continue; // the headset menu is open
+      else if (onBank) {
+        if (e === 'toggleStand') jumpIn();
+        else if (e === 'reset') toBank(game.bankSide === 'east' ? 'west' : 'east');
+        else if (e === 'recalibrate') xr.calibrate();
+      } else if (spot && spot.river && e === 'recalibrate') {
+        xr.calibrateStanding();
+        hud.toast('Recentred', 1.5);
+      } else if (spot && spot.river && e === 'reset') respawn(true);
       else if (flying) {
         if (e === 'reset') replaying ? replayControl('restart') : respawn(true);
         else if (e === 'recalibrate') xr.calibrate(); // re-centre the view under the drone
@@ -1995,6 +2347,15 @@ function frame(time, xrFrame) {
       if (e === 'reset') replaying ? replayControl('restart') : respawn(true);
       else if (e === 'pause') pause();
       else if (e && e.replay && replaying) replayControl(e.replay);
+    }
+  } else if (acceptInput && onBank) {
+    // on foot: your movement keys, the left stick or the left of the screen walk; Space / A
+    // / the button jumps in; back to the lineup swaps banks
+    for (const e of [...pc.consumeEvents(), ...gamepad.consumeEvents(), ...touch.consumeEvents()]) {
+      if (e === 'toggleStand') jumpIn();
+      else if (e === 'reset') toBank(game.bankSide === 'east' ? 'west' : 'east');
+      else if (e === 'pause') pause();
+      else if (e === 'level') touch.calibrate();
     }
   } else if (acceptInput) {
     // keyboard and mouse, a controller and a touch screen all at once (the phone's tilt
@@ -2050,6 +2411,13 @@ function frame(time, xrFrame) {
   } else if (running && flying) {
     model.update(dt);
     updateDrone(dt, fly);
+  } else if (running && onBank) {
+    model.update(dt);
+    arms.update(dt, false);
+    if (game.jumpIn) game.jumpIn.t += dt;
+    else walkBank(dt, acceptInput, inXR);
+    if (game.jumpIn && game.jumpIn.t >= game.jumpIn.dur) landJump();
+    if (game.mode === 'single') recordFrame(boardFx);
   } else if (running) {
     model.update(dt);
     const paddling = !inXR && acceptInput && surfer.state === STATE.PRONE;
@@ -2060,6 +2428,7 @@ function frame(time, xrFrame) {
     boardSpray(liveBoardFx(), dt);
     if (game.mode === 'single') recordFrame(boardFx);
     updateGame(dt);
+    if (spot.river && river) riverRules();
   } else arms.update(0, false);
 
   if (flying) {
@@ -2072,8 +2441,15 @@ function frame(time, xrFrame) {
     animateDrone(droneBody, dt, drone.throttle, drone.camPitch, drone.quat, drone.yaw);
     if (inXR) updateCameraDroneXR();
     else updateCameraDronePC();
+  } else if (onBank) {
+    // on foot with your board under your arm
+    for (const h of xr.hands) if (h.model) h.model.visible = true;
+    carryBoard();
+    if (inXR) updateCameraBankXR();
+    else updateCameraBankPC(dt);
   } else {
     for (const h of xr.hands) if (h.model) h.model.visible = true;
+    if (board.userData.carried) uncarryBoard();
     updateBody(dt);
     arms.group.visible = !inXR && !game.hideArms && surfer.state === STATE.PRONE && game.standBlend < 0.05 && game.sitBlend < 0.05;
     if (inXR) updateCameraXR(dt);
@@ -2082,13 +2458,18 @@ function frame(time, xrFrame) {
 
   rig.updateMatrixWorld(true);
   // your arms: paddling on PC and mobile, reaching for the controllers in VR
-  if (inXR) arms.poseVR(xr.hands, xr.head, xr.headQuat, rig, surfer.state === STATE.PRONE, !flying);
+  if (inXR) arms.poseVR(xr.hands, xr.head, xr.headQuat, rig, surfer.state === STATE.PRONE && !onBank, !flying);
+  else if (onBank) arms.poseCarry(bodyFrame, !game.hideArms);
   else arms.pose();
   // the head. (In VR three.js keeps `camera` on the head pose inside the rig; the XR camera's
   // own world position is only rig-relative here, between renders.)
   camera.getWorldPosition(focus);
   vrMenu.update();
-  ocean.update(focus);
+  if (ocean.mesh.visible) ocean.update(focus); // (not at a river: the sea isn't there)
+  if (spot && spot.river && river) {
+    river.update(simDt, game.wasUnder);
+    if (simDt > 0) riverSpray(simDt);
+  }
   spray.update(simDt, focus);
   if (sheets) {
     // (the camera's speed, for the drops' blur, on the spray's clock; not across a jump)
@@ -2130,12 +2511,12 @@ function frame(time, xrFrame) {
   const camUnder = camDepth > 0.03;
   waterUniforms.uCamUnder.value = camUnder ? 1 : 0;
   ocean.uniforms.uCamUnder.value = camUnder ? 1 : 0;
-  terrain.visible = !camUnder; // land is only visible through the surface from below
+  terrain.visible = !camUnder || !!spot.river; // land is only visible through the surface from below (a river's banks are its land)
   if (terrain.userData.underwater) terrain.userData.underwater.visible = camUnder;
   const gx = surfer._gx || 0,
     gz = surfer._gz || 0;
   const waterY = (x, z) => hBoard + gx * (x - surfer.x) + gz * (z - surfer.z);
-  if (running && !replaying) emitBubbles(dt, camUnder, camDepth);
+  if (running && !replaying && !onBank) emitBubbles(dt, camUnder, camDepth);
   camera.getWorldDirection(_v);
   fish.update(simDt, camUnder, focus, _v, (x, z) => model.heightAt(x, z), seabedY);
   underwater.update(simDt, focus, camUnder, camDepth, focus.y - seabedY(focus.x, focus.z), waterY, model.time);
@@ -2153,7 +2534,7 @@ function frame(time, xrFrame) {
     if (before > 0.7 && game.teleport <= 0.7) respawn(false);
     fadeAlpha = Math.max(0, 1 - Math.abs(game.teleport - 0.7) / 0.7);
   }
-  if (surfer.state === STATE.WIPEOUT && fadeAlpha < 0.5 && !replaying) {
+  if (surfer.state === STATE.WIPEOUT && fadeAlpha < 0.5 && !replaying && !onBank) {
     fadeColor = 0xcdeee9;
     fadeAlpha = Math.max(fadeAlpha, 0.7 * Math.exp(-surfer.stateTime * 1.6));
   } else if (game.splash > 0 && fadeAlpha < 0.2) {
@@ -2165,8 +2546,9 @@ function frame(time, xrFrame) {
   fadeMat.opacity = fadeAlpha;
   fade.visible = fadeAlpha > 0.001;
 
-  // ---- audio: roar from breaking sections near the listener
+  // ---- audio: roar from breaking sections near the listener (or the river's wave)
   let roar = 0;
+  if (spot && spot.river) roar = 1.1 * (25 / (25 + Math.hypot(focus.x, focus.z + (river ? river.P.xC : 0))));
   for (const w of model.waves) {
     if (!w.active || w.tau < 0) continue;
     const [peelX, backX] = peelPoints(w);
@@ -2174,7 +2556,7 @@ function frame(time, xrFrame) {
     const dz = Math.abs(focus.z - w.crestZ0);
     roar += (w.H / 2.6) * 30 / (30 + dx + dz * 1.5);
   }
-  audio.update(roar, flying ? drone.speed * 0.6 : surfer.speed, camUnder);
+  audio.update(roar, flying ? drone.speed * 0.6 : onBank ? 0 : surfer.planeSpeed, camUnder);
 
   // ---- HUD
   let stateLabel = { prone: 'Paddling', popup: 'Popping up', standing: 'Surfing', wipeout: 'Wipeout!', sitting: 'Sitting up' }[surfer.state];
@@ -2184,6 +2566,10 @@ function frame(time, xrFrame) {
   else if (surfer.state === STATE.STANDING && surfer.onWhitewater) stateLabel = 'Surfing the whitewater';
   let warn = '';
   if (surfer.state === STATE.STANDING && surfer.ceiling < 2.1 && surfer.crouch < 0.65) warn = inXR ? 'Crouch!' : `Crouch! (${controls.pcKey('crouch')})`;
+  if (onBank) {
+    stateLabel = game.jumpIn ? 'Jumping in' : jumpSpot() ? `On the bank · ${device === 'touch' && !inXR ? 'tap Jump in' : `${jumpKey()}: jump in`}` : 'On the bank';
+    warn = '';
+  }
   if (flying) {
     stateLabel = drone.crash ? 'Drone down' : `${drone.fpv ? 'FPV' : 'Drone'} · ${Math.max(0, game.droneAlt || 0).toFixed(1)} m up`;
     warn = !drone.crash && game.droneAlt < 0.9 && drone.vel.y < -0.3 ? 'Pull up!' : '';
@@ -2208,11 +2594,11 @@ function frame(time, xrFrame) {
     {
       visible: game.started && (!game.paused || inXR) && !menu.isOpen,
       stateLabel,
-      speed: flying ? drone.speed : surfer.speed,
+      speed: flying ? drone.speed : onBank ? walker.speed : surfer.planeSpeed,
       waveLabel: nextWaveInfo(),
       inTube: flying ? game.droneTube : surfer.inTube,
       warn,
-      paddle: !flying && surfer.state === STATE.PRONE && !surfer.diving ? surfer.paddleEffort : null,
+      paddle: !flying && !onBank && surfer.state === STATE.PRONE && !surfer.diving ? surfer.paddleEffort : null,
       foot: !flying && B.walk && surfer.state === STATE.STANDING ? (surfer.footPos - B.footMin) / (B.footMax - B.footMin) : null,
       debug: dbg,
       vrLine: replaying ? replayInfo().line : '',
@@ -2252,6 +2638,7 @@ function waveLabelFor(w) {
 
 function nextWaveInfo() {
   if (game.replay) return '';
+  if (spot && spot.river) return river ? `Eisbach · ${river.P.A.toFixed(1)} m standing wave` : '';
   if (surfer.state === STATE.WIPEOUT) return '';
   if (surfer.state !== STATE.PRONE) {
     const r = game.ride;
@@ -2312,6 +2699,13 @@ window.__surf = {
   applySpot,
   fish,
   sheets,
+  walker,
+  get river() {
+    return river;
+  },
+  jumpIn,
+  jumpSpot,
+  toBank,
   replayBuf,
   startReplay,
   endReplay,

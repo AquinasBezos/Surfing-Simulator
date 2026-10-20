@@ -136,7 +136,8 @@ export class TouchInput {
 
   // ---------------------------------------------------------------- fingers
   role(fx, fy) {
-    if (this.mode === 'drone') return fx < 0.5 ? 'stickL' : 'stickR';
+    // (a drone, and walking a river bank: a stick each side)
+    if (this.mode === 'drone' || this.mode === 'bank') return fx < 0.5 ? 'stickL' : 'stickR';
     if (fx >= BOARD[0] && fx <= BOARD[1]) return 'board';
     if (fx > BOARD[1] && fy > LOOK_TOP) return 'look';
     return fx < BOARD[0] ? 'paddleL' : 'paddleR';
@@ -257,6 +258,7 @@ export class TouchInput {
     hold('up', (v) => (this.climb = v ? 1 : 0));
     hold('down', (v) => (this.climb = v ? -1 : 0));
     hold('lineup', (v) => v && this.events.push('reset'));
+    hold('jump', (v) => v && this.events.push('toggleStand')); // (on a river bank: jump in)
     hold('level', (v) => v && this.events.push('level'));
   }
 

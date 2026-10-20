@@ -1032,11 +1032,22 @@ export class Menu {
     this.pcNote.textContent = this.pcNoteDefault;
   }
 
+  // A spot still loading (the Eisbach's model): Play waits. text: what to say, or null when
+  // it's ready; error: it failed.
+  setSpotLoading(text, error = false) {
+    this.spotBusy = !!text;
+    for (const b of this.root.querySelectorAll('[data-play]')) b.disabled = this.spotBusy || (b.classList.contains('vr-launch') && this.vrSupported === false);
+    for (const n of this.root.querySelectorAll('.spot-note')) {
+      n.textContent = text || '';
+      n.classList.toggle('error', !!error);
+    }
+  }
+
   // ---------------------------------------------------------------- VR availability
   setVR(supported, reason = '') {
     this.vrSupported = supported;
     for (const b of this.root.querySelectorAll('.vr-launch')) {
-      b.disabled = !supported;
+      b.disabled = !supported || !!this.spotBusy;
       b.classList.toggle('vr-off', !supported);
     }
     for (const n of this.root.querySelectorAll('.vr-note')) n.textContent = supported ? '' : reason;

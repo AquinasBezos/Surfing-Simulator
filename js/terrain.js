@@ -7,6 +7,7 @@ import { smoothstep, mix } from './wave.js';
 import { smax, segDist, fbm, marchCoords, buildLandMesh, lcg } from './landkit.js';
 import * as teahupoo from './teahupoo.js';
 import * as wavepool from './wavepool.js';
+import { eisbachGroup, eisbachBedY, eisbachCollide, eisbachSolidAt } from './eisbach.js';
 
 const HEAD_A = [840, 330];
 const HEAD_B = [1260, -620];
@@ -188,6 +189,8 @@ const LAND = {
   margaret: { seabedY: margaretSeabed, glsl: MARGARET_GLSL, create: createMargaret },
   teahupoo: { seabedY: teahupoo.seabedY, glsl: teahupoo.SEABED_GLSL, create: teahupoo.createLand },
   pool: { seabedY: wavepool.seabedY, glsl: wavepool.SEABED_GLSL, create: wavepool.createLand, collide: wavepool.collide, solidAt: wavepool.solidAt },
+  // (a river: the land is the model, filled in once it has loaded; the sea isn't drawn)
+  eisbach: { seabedY: eisbachBedY, glsl: MARGARET_GLSL, create: () => eisbachGroup, collide: eisbachCollide, solidAt: eisbachSolidAt },
 };
 let active = LAND.margaret;
 

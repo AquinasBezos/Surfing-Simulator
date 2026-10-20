@@ -7,6 +7,7 @@
 //                added by moving the hips and re-solving the legs (two-bone IK) so the
 //                feet stay planted on the deck; on a longboard the stance slides along it
 //   sitting    : a sitting pose made here, for waiting out the back
+//   walking    : the Walk clip (Idle when still), board under the right arm (a river bank)
 // and turned to look where the player is looking (head and neck, or the whole upper body
 // when they're up and riding).
 import * as THREE from 'three';
@@ -154,9 +155,11 @@ export class SurferCharacter {
     this.paddle = this.mixer.clipAction(clip('Paddle'));
     this.surf = this.mixer.clipAction(clip('Surf'));
     this.sit = this.mixer.clipAction(sitClip());
-    this.actions = [this.paddle, this.surf, this.sit];
+    this.walk = this.mixer.clipAction(clip('Walk'));
+    this.idle = this.mixer.clipAction(clip('Idle'));
+    this.actions = [this.paddle, this.surf, this.sit, this.walk, this.idle];
     for (const a of this.actions) a.play();
-    this.weights = [1, 0, 0]; // lying down, up, sitting
+    this.weights = [1, 0, 0, 0, 0]; // lying down, up, sitting, walking, standing about
     // The mixer only writes a bone when its animated value changes, so a held pose would keep
     // the look / IK tweaks from the last frame and they'd pile up (a head that spins). Keep
     // the mixer's output and put it back before each update.
@@ -169,21 +172,26 @@ export class SurferCharacter {
     if (hair && this.mats.Hair) this.mats.Hair.color.set(hair);
   }
 
-  // p: { pose: 'prone' | 'stand' | 'sit', effort, crouch, lean, foot, proneZ, lookYaw, lookPitch }
-  //    (lookYaw / lookPitch: where they're looking, relative to the board's nose, + = left / up)
+  // p: { pose: 'prone' | 'stand' | 'sit' | 'walk', effort, crouch, lean, foot, proneZ, lookYaw, lookPitch }
+  //    (lookYaw / lookPitch: where they're looking, relative to the board's nose, + = left / up;
+  //    walking, effort is how fast: 0 standing about .. 1 running)
   update(dt, p) {
-    const target = p.pose === 'stand' ? 1 : p.pose === 'sit' ? 2 : 0;
+    const moving = (p.effort || 0) > 0.06;
+    const target = p.pose === 'stand' ? 1 : p.pose === 'sit' ? 2 : p.pose === 'walk' ? (moving ? 3 : 4) : 0;
     const k = 1 - Math.exp(-dt * 7);
     let sum = 0;
-    for (let i = 0; i < 3; i++) {
+    for (let i = 0; i < 5; i++) {
       this.weights[i] += ((i === target ? 1 : 0) - this.weights[i]) * k;
       sum += this.weights[i];
     }
-    const [wP, wU, wS] = this.weights.map((w) => w / sum);
+    const [wP, wU, wS, wW, wI] = this.weights.map((w) => w / sum);
     this.paddle.setEffectiveWeight(wP);
     this.surf.setEffectiveWeight(wU);
     this.sit.setEffectiveWeight(wS);
+    this.walk.setEffectiveWeight(wW);
+    this.idle.setEffectiveWeight(wI);
     this.paddle.setEffectiveTimeScale(0.3 + (p.effort || 0) * 1.3);
+    this.walk.setEffectiveTimeScale(p.pose === 'walk' ? Math.max(0.5, (p.effort || 0) * 2.4) : 1);
     this.boneList.forEach((b, i) => {
       b.quaternion.copy(this.base[i].q);
       b.position.copy(this.base[i].p);
@@ -195,10 +203,22 @@ export class SurferCharacter {
     });
     // lying with the hips toward the tail; up, the stance slides with `foot`; sitting just
     // behind the middle
-    this.model.position.set(0, 0.035, wP * (p.proneZ ?? 0.42) + wU * -(p.foot || 0) + wS * 0.18);
+    // (on foot the root is at the feet; on a board it's the board, a little below the deck)
+    this.model.position.set(0, 0.035 * (wP + wU + wS), wP * (p.proneZ ?? 0.42) + wU * -(p.foot || 0) + wS * 0.18);
     this.model.updateMatrixWorld(true);
     if (wU > 0.5) this.adjustStance(p, wU);
+    if (wW + wI > 0.5) this.carryBoard();
     this.applyLook(p.lookYaw || 0, p.lookPitch || 0, wP, wU, wS);
+  }
+
+  // on foot: the right hand round the bottom rail of the board under the arm (the root's frame:
+  // feet at the origin, facing -z, the board at the right hip)
+  carryBoard() {
+    const B = this.bones;
+    if (!B.RightUpperArm || !B.RightLowerArm || !B.RightHand) return;
+    this.root.updateMatrixWorld(true);
+    const target = _v3.set(0.37, 0.8, -0.12).applyMatrix4(this.root.matrixWorld);
+    solveTwoBone(B.RightUpperArm, B.RightLowerArm, B.RightHand, target.clone());
   }
 
   // Turn to look: lying down or sitting it's the head and neck (and a little of the chest);

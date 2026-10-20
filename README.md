@@ -3,7 +3,7 @@
 A first-person surfing game for the browser and Meta Quest, built with Three.js and WebXR.
 Paddle into glassy waves, pop up, and race the peeling lip through the barrel, on your own or with friends in the same lineup.
 
-- Three surf spots. **Margaret River**: peaky rights and lefts over sand and rock in clear green-blue water, with a beach, wooded hills and an island offshore. **Teahupo'o**: a heavy left that comes out of deep blue ocean onto a shallow coral reef and wraps round it. A wide section pitches all at once, the lip is thick and the barrel round and wide, with waves up to 6 m. Behind it are a turquoise lagoon, a palm-lined shore and steep green peaks, and the rest of the island fades into the haze across the bay. **Wave Pool**: a kite-shaped artificial lagoon in the English countryside with machine-made waves, a left and a right either side of a viewing pier.
+- Four surf spots. **Margaret River**: peaky rights and lefts over sand and rock in clear green-blue water, with a beach, wooded hills and an island offshore. **Teahupo'o**: a heavy left that comes out of deep blue ocean onto a shallow coral reef and wraps round it. A wide section pitches all at once, the lip is thick and the barrel round and wide, with waves up to 6 m. Behind it are a turquoise lagoon, a palm-lined shore and steep green peaks, and the rest of the island fades into the haze across the bay. **Wave Pool**: a kite-shaped artificial lagoon in the English countryside with machine-made waves, a left and a right either side of a viewing pier. **Eisbach**: the standing river wave in Munich, under the Prinzregentenstrasse bridge, where you wait on the bank with your board and jump in.
 
 - Clear, refractive water with sand, weed and caustics visible underneath, Fresnel sky reflections, sun glints, and light glowing through thin crests and the lip.
 - Breaking waves are built procedurally on the GPU: a swell profile plus a curling lip that pitches, forms a barrel, and collapses into whitewater as the break peels along the wave. Gerstner swell runs underneath.
@@ -21,7 +21,7 @@ Paddle into glassy waves, pop up, and race the peeling lip through the barrel, o
 - Surf at midday or at sunset: a low gold sun with a long path of light across the water, a dusk sky in the reflections, backlit crests and dimmer, warmer light under water.
 - Multiplayer: create or find a room, public or private with a passcode, and surf the same waves as up to seven other players, or join as a camera drone and film them from above. PC and Quest players can share a room.
 
-There is no build step. Textures, terrain and sound are generated at start-up, and three.js (r169) loads from jsDelivr. The only files besides code are the surfer model (`assets/surfer.glb`) and the menu art in `assets/menu/` (including the location thumbnails), which are screenshots of the game. Firebase and Trystero load only when you open Multiplayer.
+There is no build step. Textures, terrain and sound are generated at start-up, and three.js (r169) loads from jsDelivr. The only files besides code are the surfer model (`assets/surfer.glb`), the Eisbach (`assets/eisbach_wave_munich_draco.glb`, Draco-compressed and only downloaded when someone picks that spot; the decoder comes from jsDelivr), and the menu art in `assets/menu/` (including the location thumbnails), which are screenshots of the game. Firebase and Trystero load only when you open Multiplayer.
 
 ## Controls
 
@@ -136,6 +136,14 @@ Ending the replay takes you back to the pause screen with everything exactly as 
   - A deep trench runs along the pier, and the current in it carries you back out toward the lineup. Paddle out beside the pier to get back quickly.
   - Near the shore there's a big arch under the pier: paddle through it to surf the other side.
   - Waves are 0.8 m to 2 m, which is what a real wave machine makes. Kick out before the pier: ride into it and you wipe out.
+- **Eisbach** is a river wave in a park in the middle of Munich. It doesn't travel: the river pours out from under the bridge, drops into a trough and stands up into a wave about a metre high, and the water runs through it at 4 to 5 m/s.
+  - You start on the bank with your board under your arm, in first person. Walk along the banks (your movement keys, the left stick, the left of a touch screen, or the left thumbstick in a headset); `Shift`, or the stick pushed all the way, runs. You can't walk into the river.
+  - At the edge beside the wave, jump in (`Space`, `A`, the **Jump in** button on a touch screen, `A` / `X` in a headset). You land standing on the face, facing up the river.
+  - On a standing wave the slope pulls you up the river as hard as the water drags you down it, so you hold your place. Carve across it from wall to wall; lean back (`S`) to drop toward the foot of the wave, forward (`W`) to climb. Speeds and turns go by how fast the board moves through the water, not over the ground.
+  - Ride over the top into the foam, wipe out, or slide off the bottom, and the river takes you away: you're back on the bank. The walls are close: hit one hard and you fall.
+  - Near a bank, crouch and let go (as for an air) and you jump out over the wall and land on your feet on the bank.
+  - **Back to the lineup** on the bank swaps to the other bank. In a headset, the right thumbstick turns you on the bank, and stand up before you jump in (it calibrates you standing).
+  - The **Waves** setting is the wave's height, 0.6 m to 1.3 m (the river carries more or less water).
 
 **Time of day** (Singleplayer screen, Create a room, and the singleplayer pause screen) switches between **Midday** and **Sunset**. At sunset the sun sits a few degrees above the horizon out to sea. At Margaret River and Teahupo'o the swell comes from the south-west, so the sun sets in the west, a little to the right as you look out. It's behind the waves as you paddle out, so it lays a long path of light across the water and shines through the crests and the lip. The sky, the reflections in the water, the fog, the sunlight on the surfers and the light under water all shift to dusk colours.
 
@@ -242,6 +250,9 @@ To check the relay works, open the game with `?relay` on two devices and join th
 | `js/sky.js` | Procedural HDR sky (rendered once into a cube map), midday and sunset |
 | `js/terrain.js` | Each spot's land and seabed (and its GLSL copy for the water shader); Margaret River's beach, headland, island and trees |
 | `js/teahupoo.js` | Teahupo'o: the reef (its edge follows the line where the wave breaks), lagoon, pass, mountains, the far side of the island, palms and houses, and the 3D reef seen under water |
+| `js/eisbach.js` | The Eisbach: loads and Draco-decodes the model, and measures from it the ground you can walk on and the channel's walls (so the water and the surfer fit it); the banks for the drone and the surfer |
+| `js/river.js` | A river's standing wave: its shape, how fast the water runs through it, the foam, what the surfing physics sees, and the water mesh and shader |
+| `js/walker.js` | On foot: walking the river banks in first person (steps up, falls off ledges, never into the river) |
 | `js/wavepool.js` | The Wave Pool: its floor (deep at the back, a shallow shelf along the break line, beaches, the trench by the pier), walls, the pier with its arch and the machine housing, clubhouse, cabins, canopies and fields, and keeping surfers off the walls and pier |
 | `js/landkit.js` | Shared pieces for building land: noise, ridges, the land mesh |
 | `js/spray.js`, `js/audio.js`, `js/hud.js`, `js/textures.js` | Spray particles, procedural sound, HUD, generated textures |
@@ -264,7 +275,7 @@ Breaking starts at the peak and spreads along the wave at the peel speed. Each s
 - `?q=low` / `?q=high`: quality preset. Quest defaults to `low`.
 - `?debug`: shows FPS and wave state for the board's position.
 - `?board=shortboard|longboard`: choose the board (otherwise the last one picked in the menu).
-- `?spot=margaret|teahupoo|pool`: choose the location (not saved), e.g. with the preset scenes below.
+- `?spot=margaret|teahupoo|pool|eisbach`: choose the location (not saved), e.g. with the preset scenes below.
 - `?shot=lineup|barrel|shoulder|behind|paddle|duckdive|beach|boards`: jumps to a preset scene, skipping the menu. Add `&freeze` to stop time.
 - Extra preset options: `&stand`, `&crouch=0..1`, `&dive=depth` (e.g. `&dive=1.1` to look around under water), `&foot=-1..1.2` (longboard stance), `&pitch=` / `&lookyaw=` (radians), `&tau=` (seconds since the wave started breaking; negative is before).
 - `&bots=N`: puts N stand-in surfers around you, to check how other players look. They sit and look around, or paddle; `&botpose=prone|sit|stand` puts them all in one pose. `&wave2=z`: adds a second wave of the set with its crest at `z`. `&waveh=1.0`: the preset wave's height in metres.

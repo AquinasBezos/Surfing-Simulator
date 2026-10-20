@@ -146,6 +146,27 @@ SPOTS.pool = {
   water: { absorb: [0.42, 0.085, 0.05], scatter: [0.003, 0.045, 0.075], sss: [0.08, 0.9, 0.95], uwScatter: [0.006, 0.11, 0.15], deep: [0.012, 0.1, 0.14], uwUp: [0.05, 0.4, 0.48], uwGlow: [0.12, 0.45, 0.5], shaft: [0.5, 0.95, 1.0], vis: 0.07 },
 };
 
+// The Eisbach, Munich: a standing wave in a city river, under the Prinzregentenstrasse
+// bridge (eisbach.js, river.js). No paddling: you wait on the bank with your board and jump
+// in. `river` marks it: the sea's wave settings below are only placeholders.
+SPOTS.eisbach = {
+  id: 'eisbach',
+  name: 'Eisbach',
+  place: 'Munich, Germany',
+  blurb: 'A standing wave in a city river: jump in from the bank',
+  river: true,
+  wave: { ...SPOTS.margaret.wave },
+  // the wave's height, trough to crest (it changes with how much water the river carries)
+  heights: { min: 0.6, max: 1.3, randomMin: 0.8, randomMax: 1.2, default: 1.0, small: 0.5, minScale: 1 },
+  lineup: { z: 0, side: 0 },
+  // the river runs north (-z); the sun goes down in the west-north-west (-x, a little -z)
+  sunset: [-0.87, -0.5],
+  inside: { z: 1e9, x: 1e9 },
+  fish: null,
+  // milky green glacial water, hard to see far into
+  water: { absorb: [0.5, 0.16, 0.2], scatter: [0.02, 0.085, 0.07], sss: [0.2, 0.75, 0.55], uwScatter: [0.03, 0.17, 0.14], deep: [0.03, 0.13, 0.11], uwUp: [0.12, 0.38, 0.3], uwGlow: [0.2, 0.45, 0.36], shaft: [0.5, 0.9, 0.75], vis: 0.42 },
+};
+
 export const SPOT_IDS = Object.keys(SPOTS);
 export const DEFAULT_SPOT = 'margaret';
 export const cleanSpot = (id) => (SPOTS[id] ? id : DEFAULT_SPOT);

@@ -11,7 +11,10 @@ import { createDroneModel, animateDrone } from './drone.js';
 import { SurferCharacter, loadSurferModel, cleanLook } from './character.js';
 
 // for a DRONE pose the snapshot's crouch is the gimbal pitch and effort the throttle
-export const POSE = { PRONE: 0, POPUP: 1, STANDING: 2, WIPEOUT: 3, DRONE: 4, SITTING: 5 };
+// WALK: on foot on a river bank (the Eisbach), effort = how fast (0..1 of a run)
+export const POSE = { PRONE: 0, POPUP: 1, STANDING: 2, WIPEOUT: 3, DRONE: 4, SITTING: 5, WALK: 6 };
+// the board under the right arm, in the walker's frame (feet at the origin, facing -z)
+const CARRY = { p: new THREE.Vector3(0.3, 0.98, 0.02), r: new THREE.Euler(0.12, 0, Math.PI / 2) };
 const MAX_PLAYERS = 16;
 const DELAY = 0.15; // pose this far behind the newest snapshot (s)
 export const POSE_DELAY = DELAY; // (update(now) poses everyone as they were at now - POSE_DELAY)
@@ -65,6 +68,10 @@ class Avatar {
     }
     this.board = createBoard(type, color);
     this.root.add(this.board);
+    if (this.carrying) {
+      this.carrying = false;
+      this.setCarry(true);
+    }
   }
 
   setLook(look) {
@@ -78,6 +85,19 @@ class Avatar {
     this.character = new SurferCharacter(gltf);
     this.character.setLook(this.look);
     this.root.add(this.character.root);
+  }
+
+  // the board under your arm (walking), or on the water under your feet
+  setCarry(on) {
+    if (!this.board || this.carrying === on) return;
+    this.carrying = on;
+    if (on) {
+      this.board.position.copy(CARRY.p);
+      this.board.rotation.copy(CARRY.r);
+    } else {
+      this.board.position.set(0, 0, 0);
+      this.board.rotation.set(0, 0, 0);
+    }
   }
 
   // show the drone or the surfer
@@ -329,10 +349,11 @@ export class RemotePlayers {
         // tumbling board, no rider, during a wipeout
         const ch = a.character;
         ch.root.visible = c.state !== POSE.WIPEOUT;
+        a.setCarry(c.state === POSE.WALK);
         if (ch.root.visible) {
           const B = BOARDS[a.boardType] || BOARDS.shortboard;
           ch.update(dt, {
-            pose: c.state === POSE.STANDING || c.state === POSE.POPUP ? 'stand' : c.state === POSE.SITTING ? 'sit' : 'prone',
+            pose: c.state === POSE.WALK ? 'walk' : c.state === POSE.STANDING || c.state === POSE.POPUP ? 'stand' : c.state === POSE.SITTING ? 'sit' : 'prone',
             effort: c.effort,
             crouch: c.crouch,
             lean: c.lean,

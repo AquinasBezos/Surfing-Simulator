@@ -78,6 +78,15 @@ export class Surfer {
     this.footPos = 0;
   }
 
+  // How fast the board moves through the water: what makes it plane and turn. On the sea
+  // that's taken as the speed over the ground (the physics was tuned that way); on a river
+  // you can hold still on a standing wave with the water rushing under you, so it's the
+  // speed relative to the water there.
+  get planeSpeed() {
+    if (!this.model.river) return this.speed;
+    return Math.hypot(this.vx, this.vz - (this.s.waterVz || 0));
+  }
+
   get speed() {
     return Math.hypot(this.vx, this.vz);
   }
@@ -153,7 +162,7 @@ export class Surfer {
   // A quick look/head turn while charged: snap, cutback or tailslide toward `dir`
   // (+1 = left, -1 = right). omega: peak turn speed (rad/s), sweep: how far the look turned.
   flick(dir, omega, sweep) {
-    if (this.state !== STATE.STANDING || this.air || this.move || this.charge < 0.15 || this.speed < 3) return null;
+    if (this.state !== STATE.STANDING || this.air || this.move || this.charge < 0.15 || this.planeSpeed < 3) return null;
     const same = this.yawRate * dir; // > 0 when already turning that way
     let kind, theta, dur, slide = 0, loss;
     if (omega > 10 || (omega > 6.5 && same > 1.0)) {
@@ -273,7 +282,7 @@ export class Surfer {
     }
     if (thrust > 0.25) this.lastStroke = 0;
     else this.lastStroke = (this.lastStroke ?? 9) + h;
-    if (standing && this.leanZ > 0.1 && slope > 0.1 && this.speed > 2) thrust += 1.1 * this.leanZ * Math.min(1, slope * 3);
+    if (standing && this.leanZ > 0.1 && slope > 0.1 && this.planeSpeed > 2) thrust += 1.1 * this.leanZ * Math.min(1, slope * 3);
     ax += fx * thrust;
     az += fz * thrust;
 
@@ -305,6 +314,9 @@ export class Surfer {
         lin *= 1 - 0.3 * Math.max(this.leanZ, 0);
         lin += 1.6 * Math.max(-this.leanZ, 0) * planing; // stall
         lin += 0.07 * Math.abs(this.yawRate) * planing; // carving costs a little speed
+        // a river wave: ridden with your weight back in rough water, so you hold a spot on the
+        // face rather than sinking to its foot (W / S still take you down and up it)
+        if (this.model.river) lin += 0.55 * planing;
         if (B.walk) {
           // longboard: trim forward glides, stepping back stalls
           lin *= 1 - 0.3 * smoothstep(0.2, 1.0, this.footPos);
@@ -334,7 +346,7 @@ export class Surfer {
     }
 
     // --- steering ---
-    const speed = this.speed;
+    const speed = this.planeSpeed;
     if (this.move) {
       const m = this.move;
       m.t += h;
@@ -369,7 +381,8 @@ export class Surfer {
     this.z += this.vz * h;
     if (this.collide) {
       const hit = this.collide(this);
-      if (hit > 3.5 && this.state === STATE.STANDING) return this.wipeout('Ran into the wall');
+      // (a pool's walls take a proper crash; a river's narrow channel, much less)
+      if (hit > (this.model.river ? 1.5 : 3.5) && this.state === STATE.STANDING) return this.wipeout('Ran into the wall');
     }
 
     this.updateVertical(h, s, ext);
@@ -435,7 +448,7 @@ export class Surfer {
       let launch = null;
       if (standing) {
         // extending the legs pushes down on the board; the rebound pops it up
-        if (ext > 1.2) this.popVel = Math.max(this.popVel, Math.min(2.4, ext * 0.42) * mix(0.35, 1, smoothstep(2, 7, this.speed)));
+        if (ext > 1.2) this.popVel = Math.max(this.popVel, Math.min(2.4, ext * 0.42) * mix(0.35, 1, smoothstep(2, 7, this.planeSpeed)));
         else {
           if (this.popVel > 0.6) launch = vySurf + this.popVel;
           this.popVel = 0;
@@ -475,8 +488,10 @@ export class Surfer {
     this.air = false;
     this.y = target;
     const [fx, fz] = this.forward;
-    const sp = this.speed;
-    const align = sp > 0.5 ? (this.vx * fx + this.vz * fz) / sp : 1;
+    // (which way you're going through the water: on a river, relative to it)
+    const wvz = this.model.river ? this.s.waterVz || 0 : 0;
+    const sp = Math.hypot(this.vx, this.vz - wvz);
+    const align = sp > 0.5 ? (this.vx * fx + (this.vz - wvz) * fz) / sp : 1;
     const n = this._n.set(-(this._gx || 0), 1, -(this._gz || 0)).normalize();
     const impact = -(this.vx * n.x + this.vy * n.y + this.vz * n.z);
     const t = this.airTime;
@@ -508,7 +523,7 @@ export class Surfer {
     this.inTube = false;
     this.ceiling = Infinity;
     // standing without enough speed to plane: sink back to prone
-    if (st === STATE.STANDING && this.speed < 1.2 && this.stateTime > 1.0) {
+    if (st === STATE.STANDING && this.planeSpeed < 1.2 && this.stateTime > 1.0) {
       this._slow = (this._slow || 0) + h;
       if (this._slow > 1.2) {
         this._slow = 0;
@@ -542,6 +557,8 @@ export class Surfer {
       return;
     }
     const un = s.un;
+    // a river's standing wave: ride over the top and the water behind it takes you away
+    if (s.river && st === STATE.STANDING && !this.air && un < -0.3) return this.wipeout('Washed over the back of the wave');
     // a wider barrel (some spots) lands its lip further out in front
     const tip = CURL.tipShift;
     // small waves: the lip and the whitewater haven't the power to knock you off, so you can
@@ -577,7 +594,7 @@ export class Surfer {
         } else this.lipT = 0;
       } else this.lipT = 0;
       this.inTube = s.b > 0.6 && s.kappa < 0.35 && un > 0.38 && un < 1.25 + tip && s.H > 1.2;
-      this.riding = un > -0.7 && un < 3 && this.speed > 2.2;
+      this.riding = un > -0.7 && un < 3 && this.planeSpeed > 2.2;
     } else {
       this.riding = false;
       // sitting in the impact zone: a big wave's whitewater washes you off the board

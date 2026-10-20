@@ -223,6 +223,7 @@ export class WaveModel {
     this.nextId = 1;
     this.heights = { mode: 'set', height: WAVE_HEIGHTS.default }; // singleplayer setting
     this.seed = (Math.random() * 2 ** 32) >>> 0;
+    this.river = null; // a river's standing wave (river.js) instead of waves rolling in
     this.onSpawn = null;
     this._prof = { Lf: 0, Lb: 0 };
     this._sec = { H: 0, S: 1, b: 0, kappa: 0, steep: 0, age: 0 };
@@ -246,12 +247,21 @@ export class WaveModel {
     this.schedule = null;
     this.seed = (Math.random() * 2 ** 32) >>> 0;
     for (const w of this.waves) w.active = false;
-    this.spawn(firstZ);
+    if (!this.river) this.spawn(firstZ);
   }
 
-  // Singleplayer wave size; takes effect from the next wave.
+  // A river (river.js) instead of the sea: one standing wave that doesn't move, sampled from
+  // the river's shape; null for the sea again.
+  setRiver(river) {
+    this.river = river;
+    for (const w of this.waves) w.active = false;
+    if (river) river.setHeight(this.heights.height);
+  }
+
+  // Singleplayer wave size; takes effect from the next wave (a river's wave at once).
   setHeights(cfg) {
     this.heights = { mode: cfg.mode === 'random' ? 'random' : 'set', height: cfg.height };
+    if (this.river) this.river.setHeight(cfg.height);
   }
 
   spawn(z = WAVE.spawnZ) {
@@ -298,6 +308,12 @@ export class WaveModel {
   // room's wave size: { mode, height, fromK, prev } (from wave fromK on; `prev` before it).
   setSchedule(seed, clock, heights = null) {
     this.schedule = { seed: seed >>> 0, clock, heights };
+    if (this.river) {
+      // (a river has no waves to schedule: just the room's clock and wave size)
+      this.time = clock();
+      if (heights) this.river.setHeight(heights.height);
+      return;
+    }
     for (const w of this.waves) {
       w.active = false;
       w.id = null;
@@ -312,6 +328,7 @@ export class WaveModel {
   // A room's wave size changed: waves already on their way keep their height.
   setScheduleHeights(heights) {
     if (this.schedule) this.schedule.heights = heights;
+    if (this.river && heights) this.river.setHeight(heights.height);
   }
 
   _applySchedule() {
@@ -353,6 +370,11 @@ export class WaveModel {
   }
 
   update(dt) {
+    if (this.river) {
+      this.time = this.schedule ? this.schedule.clock() : this.time + dt;
+      this.river.time = this.time;
+      return;
+    }
     if (this.schedule) return this._applySchedule();
     this.time += dt;
     for (const w of this.waves) {
@@ -499,6 +521,7 @@ export class WaveModel {
   // Smooth (no curl) surface height used by the physics, with per-wave details.
   // Writes into `out`: height, plus info about the dominant wave.
   sample(x, z, out) {
+    if (this.river) return this.river.sample(x, z, out);
     // Undo the swell's horizontal displacement (fixed-point iteration).
     const sw = this._sw || (this._sw = { x: 0, y: 0, z: 0 });
     let rx = x,
@@ -565,6 +588,7 @@ export class WaveModel {
   }
 
   heightAt(x, z) {
+    if (this.river) return this.river.heightAt(x, z);
     const o = this._tmpS || (this._tmpS = {});
     return this.sample(x, z, o).height;
   }

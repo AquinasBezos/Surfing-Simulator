@@ -235,6 +235,21 @@ export class Arms {
     }
   }
 
+  // On foot with the board under your right arm. frame: your body (feet at its origin, facing
+  // -z): the right hand round the bottom rail, the left arm down by your side.
+  poseCarry(frame, show) {
+    if (!this.rig) return;
+    this.rig.visible = show;
+    if (!show) return;
+    frame.updateWorldMatrix(true, false);
+    const M = frame.matrixWorld;
+    frame.getWorldQuaternion(_q);
+    const P = (x, y, z) => new THREE.Vector3(x, y, z).applyMatrix4(M);
+    const D = (x, y, z) => new THREE.Vector3(x, y, z).applyQuaternion(_q);
+    this.rig.pose(1, P(0.19, 1.42, 0.06), P(0.37, 0.8, -0.14), D(-0.3, 0.15, -1), D(-1, 0.15, 0), D(1, 0, 0.7));
+    this.rig.pose(-1, P(-0.19, 1.42, 0.06), P(-0.25, 0.84, 0.08), D(0, -1, 0.05), D(1, 0, 0), D(-0.3, 0, 1));
+  }
+
   // VR: the arms reach from your (estimated) shoulders to the controllers. hands: xr.hands;
   // head, headQuat: the headset in the rig's space; rig: the camera rig; prone: lying down.
   poseVR(hands, head, headQuat, rig, prone, show) {

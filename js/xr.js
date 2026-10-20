@@ -104,6 +104,13 @@ export class XRControls {
     this.calibrated = true;
   }
 
+  // Calibrate while standing (a river: you stand the whole time): as though you'd stood up
+  // from your paddling position, so standing reads as standing.
+  calibrateStanding() {
+    this.calibrate();
+    this.h0.y -= 0.98;
+  }
+
   toBody(p, out) {
     return out.subVectors(p, this.h0).applyAxisAngle(Y, -this.yaw0);
   }

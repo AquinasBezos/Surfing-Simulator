@@ -63,7 +63,13 @@ const FRAG = /* glsl */ `
     // plane can sit below the real surface, so never treat these pixels as dry
     depthW = max(depthW, 0.06);
   #endif
+  #ifdef UW_UNDER_ONLY
+  // (only seen through the water from under it: a river's land, where the water's surface is
+  // far too curved for the tangent plane to say what's under it)
+  if (uCamUnder > 0.5) {
+  #else
   if (depthW > 0.0 || uCamUnder > 0.5) {
+  #endif
     vec3 toCam = cameraPosition - vUWPos;
     float dCam = length(toCam);
     vec3 Vd = toCam / dCam;
@@ -121,6 +127,13 @@ function throughWaterMaterial(src) {
   patch(m, true);
   throughCache.set(src, m);
   return m;
+}
+
+// The fog only while the camera is under the water (a river's banks and bed).
+export function addUnderwaterFogWhenUnder(material) {
+  material.defines = { ...(material.defines || {}), UW_UNDER_ONLY: '' };
+  patch(material, false);
+  material.customProgramCacheKey = () => 'uw1u';
 }
 
 // Give every mesh under root a "seen through the water" copy and underwater fog.

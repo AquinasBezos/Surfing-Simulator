@@ -167,6 +167,25 @@ body {
   display: none;
 }
 
+/* on a river bank: jump in, on the right */
+.t-jump {
+  right: max(14px, env(safe-area-inset-right));
+  top: calc(40% - var(--t-big) / 2);
+  width: var(--t-big);
+  height: var(--t-big);
+  border-radius: 50%;
+  font-size: calc(var(--t-big) * 0.19);
+  display: none;
+}
+
+#touch-ui[data-mode='bank'] .t-jump {
+  display: flex;
+}
+
+#touch-ui[data-mode='bank'] .t-guide {
+  display: none;
+}
+
 /* a guide to the touch zones, shown for the first few seconds */
 .t-guide {
   position: absolute;
