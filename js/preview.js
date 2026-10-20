@@ -70,7 +70,7 @@ export class CharacterPreview {
     loadSurferModel().then((gltf) => {
       this.character = new SurferCharacter(gltf);
       if (this.look) this.character.setLook(this.look);
-      this.character.weights = [0, 1, 0]; // already standing
+      this.character.weights = [0, 1, 0, 0, 0]; // already standing
       this.turntable.add(this.character.root);
     });
   }

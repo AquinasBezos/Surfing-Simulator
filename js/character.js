@@ -181,7 +181,7 @@ export class SurferCharacter {
     const k = 1 - Math.exp(-dt * 7);
     let sum = 0;
     for (let i = 0; i < 5; i++) {
-      this.weights[i] += ((i === target ? 1 : 0) - this.weights[i]) * k;
+      this.weights[i] = (this.weights[i] || 0) + ((i === target ? 1 : 0) - (this.weights[i] || 0)) * k;
       sum += this.weights[i];
     }
     const [wP, wU, wS, wW, wI] = this.weights.map((w) => w / sum);
