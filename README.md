@@ -264,7 +264,7 @@ To check the relay works, open the game with `?relay` on two devices and join th
 
 ### How the barrel works
 
-Each vertex of the ocean grid has a rest position along the wave and a crest-relative coordinate `u`. A smooth asymmetric profile gives the unbroken wave. Physics uses this smooth surface, as the spec allows.
+Each vertex of the ocean grid has a rest position along the wave and a crest-relative coordinate `u`. A smooth asymmetric profile gives the unbroken wave. Physics uses this smooth surface, as the spec allows. It keeps the middle of the board on the surface. The board as it's drawn (and as replays and other players show it) is then turned about its middle, and lifted only if it has to be, so no part of it sits deeper than it would on flat water. That keeps the nose out of a hollow face.
 
 Once a section starts breaking, points near the crest rotate around a tube centre in front of the face. The front of the wave becomes the inside of the tube and the back becomes the outer surface of the lip, so the mesh folds into a real overhang. The crest pitches first and the lower face follows.
 

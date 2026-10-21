@@ -520,13 +520,15 @@ export class WaveModel {
 
   // Smooth (no curl) surface height used by the physics, with per-wave details.
   // Writes into `out`: height, plus info about the dominant wave.
-  sample(x, z, out) {
+  // (from, steps: where the search for the swell's sideways shift starts, and how many steps it
+  // takes; see heightNear)
+  sample(x, z, out, from = null, steps = 3) {
     if (this.river) return this.river.sample(x, z, out);
     // Undo the swell's horizontal displacement (fixed-point iteration).
     const sw = this._sw || (this._sw = { x: 0, y: 0, z: 0 });
-    let rx = x,
-      rz = z;
-    for (let i = 0; i < 3; i++) {
+    let rx = from ? x - from.x : x,
+      rz = from ? z - from.z : z;
+    for (let i = 0; i < steps; i++) {
       this.swellAt(rx, rz, this.time, 0, sw);
       rx = x - sw.x;
       rz = z - sw.z;
@@ -591,6 +593,39 @@ export class WaveModel {
     if (this.river) return this.river.heightAt(x, z);
     const o = this._tmpS || (this._tmpS = {});
     return this.sample(x, z, o).height;
+  }
+
+  // How far the swell has shifted the water sideways at (x, z): where heightAt finds the water
+  // there came from. For heightNear.
+  swellShift(x, z, out) {
+    out.x = out.z = 0;
+    if (this.river) return out;
+    const sw = this._sw2 || (this._sw2 = { x: 0, y: 0, z: 0 });
+    let rx = x,
+      rz = z;
+    for (let i = 0; i < 4; i++) {
+      this.swellAt(rx, rz, this.time, 0, sw);
+      rx = x - sw.x;
+      rz = z - sw.z;
+    }
+    out.x = sw.x;
+    out.z = sw.z;
+    return out;
+  }
+
+  // heightAt(x, z), for a point a metre or two from one whose swellShift() is known: the shift
+  // hardly changes over that, so the search for it can start there and take one step (about
+  // half the work, for the same answer to a fraction of a millimetre). A few centimetres away,
+  // no step at all is needed (steps 0). shiftOut: gets the swell's shift at (x, z).
+  heightNear(x, z, shift, steps = 1, shiftOut = null) {
+    if (this.river) return this.river.heightAt(x, z);
+    const o = this._tmpN || (this._tmpN = {});
+    const h = this.sample(x, z, o, shift, steps).height;
+    if (shiftOut) {
+      shiftOut.x = this._sw.x;
+      shiftOut.z = this._sw.z;
+    }
+    return h;
   }
 
   // Values for the shader uniforms.

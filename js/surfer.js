@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { GRAVITY, LINEUP_Z, WAVE, WAVE_HEIGHTS, BOARDS } from './config.js';
 import { clamp, smoothstep, mix, CURL } from './wave.js';
+import { boardBottom } from './board.js';
 
 export const STATE = { PRONE: 'prone', POPUP: 'popup', STANDING: 'standing', WIPEOUT: 'wipeout', SITTING: 'sitting' };
 
@@ -17,10 +18,53 @@ const DEG = Math.PI / 180;
 
 const moveToward = (v, t, d) => (v < t ? Math.min(t, v + d) : Math.max(t, v - d));
 
+// Where along the board (0 tail .. 1 nose) it's checked against the water as it's drawn
+const RIDE_T = [0.03, 0.2, 0.4, 0.6, 0.75, 0.87, 0.95, 1];
+const RIDE_X = new THREE.Vector3(1, 0, 0);
+const _rp = new THREE.Vector3();
+const _ru = new THREE.Vector3();
+const _rz = new THREE.Vector3();
+const _rq = new THREE.Quaternion();
+const _rf = new THREE.Vector3();
+const _rr = new THREE.Vector3();
+
+// The least change to the drawn board that keeps it out of the water: a turn about its middle
+// (phi, + nose up) and a lift (dy >= 0). need[i]: how far station i is too deep; k[i]: how much
+// it comes up per radian of nose-up turn. Turning is preferred to lifting (a centimetre of lift
+// costs as much as 2.3 degrees of turn); the small squared terms make the answer unique, so it
+// moves smoothly from frame to frame instead of flicking between equally good ones. The cost
+// is convex in phi (dy is the least lift for that turn), so a ternary search finds it.
+// Returns [phi, dy].
+const RIDE_W = 4,
+  RIDE_PHI = 0.9,
+  RIDE_DY = 0.3;
+function solveRide(need, k, n) {
+  const lift = (phi) => {
+    let dy = 0;
+    for (let i = 0; i < n; i++) dy = Math.max(dy, need[i] - k[i] * phi);
+    return dy;
+  };
+  const cost = (phi) => {
+    const dy = lift(phi);
+    return RIDE_W * dy + 20 * dy * dy + Math.abs(phi) + 2 * phi * phi + (dy > RIDE_DY ? 100 * (dy - RIDE_DY) : 0);
+  };
+  let a = -RIDE_PHI,
+    b = RIDE_PHI;
+  for (let it = 0; it < 32; it++) {
+    const m1 = a + (b - a) / 3,
+      m2 = b - (b - a) / 3;
+    if (cost(m1) < cost(m2)) b = m2;
+    else a = m1;
+  }
+  const phi = (a + b) / 2;
+  return [phi, Math.min(RIDE_DY, lift(phi))];
+}
+
 export class Surfer {
   constructor(model) {
     this.model = model;
     this.board = BOARDS.shortboard;
+    this.boardType = 'shortboard';
     this.x = 0;
     this.z = LINEUP_Z;
     this.y = 0;
@@ -52,12 +96,15 @@ export class Surfer {
     // underneath while the wave passes over. 0..1 how far over it is
     this.turtle = 0;
     this.turtleT = 0;
-    this.quatBase = new THREE.Quaternion(); // the board's orientation without the roll
+    this.quatBase = new THREE.Quaternion(); // the view's frame: the surface under you (smoothed), with the board's lean and trim
     this.effPitch = 0; // nose-down angle of the board including a pitching ledge (rad)
+    this.ledgePitch = 0; // ...of which the pitching ledge, beyond the smooth surface (rad)
+    this.ride = { tilt: 0, lift: 0 }; // how the drawn board was moved to sit on the water (rideOnWater)
     this.pearlT = 0;
     this.ceiling = Infinity; // height of the lip above the board (m)
     this.lipT = 0;
-    this.normal = new THREE.Vector3(0, 1, 0);
+    this.normal = new THREE.Vector3(0, 1, 0); // the surface under you, smoothed for the view
+    this.normalBoard = new THREE.Vector3(0, 1, 0); // ...and closely, for the board as it's drawn
     this.quat = new THREE.Quaternion();
     this.position = new THREE.Vector3();
     this.s = {};
@@ -75,6 +122,7 @@ export class Surfer {
 
   setBoard(type) {
     this.board = BOARDS[type] || BOARDS.shortboard;
+    this.boardType = BOARDS[type] ? type : 'shortboard';
     this.footPos = 0;
   }
 
@@ -117,6 +165,7 @@ export class Surfer {
     this.diveDepth = this.diveRate = 0;
     this.turtle = 0;
     this.pearlT = this.lipT = 0;
+    this.ledgePitch = 0;
     this.paddleEffort = 0;
     this.setState(STATE.PRONE);
     this.inTube = false;
@@ -124,6 +173,7 @@ export class Surfer {
     this.model.sample(x, z, this.s);
     this.y = this.s.height;
     this.normal.set(0, 1, 0);
+    this.normalBoard.set(0, 1, 0);
     this.updatePose(1);
   }
 
@@ -508,6 +558,7 @@ export class Surfer {
   updatePitch(h, hx, hz, slope, fx, fz, s) {
     const fall = -(hx * fx + hz * fz); // slope along the heading (> 0 = nose down)
     let ang = Math.atan(Math.max(0, fall));
+    const surface = ang;
     if (s.wave && slope > 0.05) {
       // when a section pitches the whole upper face goes near-vertical (the ledge)
       const ledge = s.b * (1 - s.kappa) * smoothstep(-0.3, 0.1, s.un) * smoothstep(1.25, 0.75, s.un);
@@ -515,6 +566,7 @@ export class Surfer {
       ang += (Math.PI / 2 - ang) * ledge * align;
     }
     this.effPitch += (ang - this.effPitch) * (1 - Math.exp(-h * 12));
+    this.ledgePitch += (ang - surface - this.ledgePitch) * (1 - Math.exp(-h * 12));
   }
 
   checkRules(s, h, deep) {
@@ -603,19 +655,15 @@ export class Surfer {
   }
 
   updatePose(dt) {
-    // surface normal (smoothed); level out in the air
+    // The surface normal, smoothed: gently for the view (the camera rides quatBase), closely for
+    // the board as it's drawn (quat), which then sits on the water along its length
+    // (rideOnWater). Both level out in the air.
     const gx = this._gx || 0,
       gz = this._gz || 0;
     const n = this.air ? this._n.set(0, 1, 0) : this._n.set(-gx, 1, -gz).normalize();
     this.normal.lerp(n, 1 - Math.exp(-dt * (this.air ? 3 : 10))).normalize();
+    this.normalBoard.lerp(n, 1 - Math.exp(-dt * (this.air ? 3 : 30))).normalize();
     this.position.set(this.x, this.y, this.z);
-
-    const fwd = new THREE.Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
-    const up = this.normal;
-    fwd.addScaledVector(up, -fwd.dot(up)).normalize();
-    const right = new THREE.Vector3().crossVectors(fwd, up).normalize();
-    this._m.makeBasis(right, up, fwd.clone().negate());
-    this.quat.setFromRotationMatrix(this._m);
 
     // rail lean, trim, dives and ledges
     const st = this.state;
@@ -624,18 +672,104 @@ export class Surfer {
     if (this.move) targetRoll = this.move.dir * (this.move.kind === 'tailslide' ? 0.2 : 0.6);
     let targetPitch = standing ? -this.leanZ * 0.06 : st === STATE.PRONE ? 0.035 : st === STATE.SITTING ? 0.2 : 0;
     if (standing && this.board.walk) targetPitch -= 0.06 * smoothstep(0.3, 1.1, this.footPos) - 0.07 * smoothstep(0.3, 1.0, -this.footPos);
-    // the extra steepness of a pitching ledge beyond the smooth surface
-    const surfAng = Math.atan(Math.max(0, -(gx * fwd.x + gz * fwd.z) / Math.max(1e-3, Math.hypot(fwd.x, fwd.z))));
-    targetPitch -= Math.max(0, this.effPitch - surfAng) * 0.8;
+    // the extra steepness of a pitching ledge beyond the smooth surface (only the ledge's: the
+    // board already lies along the surface)
+    targetPitch -= Math.max(0, this.ledgePitch) * 0.8;
     if (this.diving || this.diveDepth > 0) targetPitch -= clamp(this.diveRate * 0.22, -0.35, 0.45);
     if (this.air) targetPitch += clamp(this.vy * 0.04, -0.25, 0.2);
     this.roll += (targetRoll - this.roll) * (1 - Math.exp(-dt * 8));
     this.pitch += (targetPitch - this.pitch) * (1 - Math.exp(-dt * 6));
     this._q.setFromEuler(new THREE.Euler(this.pitch, 0, this.roll, 'YXZ'));
-    this.quat.multiply(this._q);
-    this.quatBase.copy(this.quat);
+
+    // the view's frame
+    this.frameOn(this.normal, this.quatBase).multiply(this._q);
+    // the board: on the surface, then sitting on the water along its length, not just at its
+    // middle (in the air too: coming down, the nose meets the water first and the board
+    // settles onto it as it lands)
+    this.frameOn(this.normalBoard, this.quat).multiply(this._q);
+    this.ride.tilt = this.ride.lift = 0;
+    if (!this.diving && this.turtle === 0 && st !== STATE.WIPEOUT) this.rideOnWater();
     // turtle roll: over onto its back about its length
     if (this.turtle > 0) this.quat.multiply(this._q.setFromAxisAngle(AXIS_Z, this.turtleAngle));
+  }
+
+  // The board's frame on a surface with normal `up`, facing the way it's heading, into out
+  frameOn(up, out) {
+    const fwd = _rf.set(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+    fwd.addScaledVector(up, -fwd.dot(up)).normalize();
+    const right = _rr.crossVectors(fwd, up).normalize();
+    this._m.makeBasis(right, up, fwd.negate());
+    return out.setFromRotationMatrix(this._m);
+  }
+
+  // The board resting on the water. The physics keeps the middle of the board on the surface
+  // and lays it along the surface there, but the water curves: a face steepening into the
+  // trough is hollow, so a rigid board laid flat at its middle has its nose (and tail) under
+  // the water at the bottom of the face, or wherever it points down into a hollow. So the board
+  // as it's drawn (and as the camera, the replay and other players see it) is turned about its
+  // middle and, where it has to be, lifted, so that no part of it is deeper in the water than
+  // it is on flat water: the nose at most touching it, the tail a little way in. The physics
+  // isn't touched. A few rounds: the water isn't flat, so each answer is only nearly right.
+  rideOnWater() {
+    const n = RIDE_T.length;
+    const need = this._need || (this._need = new Float64Array(n));
+    const k = this._k || (this._k = new Float64Array(n));
+    const hs = this._hs || (this._hs = new Float64Array(n));
+    const L = this.board.length;
+    const M = this.model;
+    // (every point is within a board's length of the middle: heightNear from its swell shift)
+    const shift = M.swellShift(this.position.x, this.position.z, this._shift || (this._shift = { x: 0, z: 0 }));
+    const shifts = this._shifts || (this._shifts = RIDE_T.map(() => ({ x: 0, z: 0 }))); // (each point's own)
+    const station = (i) => {
+      const t = RIDE_T[i];
+      return _rp.set(0, boardBottom(this.boardType, t), -(t - 0.5) * L).applyQuaternion(this.quat).add(this.position);
+    };
+    for (let round = 0; round < 3; round++) {
+      let worst = 0;
+      for (let i = 0; i < n; i++) {
+        const t = RIDE_T[i];
+        const b = boardBottom(this.boardType, t);
+        const p = station(i);
+        // as deep as it sits on flat water: the nose touching at most; the tail and the middle,
+        // under the rider, a little more (a longboard's more again: it's heavier, and long)
+        const allowed = Math.max(0, -b) + (t >= 0.6 ? 0.004 : 0.03 + 0.05 * Math.max(0, L - 1.86));
+        hs[i] = M.heightNear(p.x, p.z, shift, 1, round === 0 ? shifts[i] : null);
+        need[i] = hs[i] - allowed - p.y;
+        if (need[i] > worst) worst = need[i];
+      }
+      if (worst < (round ? 0.002 : 1e-4)) break;
+      if (round === 0) {
+        // How much each point comes up per radian of nose-up turn: it moves along s*up + b*back,
+        // so up (the board's part of it), and sideways too, onto water that's higher or lower
+        // on a sloping face. (Worked out once: the later rounds only tidy up.)
+        _ru.set(0, 1, 0).applyQuaternion(this.quat);
+        _rz.set(0, 0, 1).applyQuaternion(this.quat);
+        for (let i = 0; i < n; i++) {
+          const t = RIDE_T[i];
+          const b = boardBottom(this.boardType, t);
+          const s = (t - 0.5) * L; // ahead of the middle
+          const vx = s * _ru.x + b * _rz.x,
+            vz = s * _ru.z + b * _rz.z;
+          const vh = Math.hypot(vx, vz);
+          let slope = 0;
+          if (vh > 1e-4) {
+            // (5 cm on, the swell's shift is the point's own)
+            const p = station(i);
+            slope = ((M.heightNear(p.x + (vx / vh) * 0.05, p.z + (vz / vh) * 0.05, shifts[i], 0) - hs[i]) / 0.05) * vh;
+          }
+          k[i] = s * _ru.y + b * _rz.y - slope;
+        }
+      }
+      let [phi, dy] = solveRide(need, k, n);
+      // (no more than RIDE_PHI and RIDE_DY in all)
+      phi = clamp(phi, -RIDE_PHI - this.ride.tilt, RIDE_PHI - this.ride.tilt);
+      dy = Math.min(dy, RIDE_DY - this.ride.lift);
+      if (Math.abs(phi) < 1e-5 && dy < 1e-5) break;
+      this.quat.multiply(_rq.setFromAxisAngle(RIDE_X, phi));
+      this.position.y += dy;
+      this.ride.tilt += phi;
+      this.ride.lift += dy;
+    }
   }
 
   // how far the board has rolled over (rad; 0 upright, pi upside down)

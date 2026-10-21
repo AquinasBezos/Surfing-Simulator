@@ -1294,7 +1294,7 @@ function sendPose() {
   const q = surfer.quat;
   poseBuf[0] = net.now();
   poseBuf[1] = surfer.x;
-  poseBuf[2] = surfer.y;
+  poseBuf[2] = surfer.position.y; // (as it's drawn: sitting on the water along its length)
   poseBuf[3] = surfer.z;
   poseBuf[4] = q.x;
   poseBuf[5] = q.y;
@@ -1310,7 +1310,7 @@ function sendPose() {
   const vr = renderer.xr.isPresenting;
   poseBuf[14] = vr ? xr.lookYaw || 0 : game.look.yaw;
   poseBuf[15] = vr ? xr.lookPitch || 0 : game.look.pitch;
-  poseBuf[16] = surfer.y - model.heightAt(surfer.x, surfer.z);
+  poseBuf[16] = surfer.position.y - model.heightAt(surfer.x, surfer.z);
   poseBuf[17] = surfer.vx;
   poseBuf[18] = surfer.vz;
   net.sendPose(poseBuf);
@@ -1960,7 +1960,7 @@ function recordFrame(b) {
   replayBuf.record(model.time, model.waves, (f, o) => {
     const q = surfer.quat;
     f[o + RF.x] = surfer.x;
-    f[o + RF.y] = surfer.y;
+    f[o + RF.y] = surfer.position.y; // (as it's drawn)
     f[o + RF.z] = surfer.z;
     f[o + RF.qx] = q.x;
     f[o + RF.qy] = q.y;

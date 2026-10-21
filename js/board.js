@@ -67,6 +67,24 @@ function outlineAt(table, t) {
   return 0;
 }
 
+// rocker (how far the bottom curves up) and thickness at t along a board (0 tail .. 1 nose)
+function rockerOf(spec, t) {
+  const tail = t < 0.3 ? spec.tailRocker * Math.pow(1 - t / 0.3, 2) : 0;
+  const nose = t > 0.55 ? spec.noseRocker * Math.pow((t - 0.55) / 0.45, 2.1) : 0;
+  return tail + nose;
+}
+function thicknessOf(spec, t) {
+  return 0.016 + (spec.thick - 0.016) * Math.pow(Math.sin(Math.PI * Math.min(1, 0.04 + t * 0.94)), 0.62);
+}
+
+// The bottom of a board on its centre line at t (0 tail .. 1 nose): its height in the board's
+// frame, where the origin sits on the water line (so -0.05 in the middle; the nose's rocker
+// lifts it 9 cm clear)
+export function boardBottom(type, t) {
+  const spec = SHAPES[type] || SHAPES.shortboard;
+  return -thicknessOf(spec, t) * 0.38 + rockerOf(spec, t) - 0.025;
+}
+
 // half the board's width at t along it (0 = tail, 1 = nose), in metres: where the rail is
 export function railHalfWidth(type, t) {
   return Math.max(outlineAt((SHAPES[type] || SHAPES.shortboard).outline, Math.min(1, Math.max(0, t))), 0);
@@ -77,12 +95,8 @@ export function createBoard(type = 'shortboard', color = null) {
   const spec = SHAPES[type] || SHAPES.shortboard;
   const L = (BOARDS[type] || BOARDS.shortboard).length;
   const maxHW = Math.max(...spec.outline.map((p) => p[1]));
-  const rocker = (t) => {
-    const tail = t < 0.3 ? spec.tailRocker * Math.pow(1 - t / 0.3, 2) : 0;
-    const nose = t > 0.55 ? spec.noseRocker * Math.pow((t - 0.55) / 0.45, 2.1) : 0;
-    return tail + nose;
-  };
-  const thickness = (t) => 0.016 + (spec.thick - 0.016) * Math.pow(Math.sin(Math.PI * Math.min(1, 0.04 + t * 0.94)), 0.62);
+  const rocker = (t) => rockerOf(spec, t);
+  const thickness = (t) => thicknessOf(spec, t);
 
   const NL = type === 'longboard' ? 96 : 72,
     NA = 28;
