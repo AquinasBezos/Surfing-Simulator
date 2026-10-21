@@ -84,6 +84,12 @@ export class GamepadInput {
     return this.axes;
   }
 
+  // a buzz (strength 0..1, for ms), if the controller can
+  rumble(strength, ms) {
+    const a = this.active && this.pad && this.pad.vibrationActuator;
+    if (a && a.playEffect) a.playEffect('dual-rumble', { duration: ms, strongMagnitude: strength, weakMagnitude: strength * 0.6 }).catch(() => {});
+  }
+
   poll(dt) {
     this.time += dt;
     const pads = navigator.getGamepads ? [...navigator.getGamepads()].filter((p) => p && p.connected) : [];

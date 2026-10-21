@@ -12,6 +12,7 @@ import { Arms, setSkinColor } from './body.js';
 import { Spray } from './spray.js';
 import { SpraySheets } from './spraysheet.js';
 import { Surfer, STATE } from './surfer.js';
+import { Bumps } from './bump.js';
 import { PCInput } from './input.js';
 import { XRControls } from './xr.js';
 import { OceanAudio } from './audio.js';
@@ -225,6 +226,7 @@ camera.add(fade);
 const hud = new Hud(camera);
 const audio = new OceanAudio();
 const surfer = new Surfer(model);
+const bumps = new Bumps(surfer); // bumping into the others (multiplayer, when the room has it on)
 const pc = new PCInput(renderer.domElement);
 const gamepad = new GamepadInput();
 const touch = new TouchInput(renderer.domElement, document.getElementById('touch-ui'));
@@ -273,6 +275,7 @@ const menu = new Menu({
     if (net && net.room) net.setWaves(cfg); // the room's waves, for everyone
     else model.setHeights(cfg);
   },
+  onCollide: (on) => net && net.setCollide(on), // (the room's leader)
   onName: (name) => net && net.setName(name),
   onSettings: (s) => applySettings(s),
   onOpenMulti: () => openMultiplayer(),
@@ -421,8 +424,10 @@ const vrMenu = new VRMenu(renderer, rig, camera, {
   leanNow: () => xr.leanRaw, // (only while you're standing)
   getDroneVR: () => settings.droneVR,
   setDroneVR: (mode) => menu.setDroneVR(mode, true),
+  setCollide: (on) => net && net.setCollide(on),
   info: () => ({
     inRoom: game.mode === 'multi',
+    collide: game.mode === 'multi' && net && net.room ? { on: net.collide, leader: net.isLeader } : null,
     drone: game.role === 'drone' || !!game.replay,
     canReplay: canReplay(),
     replay: game.replay ? { playing: game.replay.playing, speed: game.replay.speed } : null,
@@ -552,9 +557,11 @@ function respawn(fadeOut = true) {
     drone.reset(s.x + (Math.random() * 2 - 1) * 4, 9, 24, 0, -0.32);
     return;
   }
-  // spread players out a little along the lineup in multiplayer
-  const spread = game.mode === 'multi' ? (Math.random() * 2 - 1) * 6 : 0;
+  // spread players out a little along the lineup in multiplayer (clear of each other, if
+  // they can bump into each other)
+  const spread = game.mode !== 'multi' ? 0 : collisionsOn() ? clearSpread(s.x, s.z) : (Math.random() * 2 - 1) * 6;
   surfer.reset(s.x + spread, s.z, s.yaw);
+  bumps.clear();
   game.snapCam = true;
   game.look.yaw = 0;
   game.look.pitch = 0;
@@ -1144,9 +1151,16 @@ function wireNet(n) {
   n.on('info', (id, p) => remote.setInfo(id, { name: p.name, board: p.board, look: p.look }));
   n.on('pose', (id, f) => remote.push(id, decodePose(f)));
   n.on('event', (id, e) => onRemoteEvent(id, e));
+  n.on('collide', (on, by) => {
+    bumps.clear();
+    updateLobby();
+    hud.feed(on ? `${by || 'You'} turned collisions on (experimental): you can bump into each other` : `${by || 'You'} turned collisions off`);
+  });
   n.on('timeline', () => {
     roomSettings(n); // (the room's first player may have picked a different spot or time)
     menu.setWaves(n.waves);
+    updateLobby(); // (and whether it has collisions on)
+    if (n.collide) hud.feed('Collisions are on in this room (experimental): you can bump into each other');
     if (game.mode === 'multi') {
       model.setSchedule(n.seed, () => n.now(), n.waves);
       for (const a of remote.avatars.values()) a.snaps.length = 0;
@@ -1253,9 +1267,11 @@ async function leaveRoom() {
 
 function updateLobby() {
   if (!net || !net.room) return;
-  const players = [{ name: net.name, playing: game.mode === 'multi', me: true, role: game.mode === 'multi' ? game.role : menu.role }];
-  for (const p of net.peers.values()) players.push({ name: p.name, playing: p.playing, role: p.role });
+  const leader = net.leaderId;
+  const players = [{ name: net.name, playing: game.mode === 'multi', me: true, role: game.mode === 'multi' ? game.role : menu.role, leader: leader === net.selfId }];
+  for (const [id, p] of net.peers) players.push({ name: p.name, playing: p.playing, role: p.role, leader: id === leader });
   menu.renderLobby(net.roomInfo, players);
+  menu.setCollide({ on: net.collide, leader: net.isLeader, leaderName: net.leaderName });
 }
 
 // "3 surfers · 1 drone · Dawn patrol"
@@ -1265,6 +1281,7 @@ function roomLine() {
   for (const p of net.peers.values()) p.role === 'drone' ? drones++ : surfers++;
   const parts = [`${surfers} surfer${surfers === 1 ? '' : 's'}`];
   if (drones) parts.push(`${drones} drone${drones === 1 ? '' : 's'}`);
+  if (net.collide) parts.push('collisions on');
   return `${parts.join(' · ')} · ${net.roomInfo.name}`;
 }
 
@@ -1272,22 +1289,112 @@ function sendEvent(e) {
   if (game.mode === 'multi' && net) net.sendEvent(e);
 }
 
+// ---------------------------------------------------------------- bumping into each other
+// An experimental mode the room's leader turns on (?bump tries it on the debug ?bots alone).
+// bump.js works out each bump; here we gather everyone it could be with, and show what happened.
+function collisionsOn() {
+  if (game.mode === 'multi') return !!(net && net.room && net.collide);
+  return !!game.bots && params.has('bump');
+}
+
+// ...and you're a surfer in the water (not flying, on a bank, or fading back to the lineup)
+function canBump() {
+  return collisionsOn() && game.role !== 'drone' && !game.replay && !game.bank && !game.jumpIn && !(game.teleport > 0);
+}
+
+const BUMP_STATE = { [POSE.PRONE]: 'prone', [POSE.POPUP]: 'popup', [POSE.STANDING]: 'standing', [POSE.SITTING]: 'sitting' };
+const _bumpEuler = new THREE.Euler(0, 0, 0, 'YXZ');
+// the other surfers in the water, as bump.js wants them (not drones, walkers or wipeouts)
+function bumpables() {
+  const out = [];
+  for (const a of remote.avatars.values()) {
+    const last = a.snaps[a.snaps.length - 1];
+    const state = a.visible && last ? BUMP_STATE[last.state] : null;
+    if (!state) continue;
+    const c = a.cur;
+    _bumpEuler.setFromQuaternion(c.q);
+    out.push({ id: a.id, name: a.name, x: c.x, y: c.y, z: c.z, vx: c.vx || 0, vz: c.vz || 0, yaw: _bumpEuler.y, yawRate: c.yawRate || 0, state, board: a.boardType, foot: last.foot || 0, braceX: last.bx || 0, braceZ: last.bz || 0 });
+  }
+  return out;
+}
+
+function bumpOthers(dt) {
+  if (!canBump()) return;
+  const others = bumpables();
+  if (!others.length) return;
+  for (const h of bumps.update(dt, others, net ? net.selfId : '')) {
+    bumpFx(h);
+    // (their game may not have seen it: tell them, and theirs takes its side of it once)
+    if (game.mode === 'multi') net.sendEvent(h.tell, h.id);
+  }
+}
+
+// Another player's game saw them bump you
+function bumpFrom(id, e) {
+  if (!canBump()) return;
+  const v = {};
+  for (const k of ['J', 'at', 'side', 'pa', 'ps', 'x', 'z', 'mine', 'theirs', 'closing']) {
+    v[k] = Number(e[k]);
+    if (!Number.isFinite(v[k])) return;
+  }
+  if (!(v.J > 0 && v.J < 5000 && Math.abs(v.at) < 3 && Math.abs(v.side) < 2 && Math.hypot(v.pa, v.ps) > 0.5)) return;
+  const a = remote.avatars.get(id);
+  const hit = bumps.receive(id, a ? a.name : 'another surfer', v);
+  if (hit) bumpFx(hit);
+}
+
+// a bump: a splash where you touched, a thump, a buzz in your hands, and who ran into whom
+const bumpSaid = new Map(); // id -> when we last said so (s)
+function bumpFx(h) {
+  const s = Math.min(1, h.J / 160); // how hard (160 N s: about a 2 m/s jolt to someone standing)
+  spray.fan(h.px, model.heightAt(h.px, h.pz), h.pz, h.nx, h.nz, 0.3 + 0.7 * s, 0.08);
+  audio.splash(0.35 + 0.65 * s);
+  if (renderer.xr.isPresenting) for (const hand of xr.hands) xr.pulse(hand, 0.3 + 0.7 * s, 40 + 100 * s);
+  else if (device === 'touch') navigator.vibrate?.(Math.round(30 + 60 * s));
+  else gamepad.rumble(0.3 + 0.7 * s, 60 + 140 * s);
+  if (h.off || s < 0.15) return; // (a knock-off says who in the wipeout)
+  const now = performance.now() / 1000;
+  if (now - (bumpSaid.get(h.id) || -9) < 3) return;
+  bumpSaid.set(h.id, now);
+  const name = h.name || 'another surfer';
+  hud.feed(h.mine > h.theirs ? `You ran into ${name}` : `${name} ran into you`);
+}
+
+// Somewhere along the lineup clear of everyone else (with collisions on): the most room of a few tries
+function clearSpread(x, z) {
+  const others = bumpables();
+  let best = 0,
+    room = -1;
+  for (let i = 0; i < 12; i++) {
+    const spread = (Math.random() * 2 - 1) * 8;
+    let near = Infinity;
+    for (const o of others) near = Math.min(near, Math.hypot(o.x - (x + spread), o.z - z));
+    if (near > room) {
+      room = near;
+      best = spread;
+    }
+    if (near > 4) break;
+  }
+  return best;
+}
+
 const STATE_CODE = { prone: POSE.PRONE, popup: POSE.POPUP, standing: POSE.STANDING, wipeout: POSE.WIPEOUT, sitting: POSE.SITTING };
 // t, position, orientation, state, crouch, foot, lean, effort, dive, look yaw / pitch,
-// height above the water, velocity x / z (so others can show you where you are now)
-const poseBuf = new Float32Array(19);
+// height above the water, velocity x / z (so others can show you where you are now), and how
+// you're bracing for a bump, sideways and along the board
+const poseBuf = new Float32Array(21);
 function sendPose() {
   if (game.role === 'drone') {
     // same packet; crouch carries the gimbal pitch and effort the throttle
     const q = drone.quat;
-    poseBuf.set([net.now(), drone.pos.x, drone.pos.y, drone.pos.z, q.x, q.y, q.z, q.w, POSE.DRONE, drone.camPitch, 0, 0, drone.throttle, 0, 0, 0, 0, drone.vel.x, drone.vel.z]);
+    poseBuf.set([net.now(), drone.pos.x, drone.pos.y, drone.pos.z, q.x, q.y, q.z, q.w, POSE.DRONE, drone.camPitch, 0, 0, drone.throttle, 0, 0, 0, 0, drone.vel.x, drone.vel.z, 0, 0]);
     net.sendPose(poseBuf);
     return;
   }
   if (game.bank || game.jumpIn) {
     // on foot: crouch is unused, effort is how fast you're walking; no height above the water
     const q = _wq.setFromAxisAngle(Yaxis, walker.yaw);
-    poseBuf.set([net.now(), walker.x, walker.y, walker.z, q.x, q.y, q.z, q.w, POSE.WALK, 0, 0, 0, walker.speed / 3.4, 0, 0, walker.pitch, NaN, walker.vx, walker.vz]);
+    poseBuf.set([net.now(), walker.x, walker.y, walker.z, q.x, q.y, q.z, q.w, POSE.WALK, 0, 0, 0, walker.speed / 3.4, 0, 0, walker.pitch, NaN, walker.vx, walker.vz, 0, 0]);
     net.sendPose(poseBuf);
     return;
   }
@@ -1313,24 +1420,29 @@ function sendPose() {
   poseBuf[16] = surfer.position.y - model.heightAt(surfer.x, surfer.z);
   poseBuf[17] = surfer.vx;
   poseBuf[18] = surfer.vz;
+  poseBuf[19] = surfer.braceX;
+  poseBuf[20] = surfer.braceZ;
   net.sendPose(poseBuf);
 }
 
 function decodePose(f) {
-  const look = f.length >= 16; // (older clients send 14 or 16 values)
+  const look = f.length >= 16; // (older clients send 14, 16 or 19 values)
   const pred = f.length >= 19;
-  return { t: f[0], x: f[1], y: f[2], z: f[3], qx: f[4], qy: f[5], qz: f[6], qw: f[7], state: Math.round(f[8]), crouch: f[9], foot: f[10], lean: f[11], effort: f[12], dive: f[13], lookYaw: look ? f[14] : 0, lookPitch: look ? f[15] : 0, heave: pred ? f[16] : NaN, vx: pred ? f[17] : NaN, vz: pred ? f[18] : NaN };
+  const brace = f.length >= 21;
+  return { t: f[0], x: f[1], y: f[2], z: f[3], qx: f[4], qy: f[5], qz: f[6], qw: f[7], state: Math.round(f[8]), crouch: f[9], foot: f[10], lean: f[11], effort: f[12], dive: f[13], lookYaw: look ? f[14] : 0, lookPitch: look ? f[15] : 0, heave: pred ? f[16] : NaN, vx: pred ? f[17] : NaN, vz: pred ? f[18] : NaN, bx: brace ? f[19] : 0, bz: brace ? f[20] : 0 };
 }
 
 function onRemoteEvent(id, e) {
   const p = net && net.peers.get(id);
   const name = p ? p.name : 'Someone';
   const pos = remote.positionOf(id);
-  if (e.k === 'trick' && TRICK_NAMES[e.kind]) {
+  if (e.k === 'bump') bumpFrom(id, e);
+  else if (e.k === 'trick' && TRICK_NAMES[e.kind]) {
     hud.feed(`${name}: ${TRICK_NAMES[e.kind]}!`);
     if (pos) spray.fan(pos.x, pos.y, pos.z, Math.random() - 0.5, Math.random() - 0.5, 1, 0.22);
   } else if (e.k === 'wipe') {
-    hud.feed(`${name} wiped out${e.reason ? ` (${String(e.reason).replace(/[!.].*$/, '').toLowerCase()})` : ''}`);
+    const why = String(e.reason || '').replace(/[!.].*$/, '');
+    hud.feed(`${name} wiped out${why ? ` (${why.charAt(0).toLowerCase()}${why.slice(1)})` : ''}`);
     if (pos) spray.fan(pos.x, pos.y, pos.z, 0, 0, 1, 0.3);
   } else if (e.k === 'air') hud.feed(`${name}: air ${Number(e.t) || 0} s!`);
   else if (e.k === 'hang') hud.feed(`${name}: hang ${e.n === 10 ? 'ten' : 'five'}!`);
@@ -1666,18 +1778,21 @@ function spawnBots(n) {
 
 const _bq = new THREE.Quaternion();
 const _be = new THREE.Euler();
-function updateBots() {
+function updateBots(dt = 0) {
   for (const b of game.bots) {
     const e = 0.06;
     const y = model.heightAt(b.x, b.z);
     const gx = (model.heightAt(b.x + e, b.z) - model.heightAt(b.x - e, b.z)) / (2 * e);
     const gz = (model.heightAt(b.x, b.z + e) - model.heightAt(b.x, b.z - e)) / (2 * e);
-    const pose = params.get('botpose') || (b.effort > 0 ? 'prone' : 'sit');
+    // (a test can give one a pose, and a velocity it moves at, to bump into you: ?bump)
+    const pose = b.pose || params.get('botpose') || (b.effort > 0 ? 'prone' : 'sit');
     const state = pose === 'sit' ? POSE.SITTING : pose === 'stand' ? POSE.STANDING : POSE.PRONE;
+    b.x += (b.vx || 0) * dt;
+    b.z += (b.vz || 0) * dt;
     _be.set(Math.atan(gz) * 0.8 + (state === POSE.SITTING ? 0.2 : 0.03), b.yaw, -Math.atan(gx) * 0.8, 'YXZ');
     _bq.setFromEuler(_be);
     const t = model.time + b.x;
-    remote.push(b.id, { t: model.time, x: b.x, y: y - (state === POSE.SITTING ? 0.07 : 0), z: b.z, qx: _bq.x, qy: _bq.y, qz: _bq.z, qw: _bq.w, state, crouch: 0.2, foot: 0, lean: 0, effort: b.effort, dive: 0, lookYaw: state === POSE.PRONE ? 0 : Math.sin(t * 0.35) * 1.4, lookPitch: Math.sin(t * 0.21) * 0.25, heave: state === POSE.SITTING ? -0.07 : 0, vx: 0, vz: 0 });
+    remote.push(b.id, { t: model.time, x: b.x, y: y - (state === POSE.SITTING ? 0.07 : 0), z: b.z, qx: _bq.x, qy: _bq.y, qz: _bq.z, qw: _bq.w, state, crouch: 0.2, foot: 0, lean: 0, effort: b.effort, dive: 0, lookYaw: state === POSE.PRONE ? 0 : Math.sin(t * 0.35) * 1.4, lookPitch: Math.sin(t * 0.21) * 0.25, heave: state === POSE.SITTING ? -0.07 : 0, vx: b.vx || 0, vz: b.vz || 0 });
   }
 }
 
@@ -2488,14 +2603,16 @@ function frame(time, xrFrame) {
       sendPose();
     }
     remote.update(net.now(), focus, dt);
+    if (running && !flying && !onBank) bumpOthers(dt);
     otherSheets(running ? dt : 0);
     hud.setPlayers(roomLine());
     // motor whine: your own drone, or the nearest one buzzing past
     const ds = flying ? { level: 0.7, throttle: drone.throttle } : remote.droneSound(focus);
     audio.drone(ds.level, ds.throttle);
   } else if (game.bots) {
-    updateBots();
+    updateBots(running ? dt : 0);
     remote.update(model.time, focus, dt);
+    if (running && !flying && !onBank) bumpOthers(dt);
     otherSheets(running ? dt : 0);
   }
   if (replaying) audio.drone(running ? 0.7 : 0, drone.throttle); // (your drone's motors)
@@ -2667,6 +2784,7 @@ window.__surf = {
   camera,
   model,
   surfer,
+  bumps,
   game,
   ocean,
   pc,

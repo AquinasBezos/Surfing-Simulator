@@ -173,6 +173,7 @@ export class Menu {
 
     this.buildBoardPickers();
     this.buildWavePickers();
+    this.buildCollidePickers();
     this.buildSpotPickers();
     this.buildTimePickers();
     this.buildLookPickers();
@@ -596,6 +597,36 @@ export class Menu {
     if (fromUser) {
       save(wavesKey(this.waveSpot), { mode, height });
       if (this.h.onWaves) this.h.onWaves(this.waves);
+    }
+  }
+
+  // ---------------------------------------------------------------- collisions (multiplayer)
+  // An experimental mode: everyone in the room can bump into each other. Only the room's
+  // leader can turn it on or off; everyone else sees whether it's on.
+  buildCollidePickers() {
+    for (const el of this.root.querySelectorAll('.collide-pick')) {
+      el.innerHTML = `<div class="wave-row"><span class="wave-label">Collisions <span class="tag">experimental</span></span><div class="seg" role="radiogroup" aria-label="Collisions"><button type="button" role="radio" data-collide="off">Off</button><button type="button" role="radio" data-collide="on">On</button></div></div><p class="wave-desc"></p>`;
+      el.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-collide]');
+        if (b && !b.disabled && this.collide.leader && this.h.onCollide) this.h.onCollide(b.dataset.collide === 'on');
+      });
+    }
+    this.setCollide({ on: false, leader: false, leaderName: '' });
+  }
+
+  // { on, leader: you lead the room, leaderName }
+  setCollide(c) {
+    this.collide = c;
+    for (const el of this.root.querySelectorAll('.collide-pick')) {
+      el.hidden = !this.inRoom;
+      for (const b of el.querySelectorAll('[data-collide]')) {
+        const on = (b.dataset.collide === 'on') === !!c.on;
+        b.classList.toggle('on', on);
+        b.setAttribute('aria-checked', String(on));
+        b.disabled = !c.leader;
+      }
+      const what = c.on ? 'Bump into each other: a hard knock throws you off. Lean into it to stay on.' : 'Turn on to bump into each other.';
+      el.querySelector('.wave-desc').textContent = c.leader ? `${what} You lead this room, so it's your call.` : `${what} Only ${c.leaderName || 'the room’s leader'}, who leads this room, can change it.`;
     }
   }
 
@@ -1199,7 +1230,7 @@ export class Menu {
     document.getElementById('lobby-title').textContent = room.name;
     document.getElementById('lobby-meta').textContent = `${room.isPrivate ? 'Private room (passcode)' : 'Public room'} · ${players.length} player${players.length === 1 ? '' : 's'}`;
     document.getElementById('lobby-players').innerHTML = players
-      .map((p) => `<li class="${p.playing ? 'playing' : ''} ${p.me ? 'me' : ''}"><i></i>${esc(p.name)}${p.me ? ' (you)' : ''}${p.role === 'drone' ? ' <small>drone</small>' : ''}</li>`)
+      .map((p) => `<li class="${p.playing ? 'playing' : ''} ${p.me ? 'me' : ''}"><i></i>${esc(p.name)}${p.me ? ' (you)' : ''}${p.leader ? ' <small>leader</small>' : ''}${p.role === 'drone' ? ' <small>drone</small>' : ''}</li>`)
       .join('');
     const pr = document.getElementById('pause-room');
     pr.hidden = false;
@@ -1215,6 +1246,7 @@ export class Menu {
   leftRoom() {
     this.inRoom = false;
     this.setLobbyStatus('');
+    this.setCollide({ on: false, leader: false, leaderName: '' }); // (hides it)
     // back to your own spot and wave size
     this.waveSpot = this.spot;
     this.setWaves(load(wavesKey(this.spot), null));

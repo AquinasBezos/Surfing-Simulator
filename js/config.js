@@ -170,7 +170,7 @@ export const MULTIPLAYER = {
   roomsPath: 'lineup/rooms',
   maxPlayers: 8,
   poseHz: 15,
-  protocol: 2, // 2: rooms have a surf spot and a time of day
+  protocol: 3, // 2: rooms have a surf spot and a time of day; 3: bumping into each other (collisions)
   // TURN relay. Players connect directly when they can, but strict NATs and many
   // university, office and mobile networks block that; those players need a relay or
   // they can't see each other ("could not connect to peer ... after exchanging SDP").

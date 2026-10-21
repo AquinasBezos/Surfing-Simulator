@@ -108,6 +108,10 @@ function cleanLook(l) {
 
 const cleanTime = (t) => (t === 'sunset' ? 'sunset' : 'day');
 
+// A room's collisions (bumping into each other: experimental), { on, rev }: rev orders changes,
+// as for the waves
+const cleanCollide = (c) => ({ on: !!(c && c.on === true), rev: c && Number.isInteger(c.rev) ? c.rev : 0 });
+
 const olderTimeline = (a, b) => a.created < b.created || (a.created === b.created && a.origin < b.origin);
 const clean = (s, n) => String(s || '').replace(/[\u0000-\u001f]/g, '').trim().slice(0, n);
 
@@ -120,8 +124,9 @@ export class Net {
     this.look = look; // { skin, hair, board } colours
     this.room = null;
     this.roomInfo = null;
-    this.peers = new Map(); // peerId -> { name, board, role, origin, playing }
+    this.peers = new Map(); // peerId -> { name, board, role, origin, playing, joined, tl }
     this.playing = false;
+    this.joinedAt = 0; // when we joined the room (Date.now()): the longest there leads it
     this.timeline = null; // { seed, origin, created }
     this.offset = 0; // shared clock = perfNow() + offset
     this.listeners = {};
@@ -217,8 +222,9 @@ export class Net {
     time = cleanTime(time);
     this.roomInfo = { id, name: roomName, isPrivate: !!isPrivate, hash: hash || '', spot, time };
     this.peers.clear();
+    this.joinedAt = Date.now();
     // a fresh timeline; replaced by the room's oldest one as soon as we meet a peer
-    this.timeline = { seed: crypto.getRandomValues(new Uint32Array(1))[0], origin: selfId, created: Date.now(), waves: cleanWaves(waves, spot), spot, time };
+    this.timeline = { seed: crypto.getRandomValues(new Uint32Array(1))[0], origin: selfId, created: Date.now(), waves: cleanWaves(waves, spot), spot, time, collide: cleanCollide(null) };
     this.offset = period() * 0.55 - perfNow();
 
     const relays = relayServers();
@@ -254,7 +260,7 @@ export class Net {
       if (msg && typeof msg === 'object') this.emit('event', peerId, msg);
     };
     room.onPeerJoin = (peerId) => {
-      if (!this.peers.has(peerId)) this.peers.set(peerId, { name: '…', board: 'shortboard', role: 'surfer', origin: null, playing: false });
+      if (!this.peers.has(peerId)) this.peers.set(peerId, { name: '…', board: 'shortboard', role: 'surfer', origin: null, playing: false, joined: null, tl: null });
       this.aHello.send(this._hello(), { target: peerId });
       this.emit('peers');
     };
@@ -365,6 +371,50 @@ export class Net {
     return cleanWaves(this.timeline && this.timeline.waves, this.spot);
   }
 
+  // The room's leader, who can turn its experimental modes on: whoever started the room's
+  // timeline (the room's creator) while they're in it, then whoever has been in it longest.
+  // Everyone works it out from the same numbers, so everyone agrees.
+  get leaderId() {
+    if (!this.room || !this.timeline) return null;
+    // (the room's timeline is the oldest anyone has: we take it on if it isn't ours yet)
+    let tl = this.timeline;
+    for (const p of this.peers.values()) if (p.tl && olderTimeline(p.tl, tl)) tl = p.tl;
+    if (tl.origin === selfId || this.peers.has(tl.origin)) return tl.origin;
+    let best = selfId,
+      bestJ = this.joinedAt;
+    for (const [id, p] of this.peers) {
+      if (p.joined == null) continue; // (not heard from yet)
+      if (p.joined < bestJ || (p.joined === bestJ && id < best)) {
+        best = id;
+        bestJ = p.joined;
+      }
+    }
+    return best;
+  }
+
+  get isLeader() {
+    return !!this.room && this.leaderId === selfId;
+  }
+
+  get leaderName() {
+    const id = this.leaderId;
+    return id === selfId ? this.name : (this.peers.get(id) || {}).name || 'the room’s leader';
+  }
+
+  // Bumping into each other (experimental): on for the whole room or for no one
+  get collide() {
+    return cleanCollide(this.timeline && this.timeline.collide).on;
+  }
+
+  // Turn it on or off for everyone (only the leader can). Takes effect at once.
+  setCollide(on) {
+    if (!this.room || !this.timeline || !this.isLeader) return;
+    const collide = { on: !!on, rev: cleanCollide(this.timeline.collide).rev + 1 };
+    this.timeline = { ...this.timeline, collide };
+    this.aHello.send(this._hello());
+    this.emit('collide', collide.on, null);
+  }
+
   // where the room surfs, and when
   get spot() {
     return this.roomInfo ? this.roomInfo.spot : 'margaret';
@@ -375,13 +425,13 @@ export class Net {
   }
 
   _hello() {
-    return { v: MP.protocol, name: this.name, board: this.board, role: this.role, look: this.look, playing: this.playing, tl: this.timeline };
+    return { v: MP.protocol, name: this.name, board: this.board, role: this.role, look: this.look, playing: this.playing, tl: this.timeline, j: this.joinedAt };
   }
 
   _onHello(peerId, msg) {
     if (!msg || typeof msg !== 'object') return;
     const before = this.peers.get(peerId);
-    const p = before || { name: '…', board: 'shortboard', role: 'surfer', origin: null, playing: false };
+    const p = before || { name: '…', board: 'shortboard', role: 'surfer', origin: null, playing: false, joined: null, tl: null };
     const firstHello = !before || before.name === '…';
     p.name = clean(msg.name, 24) || 'Surfer';
     p.board = msg.board === 'longboard' ? 'longboard' : 'shortboard';
@@ -389,6 +439,9 @@ export class Net {
     p.look = cleanLook(msg.look);
     p.playing = !!msg.playing;
     p.origin = msg.tl && msg.tl.origin;
+    // (which timeline they're on, and since when they've been here: who leads the room)
+    p.tl = msg.tl && typeof msg.tl.origin === 'string' && Number.isFinite(msg.tl.created) ? { origin: msg.tl.origin, created: msg.tl.created } : null;
+    p.joined = Number.isFinite(msg.j) ? msg.j : null;
     p.version = msg.v;
     this.peers.set(peerId, p);
     if (firstHello) this.emit('join', peerId, p.name);
@@ -401,6 +454,12 @@ export class Net {
       if (theirs.rev > cleanWaves(this.timeline.waves, this.spot).rev) {
         this.timeline = { ...this.timeline, waves: theirs };
         this.emit('waves', theirs, p.name);
+      }
+      // ...or the leader turned collisions on or off
+      const coll = cleanCollide(msg.tl.collide);
+      if (coll.rev > cleanCollide(this.timeline.collide).rev) {
+        this.timeline = { ...this.timeline, collide: coll };
+        this.emit('collide', coll.on, p.name);
       }
     }
     if (msg.tl && this.timeline && olderTimeline(msg.tl, this.timeline)) this._adopt(peerId);
@@ -465,7 +524,8 @@ export class Net {
     if (this.room && this.peers.size) this.aPose.send(floats);
   }
 
-  sendEvent(evt) {
-    if (this.room && this.peers.size) this.aEvt.send(evt);
+  // to: one peer's id (else everyone; they may have just left)
+  sendEvent(evt, to = null) {
+    if (this.room && this.peers.size) this.aEvt.send(evt, to ? { target: to } : undefined)?.catch?.(() => {});
   }
 }

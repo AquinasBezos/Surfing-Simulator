@@ -19,7 +19,7 @@ Paddle into glassy waves, pop up, and race the peeling lip through the barrel, o
 - Replays (singleplayer): pause and pick **Replay the last 30 s** to watch your last 30 seconds again from a drone you fly around yourself, with slow motion.
 - Sit up on your board to wait for waves. Your head turns with your view, and on a wave your upper body twists to follow it, so other players can see where you're looking.
 - Surf at midday or at sunset: a low gold sun with a long path of light across the water, a dusk sky in the reflections, backlit crests and dimmer, warmer light under water.
-- Multiplayer: create or find a room, public or private with a passcode, and surf the same waves as up to seven other players, or join as a camera drone and film them from above. PC and Quest players can share a room.
+- Multiplayer: create or find a room, public or private with a passcode, and surf the same waves as up to seven other players, or join as a camera drone and film them from above. PC and Quest players can share a room. The room's leader can turn on collisions (experimental), so you bump into each other.
 
 There is no build step. Textures, terrain and sound are generated at start-up, and three.js (r169) loads from jsDelivr. The only files besides code are the surfer model (`assets/surfer.glb`), the Eisbach (`assets/eisbach_wave_munich_draco.glb`, Draco-compressed and only downloaded when someone picks that spot; the decoder comes from jsDelivr), and the menu art in `assets/menu/` (including the location thumbnails), which are screenshots of the game. Firebase and Trystero load only when you open Multiplayer.
 
@@ -160,6 +160,18 @@ The **Waves** setting is on the Singleplayer screen, in Create a room, in the ro
 3. Or **Create a room**: give it a name and make it public, or private with a passcode of at least 3 characters. Then pick the location and the time of day, which are fixed for the room, and the wave size, which anyone can change later. The room list shows each room's location and time of day.
 4. In the room, choose **Play on PC** or **Play in VR**. Everyone in the room gets the same waves at the same moment. Other surfers appear with name tags, and a feed shows who paddled out, got barrelled or wiped out. You can see where they're looking: their heads turn with their view while they paddle or sit, and their upper bodies twist with it on a wave. You can change your name, and anyone can change the room's wave size, from the pause menu.
 
+### Collisions (experimental)
+
+The room's leader can turn on **Collisions**, in the lobby or the pause menu (or the headset's pause menu). Then you bump into each other, paddling or surfing. The leader is whoever created the room. If they leave, it passes to whoever has been in the room longest, and the lobby marks who it is. Everyone else sees whether it's on.
+
+- A gentle bump just pushes you apart. A hard one, at speed, knocks you off.
+- **Lying down,** you're pushed along your board far more easily than sideways. It's shaped to glide forward, but sideways the rails, the fins and your body all have to shove water aside. A bump from behind pushes you along.
+- **Sitting,** your legs hang down in the water and anchor you, so a bump hardly moves you. But the board pivots round you, so a knock at the nose swings you round.
+- **Standing,** your feet are spread along the board, so a knock from the side unbalances you far more than one from in front or behind.
+- **Lean into a bump** to brace against it: you're pushed less, and it takes a harder knock to throw you off. Lean away from it and you're pushed further and fall off more easily. You lean the way you steer: `A` / `D`, the controller's left stick, or tilting your phone (standing, that also carves you toward them). In a headset, lean your body; lying down or sitting, lean your head to the side.
+
+Each player's game works out every bump from both surfers' positions, speeds, headings and leans, and moves only its own surfer, so both see the same bump. You each see the other a fraction of a second late, so sometimes only one game catches a bump. It then tells the other game, which takes its share of the same bump.
+
 ### Join as drone
 
 In the room lobby, pick **Join as drone** instead of Surfer to fly a camera drone over the waves and watch the others, from high above or skimming the water. It's a folding-arm drone like a DJI Mavic with the camera on a gimbal in its nose, so none of the drone is ever in your shot. The body tilts as it speeds up and turns, but the camera stays level. Fly into the water, the lip or the land and it splashes down and relaunches; you can fly through a barrel if you're good.
@@ -182,7 +194,7 @@ In the room lobby, pick **Join as drone** instead of Surfer to fly a camera dron
 ### How it works
 
 - The Firebase Realtime Database is only used to find rooms. Each player in a room writes one entry of about 100 bytes, `lineup/rooms/<room>/<player>`, with `onDisconnect().remove()`. The entry includes the room's location and time of day, so the room list can show them. A room is nothing more than its players' entries, so it disappears as soon as the last player leaves or closes the tab. There is no cleanup job and nothing is left behind.
-- Players connect to each other directly over WebRTC using [Trystero](https://github.com/dmotz/trystero). Trystero uses the same database for the brief connection handshake and deletes those records itself. Positions and where each player is looking (15 times a second, 76 bytes each), events and clock sync all go peer-to-peer and never touch Firebase.
+- Players connect to each other directly over WebRTC using [Trystero](https://github.com/dmotz/trystero). Trystero uses the same database for the brief connection handshake and deletes those records itself. Positions and where each player is looking (15 times a second, 84 bytes each), events and clock sync all go peer-to-peer and never touch Firebase.
 - Other players are shown where they are now, not where they were when their last update left: each update carries their velocity, so their position is predicted ahead and eased toward each new update. It also carries their height above the water, and their board is placed that far above your own copy of the wave, so it can't sink into the wave when an update is late.
 - Waves aren't sent over the network at all. Each room has a random seed, a shared clock, a location and a wave-size setting, and every player generates the same sets from them. A player who joins takes the clock of whoever has been in the room longest. A change to the wave size carries the wave number it starts from, so everyone switches on the same wave.
 - In a private room the passcode is the key Trystero encrypts the handshake with, so players without it can't connect. The room list stores only a short hash of it so that a wrong passcode is rejected straight away.
@@ -241,6 +253,7 @@ To check the relay works, open the game with `?relay` on two devices and join th
 | `js/ocean.js` | Water shader: refraction to the seabed, absorption and scattering, light through thin water, Fresnel reflection, foam, haze |
 | `js/oceanGrid.js` | Adaptive ocean mesh. Row and column positions are recomputed every frame so vertices cluster at the camera, the crest and the breaking point |
 | `js/surfer.js` | Board physics and the prone / pop-up / standing / wipeout state machine. Also paddling effort, duck dives, crouching and airs, longboard walking, and manoeuvres |
+| `js/bump.js` | Collisions (multiplayer, experimental): where two boards touch, the impulse between them, and how each surfer takes it (pushed, turned or knocked off) |
 | `js/underwater.js` | Shows the body through the water (a stencil-masked second pass), plus the underwater view: seabed dome, light shafts, bubbles |
 | `js/input.js`, `js/xr.js` | PC input; Quest head/hand gesture input with calibration |
 | `js/gamepad.js`, `js/touch.js` | Controller input (paddling strokes on the triggers, stick flicks for tricks, menu navigation); touch input (swipe zones, phone tilt, the on-screen buttons) |
@@ -278,6 +291,6 @@ Breaking starts at the peak and spreads along the wave at the peel speed. Each s
 - `?spot=margaret|teahupoo|pool|eisbach`: choose the location (not saved), e.g. with the preset scenes below.
 - `?shot=lineup|barrel|shoulder|behind|paddle|duckdive|beach|boards`: jumps to a preset scene, skipping the menu. Add `&freeze` to stop time.
 - Extra preset options: `&stand`, `&crouch=0..1`, `&dive=depth` (e.g. `&dive=1.1` to look around under water), `&foot=-1..1.2` (longboard stance), `&pitch=` / `&lookyaw=` (radians), `&tau=` (seconds since the wave started breaking; negative is before).
-- `&bots=N`: puts N stand-in surfers around you, to check how other players look. They sit and look around, or paddle; `&botpose=prone|sit|stand` puts them all in one pose. `&wave2=z`: adds a second wave of the set with its crest at `z`. `&waveh=1.0`: the preset wave's height in metres.
+- `&bots=N`: puts N stand-in surfers around you, to check how other players look. They sit and look around, or paddle; `&botpose=prone|sit|stand` puts them all in one pose. Add `&bump` to bump into them as with collisions on (they stay put and don't feel it). `&wave2=z`: adds a second wave of the set with its crest at `z`. `&waveh=1.0`: the preset wave's height in metres.
 - `?shot=barrel&freeze&cam=x,y,z,yawDeg,pitchDeg`: free spectator camera.
 - `?relay`: multiplayer connections only go through the TURN relay (to test the relay set-up).

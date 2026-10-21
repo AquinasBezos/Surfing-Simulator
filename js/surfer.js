@@ -76,6 +76,10 @@ export class Surfer {
     this.stateTime = 0;
     this.leanX = 0;
     this.leanZ = 0;
+    this.braceX = 0; // your weight shifted right (+) / toward the nose (+), whatever you're doing: braces you for a bump (bump.js)
+    this.braceZ = 0;
+    this.knockX = 0; // a bump's sideways shove (m/s), easing off
+    this.knockZ = 0;
     this.crouch = 0;
     this.footPos = 0; // longboard: stance position along the board (m from centre, + = nose)
     this.charge = 0; // snap/tailslide charge (Shift / grip)
@@ -154,6 +158,7 @@ export class Surfer {
     this.yaw = yaw;
     this.yawRate = 0;
     this.leanX = this.leanZ = this.crouch = this.footPos = this.charge = 0;
+    this.braceX = this.braceZ = this.knockX = this.knockZ = 0;
     this.legCrouch = this.stanceCrouch = 0;
     this.roll = this.pitch = 0;
     this.tumble = 0;
@@ -205,8 +210,23 @@ export class Surfer {
     this.wipeReason = reason;
     this.air = false;
     this.diving = false;
+    this.knockX = this.knockZ = 0;
     this.setState(STATE.WIPEOUT);
     this.emit('wipeout', { reason });
+  }
+
+  // Bumped by another surfer (bump.js): a change of speed along the board (m/s, + forward),
+  // which it glides on with, and across it (+ right), which the fins, the rails or your legs
+  // soon stop (it's kept apart, so the fins don't turn it into speed); and a spin (rad/s, +
+  // left), which eases off as you steer.
+  bumped(dvLong, dvLat, dYaw) {
+    if (this.state === STATE.WIPEOUT) return;
+    const [fx, fz] = this.forward;
+    this.vx += fx * dvLong;
+    this.vz += fz * dvLong;
+    this.knockX += -fz * dvLat;
+    this.knockZ += fx * dvLat;
+    if (!this.move) this.yawRate += clamp(dYaw, -6, 6);
   }
 
   // A quick look/head turn while charged: snap, cutback or tailslide toward `dir`
@@ -272,6 +292,11 @@ export class Surfer {
       if (inp.walkTo != null) this.footPos += (clamp(inp.walkTo, B.footMin, B.footMax) - this.footPos) * (1 - Math.exp(-h * 8));
       else this.footPos = clamp(this.footPos + (inp.walk || 0) * 0.8 * h, B.footMin, B.footMax);
     } else if (!standing) this.footPos = moveToward(this.footPos, 0, h * 2);
+    // (bracing: your lean even lying down or sitting, as your weight shifts to a rail; toward the
+    // nose only standing on a shortboard, where that's the stance's own lean)
+    const kb = 1 - Math.exp(-h * 7);
+    this.braceX += ((this.state === STATE.WIPEOUT ? 0 : inp.leanX || 0) - this.braceX) * kb;
+    this.braceZ += ((standing && !B.walk ? inp.leanZ || 0 : 0) - this.braceZ) * kb;
     this.charge = standing && inp.charge ? Math.min(1, this.charge + h / 0.45) : Math.max(0, this.charge - h * 4);
     // deliberate crouching (Ctrl / your real knees) drives the leg-extension pop; charging a
     // manoeuvre or stalling just compresses the stance
@@ -429,6 +454,15 @@ export class Surfer {
 
     this.x += this.vx * h;
     this.z += this.vz * h;
+    if (this.knockX || this.knockZ) {
+      // a bump's sideways shove (bump.js): the fins, the rails, or your legs in the water stop it
+      this.x += this.knockX * h;
+      this.z += this.knockZ * h;
+      const kd = Math.exp(-h * (standing ? 5 : sitting ? 3 : 2.6));
+      this.knockX *= kd;
+      this.knockZ *= kd;
+      if (Math.abs(this.knockX) + Math.abs(this.knockZ) < 1e-3) this.knockX = this.knockZ = 0;
+    }
     if (this.collide) {
       const hit = this.collide(this);
       // (a pool's walls take a proper crash; a river's narrow channel, much less)

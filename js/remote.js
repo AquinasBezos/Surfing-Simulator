@@ -235,6 +235,10 @@ class Avatar {
     c.z = P.z;
     c.y = Number.isFinite(last.heave) && last.state !== POSE.DRONE ? heightAt(P.x, P.z) + P.heave : P.y;
     c.q.copy(P.q);
+    // how they're moving (for bumping into them: bump.js)
+    c.vx = vx;
+    c.vz = vz;
+    c.yawRate = yawRate;
   }
 
   dispose() {
@@ -288,7 +292,8 @@ export class RemotePlayers {
   }
 
   // snapshot: {t, x, y, z, qx, qy, qz, qw, state, crouch, foot, lean, effort, dive, lookYaw, lookPitch,
-  //            heave (height above the water), vx, vz} (the last three from newer clients)
+  //            heave (height above the water), vx, vz, bx, bz (how they're bracing: bump.js)} (the
+  //            last five from newer clients)
   push(id, snap) {
     const a = this.ensure(id);
     if (a) a.push(snap);

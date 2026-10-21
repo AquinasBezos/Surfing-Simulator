@@ -1298,6 +1298,28 @@ kbd {
   color: var(--ink-dim);
 }
 
+/* collisions (multiplayer): only the room's leader can change it */
+.collide-pick {
+  margin: 0 0 14px;
+}
+
+.collide-pick .tag {
+  margin-left: 6px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--sky);
+}
+
+.seg button:disabled {
+  cursor: default;
+}
+
+.seg button:disabled:not(.on) {
+  opacity: 0.45;
+}
+
 /* surfer or drone */
 .player-list li small {
   margin-left: 6px;

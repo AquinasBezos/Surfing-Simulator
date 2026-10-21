@@ -229,6 +229,8 @@ export class XRControls {
     }
     out.steer = Math.abs(stickX) > 0.2 ? stickX : 0;
     out.duck = prone && noseGrip;
+    // lying down or sitting, shifting your weight to one side braces you for a bump (bump.js)
+    if (prone || sitting) out.leanX = leanCurve(lh.x / FULL_LEAN, this.lean.x);
 
     // pop-up by standing up for real; sitting up by rising slowly part of the way
     const dy = lh.y;

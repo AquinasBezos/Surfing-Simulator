@@ -123,6 +123,14 @@ export class VRMenu {
         add({ label: 'End replay', sub: 'Back to surfing, where you left off', onClick: () => this.h.onEndReplay() });
       } else if (info.canReplay) add({ label: 'Replay the last 30 s', sub: 'Fly the drone round it', onClick: () => this.h.onReplay() });
       add({ label: drone ? 'Relaunch the drone' : 'Back to the lineup', onClick: () => this.h.onLineup() });
+      // bumping into each other (experimental): the room's leader turns it on and off
+      if (info.collide && info.collide.leader) {
+        add({
+          label: 'Collisions (experimental)',
+          value: () => (this.h.info().collide?.on ? 'On' : 'Off'),
+          step: () => this.h.setCollide(!this.h.info().collide?.on),
+        });
+      }
       if (drone) add({ label: 'Re-centre the view', sub: 'Puts the camera back where your head is now', onClick: () => this.h.onRecalibrate() });
       else add({ label: 'Recalibrate paddling height', sub: 'Lie or kneel in your paddling position first', onClick: () => this.h.onRecalibrate() });
       add({ label: 'Controls and settings', onClick: () => this.go('settings') });
