@@ -21,8 +21,6 @@ const db = getDatabase(app);
 const perfNow = () => performance.now() / 1000;
 const period = () => WAVE.spacing / WAVE.speed; // (the spot's: a pool sends waves more often)
 
-export const POSE_FLOATS = 14;
-
 const randomId = () => {
   const a = crypto.getRandomValues(new Uint8Array(8));
   return Array.from(a, (b) => 'abcdefghijklmnopqrstuvwxyz0123456789'[b % 36]).join('');
@@ -133,6 +131,7 @@ export class Net {
     this._unwatch = null;
     this._online = true;
     this.hasRelay = false; // a TURN relay was configured for the current room
+    this.relayed = new Set(); // peers we only reach through it (its data is metered)
   }
 
   on(event, fn) {
@@ -251,10 +250,9 @@ export class Net {
     this.aPose.onMessage = (data, { peerId }) => {
       const p = this.peers.get(peerId);
       if (!p || !this.timeline || p.origin !== this.timeline.origin) return; // not on our clock yet
+      if (!data || typeof data.byteLength !== 'number') return;
       const buf = data instanceof ArrayBuffer ? data : data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
-      const f = new Float32Array(buf);
-      if (f.length < POSE_FLOATS) return;
-      this.emit('pose', peerId, f);
+      this.emit('pose', peerId, buf); // (main.js decodes it: packed, or older clients' floats)
     };
     this.aEvt.onMessage = (msg, { peerId }) => {
       if (msg && typeof msg === 'object') this.emit('event', peerId, msg);
@@ -263,14 +261,17 @@ export class Net {
       if (!this.peers.has(peerId)) this.peers.set(peerId, { name: '…', board: 'shortboard', role: 'surfer', origin: null, playing: false, joined: null, tl: null });
       this.aHello.send(this._hello(), { target: peerId });
       this.emit('peers');
+      setTimeout(() => this._checkRoutes(), 2500); // (direct, or through the relay?)
     };
     room.onPeerLeave = (peerId) => {
       const p = this.peers.get(peerId);
       this.peers.delete(peerId);
+      this.relayed.delete(peerId);
       this.emit('leave', peerId, p ? p.name : 'A surfer');
       this.emit('peers');
     };
     this._resync = setInterval(() => this._refreshClock(), 30000);
+    this._routes = setInterval(() => this._checkRoutes(), 5000);
     this.emit('joined', this.roomInfo, creating);
     this.emit('timeline');
   }
@@ -293,6 +294,8 @@ export class Net {
 
   async leave() {
     clearInterval(this._resync);
+    clearInterval(this._routes);
+    this.relayed.clear();
     const room = this.room;
     if (!room) return;
     // reset straight away so the game can move on (or join another room) while the
@@ -519,9 +522,41 @@ export class Net {
     }
   }
 
+  // Which peers we only reach through the TURN relay. The browser connects directly whenever it
+  // can and only falls back to the relay when that fails; the relay's data is metered, so those
+  // peers get fewer updates (sendPose). From the connection's own stats: the route it chose.
+  async _checkRoutes() {
+    const room = this.room;
+    if (!room || !room.getPeers) return;
+    const relayed = new Set();
+    for (const [id, pc] of Object.entries(room.getPeers())) {
+      try {
+        const stats = await pc.getStats();
+        let pair = null;
+        stats.forEach((r) => {
+          if (r.type === 'transport' && r.selectedCandidatePairId) pair = stats.get(r.selectedCandidatePairId);
+        });
+        if (!pair) stats.forEach((r) => r.type === 'candidate-pair' && (r.selected || (r.nominated && r.state === 'succeeded')) && (pair = r));
+        if (!pair) continue;
+        const ends = [stats.get(pair.localCandidateId), stats.get(pair.remoteCandidateId)];
+        if (ends.some((c) => c && c.candidateType === 'relay')) relayed.add(id);
+      } catch (e) {
+        /* closing */
+      }
+    }
+    if (this.room !== room) return;
+    const changed = relayed.size !== this.relayed.size || [...relayed].some((id) => !this.relayed.has(id));
+    this.relayed = relayed;
+    if (changed) this.emit('peers');
+  }
+
   // ---------------------------------------------------------------- gameplay
-  sendPose(floats) {
-    if (this.room && this.peers.size) this.aPose.send(floats);
+  // relayToo: also to the peers we reach through the relay (else only the direct ones)
+  sendPose(bytes, relayToo = true) {
+    if (!this.room || !this.peers.size) return;
+    if (relayToo || !this.relayed.size) return void this.aPose.send(bytes)?.catch?.(() => {});
+    const direct = [...this.peers.keys()].filter((id) => !this.relayed.has(id));
+    if (direct.length) this.aPose.send(bytes, { target: direct })?.catch?.(() => {});
   }
 
   // to: one peer's id (else everyone; they may have just left)

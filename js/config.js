@@ -169,8 +169,13 @@ export const MULTIPLAYER = {
   databaseURL: 'https://lineup-dbc58-default-rtdb.europe-west1.firebasedatabase.app',
   roomsPath: 'lineup/rooms',
   maxPlayers: 8,
-  poseHz: 15,
-  protocol: 3, // 2: rooms have a surf spot and a time of day; 3: bumping into each other (collisions)
+  // Your position is sent to the others this many times a second: [to players you reach
+  // directly, to those you reach through the TURN relay]. The relay's data is metered, and every
+  // update costs about 200 bytes with the connection's own headers, so how often depends on
+  // what you're doing: riding (or within reach of someone, with collisions on) needs every
+  // detail, sitting still very little. In between, the others predict where you are.
+  poseRates: { ride: [15, 10], move: [10, 5], walk: [8, 4], drone: [10, 5], still: [4, 2] },
+  protocol: 4, // 2: rooms have a surf spot and a time of day; 3: bumping into each other (collisions); 4: packed poses
   // TURN relay. Players connect directly when they can, but strict NATs and many
   // university, office and mobile networks block that; those players need a relay or
   // they can't see each other ("could not connect to peer ... after exchanging SDP").

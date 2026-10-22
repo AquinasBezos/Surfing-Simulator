@@ -257,6 +257,8 @@ const game = {
   splash: 0,
   wasUnder: false,
   poseTimer: 0,
+  relayCredit: 0,
+  poseSent: -1, // the state your last pose said
   warmup: 6, // render a few frames behind the menu so shaders compile up front
 };
 let net = null; // multiplayer, loaded on demand
@@ -1149,7 +1151,10 @@ function wireNet(n) {
     hud.feed(`${name} left the lineup`);
   });
   n.on('info', (id, p) => remote.setInfo(id, { name: p.name, board: p.board, look: p.look }));
-  n.on('pose', (id, f) => remote.push(id, decodePose(f)));
+  n.on('pose', (id, buf) => {
+    const snap = decodePose(buf);
+    if (snap) remote.push(id, snap);
+  });
   n.on('event', (id, e) => onRemoteEvent(id, e));
   n.on('collide', (on, by) => {
     bumps.clear();
@@ -1269,7 +1274,7 @@ function updateLobby() {
   if (!net || !net.room) return;
   const leader = net.leaderId;
   const players = [{ name: net.name, playing: game.mode === 'multi', me: true, role: game.mode === 'multi' ? game.role : menu.role, leader: leader === net.selfId }];
-  for (const [id, p] of net.peers) players.push({ name: p.name, playing: p.playing, role: p.role, leader: id === leader });
+  for (const [id, p] of net.peers) players.push({ name: p.name, playing: p.playing, role: p.role, leader: id === leader, relay: net.relayed.has(id) });
   menu.renderLobby(net.roomInfo, players);
   menu.setCollide({ on: net.collide, leader: net.isLeader, leaderName: net.leaderName });
 }
@@ -1383,19 +1388,17 @@ const STATE_CODE = { prone: POSE.PRONE, popup: POSE.POPUP, standing: POSE.STANDI
 // height above the water, velocity x / z (so others can show you where you are now), and how
 // you're bracing for a bump, sideways and along the board
 const poseBuf = new Float32Array(21);
-function sendPose() {
+function fillPose() {
   if (game.role === 'drone') {
     // same packet; crouch carries the gimbal pitch and effort the throttle
     const q = drone.quat;
     poseBuf.set([net.now(), drone.pos.x, drone.pos.y, drone.pos.z, q.x, q.y, q.z, q.w, POSE.DRONE, drone.camPitch, 0, 0, drone.throttle, 0, 0, 0, 0, drone.vel.x, drone.vel.z, 0, 0]);
-    net.sendPose(poseBuf);
     return;
   }
   if (game.bank || game.jumpIn) {
     // on foot: crouch is unused, effort is how fast you're walking; no height above the water
     const q = _wq.setFromAxisAngle(Yaxis, walker.yaw);
     poseBuf.set([net.now(), walker.x, walker.y, walker.z, q.x, q.y, q.z, q.w, POSE.WALK, 0, 0, 0, walker.speed / 3.4, 0, 0, walker.pitch, NaN, walker.vx, walker.vz, 0, 0]);
-    net.sendPose(poseBuf);
     return;
   }
   const q = surfer.quat;
@@ -1422,14 +1425,86 @@ function sendPose() {
   poseBuf[18] = surfer.vz;
   poseBuf[19] = surfer.braceX;
   poseBuf[20] = surfer.braceZ;
-  net.sendPose(poseBuf);
 }
 
-function decodePose(f) {
-  const look = f.length >= 16; // (older clients send 14, 16 or 19 values)
+// On the wire the pose is packed into 52 bytes (from 84 as floats): the time and position stay
+// floats; the orientation and the small numbers become 16-bit integers (to a thousandth, and
+// speeds to a centimetre a second). Older clients sent 14, 16, 19 or 21 floats: still read.
+const PACKED = 52;
+const SMALL = [9, 10, 11, 12, 13, 14, 15, 16, 19, 20]; // poseBuf indices kept to a thousandth
+const i16 = (v) => Math.max(-32767, Math.min(32767, Math.round(v)));
+function packPose(f) {
+  const bytes = new Uint8Array(PACKED); // (a new one each time: it's sent asynchronously)
+  const d = new DataView(bytes.buffer);
+  for (let i = 0; i < 4; i++) d.setFloat32(i * 4, f[i], true); // t, x, y, z
+  for (let i = 0; i < 4; i++) d.setInt16(16 + i * 2, i16(f[4 + i] * 32767), true); // orientation
+  d.setUint8(24, f[8]);
+  d.setUint8(25, Number.isFinite(f[16]) ? 1 : 0); // (walking on a bank: no height above the water)
+  SMALL.forEach((k, i) => d.setInt16(26 + i * 2, i16((Number.isFinite(f[k]) ? f[k] : 0) * 1000), true));
+  d.setInt16(46, i16(f[17] * 100), true); // velocity
+  d.setInt16(48, i16(f[18] * 100), true);
+  return bytes;
+}
+
+function sendPose(relayToo = true) {
+  fillPose();
+  net.sendPose(packPose(poseBuf), relayToo);
+}
+
+// a pose from the network (an ArrayBuffer): null if it isn't one
+const _unpack = new Float32Array(21);
+function decodePose(buf) {
+  let f;
+  if (buf.byteLength === PACKED) {
+    const d = new DataView(buf);
+    f = _unpack;
+    for (let i = 0; i < 4; i++) f[i] = d.getFloat32(i * 4, true);
+    for (let i = 0; i < 4; i++) f[4 + i] = d.getInt16(16 + i * 2, true) / 32767;
+    f[8] = d.getUint8(24);
+    SMALL.forEach((k, i) => (f[k] = d.getInt16(26 + i * 2, true) / 1000));
+    if (!(d.getUint8(25) & 1)) f[16] = NaN;
+    f[17] = d.getInt16(46, true) / 100;
+    f[18] = d.getInt16(48, true) / 100;
+  } else if (buf.byteLength % 4 === 0 && buf.byteLength >= 56) f = new Float32Array(buf);
+  else return null;
+  const look = f.length >= 16; // (older clients send 14, 16 or 19 floats)
   const pred = f.length >= 19;
   const brace = f.length >= 21;
   return { t: f[0], x: f[1], y: f[2], z: f[3], qx: f[4], qy: f[5], qz: f[6], qw: f[7], state: Math.round(f[8]), crouch: f[9], foot: f[10], lean: f[11], effort: f[12], dive: f[13], lookYaw: look ? f[14] : 0, lookPitch: look ? f[15] : 0, heave: pred ? f[16] : NaN, vx: pred ? f[17] : NaN, vz: pred ? f[18] : NaN, bx: brace ? f[19] : 0, bz: brace ? f[20] : 0 };
+}
+
+// How often to send your pose: [directly, through the relay] per second (config.js). Riding,
+// or within reach of someone with collisions on, every detail; paddling less; sitting still
+// very little. A change of state (popping up, wiping out) goes at once.
+const RATES = MULTIPLAYER.poseRates;
+function poseRates() {
+  if (game.role === 'drone') return RATES.drone;
+  if (game.bank || game.jumpIn) return RATES.walk;
+  const st = surfer.state;
+  if (st === STATE.STANDING || st === STATE.POPUP || surfer.air || surfer.catching) return RATES.ride;
+  if (collisionsOn() && nearestSurfer() < 6) return RATES.ride;
+  if (st === STATE.WIPEOUT || surfer.diving || surfer.turtle > 0 || surfer.speed > 0.7 || surfer.paddleEffort > 0.15 || Math.abs(surfer.yawRate) > 0.3) return RATES.move;
+  return RATES.still;
+}
+
+function nearestSurfer() {
+  let near = Infinity;
+  for (const a of remote.avatars.values()) if (a.visible && a.cur.state !== POSE.DRONE) near = Math.min(near, Math.hypot(a.cur.x - surfer.x, a.cur.z - surfer.z));
+  return near;
+}
+
+const poseCode = () => (game.role === 'drone' ? POSE.DRONE : game.bank || game.jumpIn ? POSE.WALK : STATE_CODE[surfer.state]);
+function sendPoses(dt) {
+  const [hz, relayHz] = poseRates();
+  game.poseTimer -= dt;
+  game.relayCredit = Math.min(1.5, game.relayCredit + dt * relayHz); // (the relayed get relayHz of these, on average)
+  const changed = poseCode() !== game.poseSent;
+  if (game.poseTimer > 0 && !changed) return;
+  game.poseTimer = 1 / hz;
+  const relayToo = changed || game.relayCredit >= 1;
+  if (relayToo) game.relayCredit = Math.max(0, game.relayCredit - 1);
+  sendPose(relayToo);
+  game.poseSent = poseCode();
 }
 
 function onRemoteEvent(id, e) {
@@ -2597,11 +2672,7 @@ function frame(time, xrFrame) {
 
   // ---- other surfers
   if (game.mode === 'multi' && net && net.room) {
-    game.poseTimer -= dt;
-    if (game.poseTimer <= 0 && game.started) {
-      game.poseTimer = 1 / MULTIPLAYER.poseHz;
-      sendPose();
-    }
+    if (game.started) sendPoses(dt);
     remote.update(net.now(), focus, dt);
     if (running && !flying && !onBank) bumpOthers(dt);
     otherSheets(running ? dt : 0);

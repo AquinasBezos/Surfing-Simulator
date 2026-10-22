@@ -16,8 +16,8 @@ export const POSE = { PRONE: 0, POPUP: 1, STANDING: 2, WIPEOUT: 3, DRONE: 4, SIT
 // the board under the right arm, in the walker's frame (feet at the origin, facing -z)
 const CARRY = { p: new THREE.Vector3(0.3, 0.98, 0.02), r: new THREE.Euler(0.12, 0, Math.PI / 2) };
 const MAX_PLAYERS = 16;
-const DELAY = 0.15; // pose this far behind the newest snapshot (s)
-export const POSE_DELAY = DELAY; // (update(now) poses everyone as they were at now - POSE_DELAY)
+const DELAY = 0.15; // pose this far behind the newest snapshot (s), or more if they come further apart
+export const POSE_DELAY = DELAY; // (update(now) poses everyone as they were at now - POSE_DELAY, with snapshots this close)
 const _q2 = new THREE.Quaternion();
 const _Y = new THREE.Vector3(0, 1, 0);
 const _ea = new THREE.Euler(0, 0, 0, 'YXZ'),
@@ -149,6 +149,12 @@ class Avatar {
   push(s) {
     const a = this.snaps;
     if (a.length && s.t <= a[a.length - 1].t) return; // out of order / duplicate
+    // how far apart their updates come (they send fewer when there's less going on), so they're
+    // posed far enough behind to have the next one in hand: smooth, not stepping
+    if (a.length) {
+      const gap = s.t - a[a.length - 1].t;
+      if (gap < 2) this.gap = this.gap ? this.gap + (gap - this.gap) * (gap < this.gap ? 0.5 : 0.25) : gap;
+    }
     a.push(s);
     if (a.length > 40) a.shift();
   }
@@ -334,7 +340,10 @@ export class RemotePlayers {
 
   update(now, camPos, dt) {
     for (const a of this.avatars.values()) {
-      const ok = a.sample(now - DELAY);
+      // (eased, so a change in how often they send doesn't jolt their animation)
+      const want = Math.min(0.6, Math.max(DELAY, (a.gap || 0) * 1.25 + 0.03));
+      a.delay = a.delay ? a.delay + (want - a.delay) * (1 - Math.exp(-dt * 3)) : want;
+      const ok = a.sample(now - a.delay);
       a.visible = ok;
       a.root.visible = ok;
       if (a.tag) a.tag.visible = ok;

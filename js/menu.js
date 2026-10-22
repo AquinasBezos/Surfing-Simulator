@@ -1230,7 +1230,7 @@ export class Menu {
     document.getElementById('lobby-title').textContent = room.name;
     document.getElementById('lobby-meta').textContent = `${room.isPrivate ? 'Private room (passcode)' : 'Public room'} · ${players.length} player${players.length === 1 ? '' : 's'}`;
     document.getElementById('lobby-players').innerHTML = players
-      .map((p) => `<li class="${p.playing ? 'playing' : ''} ${p.me ? 'me' : ''}"><i></i>${esc(p.name)}${p.me ? ' (you)' : ''}${p.leader ? ' <small>leader</small>' : ''}${p.role === 'drone' ? ' <small>drone</small>' : ''}</li>`)
+      .map((p) => `<li class="${p.playing ? 'playing' : ''} ${p.me ? 'me' : ''}"><i></i>${esc(p.name)}${p.me ? ' (you)' : ''}${p.leader ? ' <small>leader</small>' : ''}${p.relay ? ' <small title="Connected through the relay server">relay</small>' : ''}${p.role === 'drone' ? ' <small>drone</small>' : ''}</li>`)
       .join('');
     const pr = document.getElementById('pause-room');
     pr.hidden = false;
