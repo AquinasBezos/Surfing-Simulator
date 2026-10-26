@@ -19,7 +19,10 @@ const BOARD_INFO = {
 };
 const CRUMBS = { main: '', single: 'Singleplayer', multi: 'Multiplayer', lobby: 'Multiplayer', settings: 'Controls and settings', pause: '' };
 
-const DEFAULT_SETTINGS = { quality: 'auto', volume: 0.8, sensitivity: 1, invertY: false, fullscreen: true, time: 'day', lean: LEAN_DEFAULTS, pad: PAD_DEFAULTS, tilt: TILT_DEFAULTS, droneVR: 'camera' };
+// touch controls: 'swipe' (swipes and tilt) or 'buttons' (and a joystick); null until you've chosen
+const cleanScheme = (s) => (s === 'swipe' || s === 'buttons' ? s : null);
+
+const DEFAULT_SETTINGS = { touch: null, quality: 'auto', volume: 0.8, sensitivity: 1, invertY: false, fullscreen: true, time: 'day', lean: LEAN_DEFAULTS, pad: PAD_DEFAULTS, tilt: TILT_DEFAULTS, droneVR: 'camera' };
 
 // Sensitivity curves: VR leaning, controller sticks, phone tilt. Each: where its editors go,
 // its axes (setting key -> graph axis, lean.js), and its reset button.
@@ -147,6 +150,7 @@ export class Menu {
     this.settings.lean = cleanLean(this.settings.lean);
     this.settings.pad = cleanPad(this.settings.pad);
     this.settings.tilt = cleanTilt(this.settings.tilt);
+    this.settings.touch = cleanScheme(this.settings.touch);
     this.device = 'kbm'; // what you're playing with (the prompts follow it)
     this.touchDevice = false;
     this.settings.droneVR = this.settings.droneVR === 'fpv' ? 'fpv' : 'camera';
@@ -184,6 +188,7 @@ export class Menu {
     this.bindMultiplayer();
     this.bindRole();
     this.bindPass();
+    this.bindTouchScheme();
     document.addEventListener('keydown', (e) => this.onKey(e));
     this.show('main');
   }
@@ -1255,6 +1260,40 @@ export class Menu {
     document.getElementById('pause-room').hidden = true;
     this.root.querySelector('.pause-name').hidden = true;
     document.querySelector('[data-quit]').textContent = 'Main menu';
+  }
+
+  // ---------------------------------------------------------------- touch controls
+  // Swipes and tilt, or buttons and a joystick: asked the first time you play on a touch
+  // screen (askTouchScheme), and in the settings' Touch tab.
+  bindTouchScheme() {
+    for (const b of this.root.querySelectorAll('[data-touchscheme]')) b.addEventListener('click', () => this.setTouchScheme(b.dataset.touchscheme, true));
+    this.setTouchScheme(this.settings.touch);
+  }
+
+  setTouchScheme(scheme, fromUser = false) {
+    const s = (this.settings.touch = cleanScheme(scheme));
+    for (const b of this.root.querySelectorAll('[data-touchscheme]')) {
+      b.classList.toggle('on', b.dataset.touchscheme === s);
+      b.setAttribute('aria-checked', String(b.dataset.touchscheme === s));
+    }
+    for (const el of this.root.querySelectorAll('.swipe-only')) el.hidden = s === 'buttons';
+    for (const el of this.root.querySelectorAll('.buttons-only')) el.hidden = s !== 'buttons';
+    if (!fromUser) return;
+    save('lineup.settings', this.settings);
+    if (this.h.onSettings) this.h.onSettings(this.settings);
+    // (chosen in the first-time question: carry on into the game)
+    const dlg = document.getElementById('touch-choice');
+    if (!dlg.hidden) {
+      dlg.hidden = true;
+      const then = this.touchChosen;
+      this.touchChosen = null;
+      if (then) then();
+    }
+  }
+
+  askTouchScheme(then) {
+    this.touchChosen = then;
+    document.getElementById('touch-choice').hidden = false;
   }
 
   // ---------------------------------------------------------------- passcode dialog

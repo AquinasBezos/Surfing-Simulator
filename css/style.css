@@ -237,6 +237,151 @@ body {
   display: none;
 }
 
+/* ---------------- the buttons layout: a joystick bottom left, buttons bottom right */
+#touch-ui {
+  --t-gap: max(14px, env(safe-area-inset-bottom));
+  --t-right: max(14px, env(safe-area-inset-right));
+}
+
+.t-paddle,
+.t-duckdive,
+.t-sit,
+.t-wide,
+.t-joy,
+.g-joy {
+  display: none;
+}
+
+.t-paddle {
+  bottom: var(--t-gap);
+  width: var(--t-big);
+  height: var(--t-big);
+  border-radius: 50%;
+  font-size: calc(var(--t-big) * 0.17);
+  line-height: 1.15;
+  text-align: center;
+}
+
+.t-paddleR {
+  right: var(--t-right);
+}
+
+.t-paddleL {
+  right: calc(var(--t-right) + var(--t-big) + 12px);
+}
+
+.t-duckdive,
+.t-sit {
+  bottom: calc(var(--t-gap) + var(--t-big) + 12px);
+  width: var(--t-mid);
+  height: var(--t-mid);
+  border-radius: 50%;
+  font-size: calc(var(--t-mid) * 0.19);
+  line-height: 1.15;
+  text-align: center;
+}
+
+.t-duckdive {
+  right: calc(var(--t-right) + var(--t-big) + 12px + (var(--t-big) - var(--t-mid)) / 2);
+}
+
+.t-sit {
+  right: calc(var(--t-right) + (var(--t-big) - var(--t-mid)) / 2);
+}
+
+/* Stand up (once you're moving) and Paddle (back down), bottom centre */
+.t-wide {
+  left: 50%;
+  bottom: var(--t-gap);
+  transform: translateX(-50%);
+  min-width: calc(var(--t-big) * 1.9);
+  height: var(--t-mid);
+  padding: 0 18px;
+  border-radius: 999px;
+  font-size: calc(var(--t-mid) * 0.26);
+}
+
+.t-stand {
+  background: rgba(143, 208, 238, 0.55);
+  border-color: var(--sky);
+}
+
+/* the joystick: its base sits where your thumb lands (it waits bottom left) */
+.t-joy {
+  position: absolute;
+  left: calc(max(14px, env(safe-area-inset-left)) + 13vh + 10px);
+  top: calc(100% - var(--t-gap) - 13vh - 10px);
+  width: 26vh;
+  height: 26vh;
+  margin: -13vh 0 0 -13vh;
+  border-radius: 50%;
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  background: rgba(10, 20, 28, 0.22);
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+.t-joy.held {
+  opacity: 1;
+}
+
+.t-joy i {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 11vh;
+  height: 11vh;
+  margin: -5.5vh 0 0 -5.5vh;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.55);
+  transform: translate(calc(var(--jx, 0) * 13vh), calc(var(--jy, 0) * 13vh));
+}
+
+#touch-ui[data-scheme='buttons']:is([data-mode='prone'], [data-mode='sitting'], [data-mode='standing']) .t-joy,
+#touch-ui[data-scheme='buttons']:is([data-mode='prone'], [data-mode='sitting']) .t-paddle,
+#touch-ui[data-scheme='buttons']:is([data-mode='prone'], [data-mode='sitting']) .t-sit,
+#touch-ui[data-scheme='buttons'][data-mode='prone'] .t-duckdive,
+#touch-ui[data-scheme='buttons'][data-mode='prone'].fast .t-stand,
+#touch-ui[data-scheme='buttons'][data-mode='standing'] .t-lie {
+  display: flex;
+}
+
+/* standing, Crouch and Snap move to the right (your left thumb's on the joystick) */
+#touch-ui[data-scheme='buttons'] .t-charge {
+  left: auto;
+  top: auto;
+  right: var(--t-right);
+  bottom: var(--t-gap);
+}
+
+#touch-ui[data-scheme='buttons'] .t-crouch {
+  left: auto;
+  top: auto;
+  right: calc(var(--t-right) + var(--t-big) + 12px);
+  bottom: var(--t-gap);
+}
+
+/* no tilt to recalibrate */
+#touch-ui[data-scheme='buttons'] .t-level {
+  display: none;
+}
+
+/* the guide, for the buttons */
+#touch-ui[data-scheme='buttons'] :is(.g-left, .g-right, .g-board) {
+  display: none;
+}
+
+#touch-ui[data-scheme='buttons']:is([data-mode='prone'], [data-mode='sitting'], [data-mode='standing']) .g-joy {
+  display: block;
+  left: max(14px, env(safe-area-inset-left));
+  bottom: calc(var(--t-gap) + 30vh);
+}
+
+#touch-ui[data-scheme='buttons'] .g-look {
+  bottom: auto;
+  top: 22%;
+}
+
 /* (portrait is playable: the start message suggests turning the phone) */
 #rotate-hint {
   display: none;

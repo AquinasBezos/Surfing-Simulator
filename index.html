@@ -89,11 +89,20 @@
       <button type="button" class="t-btn t-up" data-t="up" aria-label="Climb">▲</button>
       <button type="button" class="t-btn t-down" data-t="down" aria-label="Descend">▼</button>
       <button type="button" class="t-btn t-jump" data-t="jump">Jump in</button>
+      <!-- the buttons layout (chosen in the settings): a joystick, and buttons for the rest -->
+      <div class="t-joy" aria-hidden="true"><i></i></div>
+      <button type="button" class="t-btn t-paddle t-paddleL" data-t="paddleL">Paddle<br />left</button>
+      <button type="button" class="t-btn t-paddle t-paddleR" data-t="paddleR">Paddle<br />right</button>
+      <button type="button" class="t-btn t-duckdive" data-t="duckdive">Duck<br />dive</button>
+      <button type="button" class="t-btn t-sit" data-t="sit">Sit</button>
+      <button type="button" class="t-btn t-wide t-stand" data-t="stand">Stand up</button>
+      <button type="button" class="t-btn t-wide t-lie" data-t="lie">Paddle</button>
       <div class="t-guide" aria-hidden="true">
         <span class="g-left">Swipe down<br />to paddle</span>
         <span class="g-board">Swipe up: stand<br />Down: duck dive<br />Tap: sit</span>
         <span class="g-right">Swipe down<br />to paddle</span>
         <span class="g-look">Drag to look</span>
+        <span class="g-joy">Drag here<br />to steer</span>
       </div>
     </div>
     <div id="rotate-hint" aria-hidden="true"><span>⟲</span>Turn your phone sideways</div>
@@ -311,8 +320,21 @@
               </div>
 
               <div class="stab-body" data-stab-body="touch" hidden>
-                <p class="note">On a phone or tablet, held sideways. Where your finger first touches decides what it does until you lift it, so a paddle stroke that starts high on the right and runs down into the look area never turns the view.</p>
-                <table class="binds gestures">
+                <div class="wave-row"><span class="wave-label">Controls</span><div class="seg" role="radiogroup" aria-label="Touch controls"><button type="button" role="radio" data-touchscheme="swipe">Swipe and tilt</button><button type="button" role="radio" data-touchscheme="buttons">Buttons</button></div></div>
+                <table class="binds gestures buttons-only" hidden>
+                  <tbody>
+                    <tr><td>Steer and carve</td><td>The joystick at the bottom left: put your thumb down anywhere there and drag. Standing, push it forward and back to trim, stall or walk a longboard</td></tr>
+                    <tr><td>Paddle</td><td>The Paddle left and Paddle right buttons: tap for a stroke with that arm, hold to keep stroking. Take turns with them</td></tr>
+                    <tr><td>Duck dive</td><td>Hold Duck dive while paddling</td></tr>
+                    <tr><td>Sit up / lie down</td><td>The Sit button (it says Lie down while you're sitting)</td></tr>
+                    <tr><td>Stand up</td><td>Stand up appears once you're moving over 5 mph or a wave has you</td></tr>
+                    <tr><td>Back to paddling</td><td>The Paddle button at the bottom while you're standing</td></tr>
+                    <tr><td>Crouch, tricks</td><td>Crouch and Snap at the bottom right while you're standing. Hold Snap and swipe sideways to look for a snap or tailslide</td></tr>
+                    <tr><td>Look around</td><td>Drag anywhere that isn't a button or the joystick</td></tr>
+                  </tbody>
+                </table>
+                <p class="note swipe-only">On a phone or tablet, held sideways. Where your finger first touches decides what it does until you lift it, so a paddle stroke that starts high on the right and runs down into the look area never turns the view.</p>
+                <table class="binds gestures swipe-only">
                   <tbody>
                     <tr><td>Paddle</td><td>Swipe down beside the board: on the left for your left arm, high on the right for your right arm. Faster swipes are harder strokes</td></tr>
                     <tr><td>Steer and carve</td><td>Tilt the phone left and right</td></tr>
@@ -326,8 +348,8 @@
                     <tr><td>Pause, lineup</td><td>The buttons at the top left</td></tr>
                   </tbody>
                 </table>
-                <h3>Tilt</h3>
-                <div class="tilt-check">
+                <h3 class="swipe-only">Tilt</h3>
+                <div class="tilt-check swipe-only">
                   <div class="tilt-level" id="tilt-level" aria-hidden="true"><i></i><span class="l-l">left</span><span class="l-r">right</span><span class="l-f">forward</span><span class="l-b">back</span></div>
                   <div class="tilt-side">
                     <p class="note" id="tilt-status">Tilt your phone: the dot should follow it (right edge down moves it right, top edge away from you moves it up).</p>
@@ -336,7 +358,7 @@
                     <p class="note">Hold the phone the way you play, then recalibrate: that becomes level, and the game works out which way up the screen is from which edge is higher. If tilting still steers the wrong way (some tablets), turn the directions until the dot follows your tilt.</p>
                   </div>
                 </div>
-                <p class="note lean-note">How much tilting the phone does. <b>Centre</b> is how much small tilts count, <b>max</b> how quickly a bigger tilt builds to the full amount.</p>
+                <p class="note lean-note">How much tilting the phone (or with buttons, the joystick) does. <b>Centre</b> is how much small tilts count, <b>max</b> how quickly a bigger tilt builds to the full amount.</p>
                 <div class="lean-set" id="tilt-curves"></div>
                 <label class="field"><span>Look sensitivity (dragging) <output id="out-touch-look"></output></span><input type="range" id="set-touch-look" min="0.3" max="3" step="0.05" /></label>
                 <div class="binds-foot"><span></span><button type="button" class="btn small" id="tilt-reset">Reset tilt to defaults</button></div>
@@ -393,6 +415,19 @@
 
         <footer class="menu-foot"><span class="prompts" id="prompts"></span></footer>
 
+        <!-- the first time you play on a touch screen: which controls -->
+        <div class="dialog" id="touch-choice" role="dialog" aria-modal="true" aria-labelledby="touch-choice-title" hidden>
+          <div class="panel">
+            <div class="panel-head"><h2 id="touch-choice-title">How do you want to play?</h2></div>
+            <div class="panel-body stack">
+              <div class="privacy touch-pick" role="radiogroup" aria-label="Touch controls">
+                <button type="button" class="opt" role="radio" data-touchscheme="swipe"><b>Swipe and tilt</b><small>Swipe down beside the board to paddle and up on it to stand. Tilt the phone to steer and carve</small></button>
+                <button type="button" class="opt" role="radio" data-touchscheme="buttons"><b>Buttons</b><small>Paddle, duck dive, sit and stand buttons, and a joystick to steer and carve</small></button>
+              </div>
+              <p class="note">You can change this any time in Controls and settings → Touch.</p>
+            </div>
+          </div>
+        </div>
         <div class="dialog" id="pass-dialog" role="dialog" aria-modal="true" aria-labelledby="pass-title" hidden>
           <form class="panel narrow" id="pass-form">
             <div class="panel-head"><h2 id="pass-title">Private room</h2></div>

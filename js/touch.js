@@ -17,10 +17,18 @@
 //   buttons: pause; while standing, Crouch (toggles) and Snap (hold to charge a trick)
 //   flying a drone: drag on the left half to fly, on the right half to turn and tilt the
 //        camera; the arrow buttons climb and descend
+//
+// Or, chosen in the settings (and asked the first time you play), buttons instead of swipes and
+// tilt (scheme 'buttons'): a joystick at the bottom left steers (and, standing, carves and
+// trims, instead of tilting); Paddle buttons stroke with each arm (held, they keep stroking);
+// Duck dive (held) and Sit; Stand once you're moving (over 5 mph) or a wave has you; standing,
+// Crouch, Snap and Paddle (lie back down). Dragging anywhere else looks around.
 import { leanCurve, cleanTilt, FULL_TILT } from './lean.js';
 
 const BOARD = [0.36, 0.64]; // the board's column (fraction of the width)
 const LOOK_TOP = 0.5; // the look area: right of the board, below this (fraction of the height)
+const JOY = { right: 0.42, top: 0.3 }; // buttons: the joystick's area (left of and below these)
+const STROKE_EVERY = 0.6; // s: a held Paddle button strokes this often
 
 export class TouchInput {
   constructor(dom, ui) {
@@ -29,6 +37,9 @@ export class TouchInput {
     this.enabled = false;
     this.mode = 'prone'; // the surfer's state, or 'drone' (set by the game each frame)
     this.settings = cleanTilt(null);
+    this.scheme = 'swipe'; // or 'buttons' (the settings)
+    this.joy = { x: 0, y: 0, id: null }; // buttons: the joystick (-1..1, y + = down)
+    this.paddling = { L: -1, R: -1 }; // buttons: a held Paddle button's time to its next stroke (-1: up)
     this.touches = new Map();
     this.events = []; // as PCInput's, plus { stroke: side, strength }
     this.lookX = 0;
@@ -126,18 +137,26 @@ export class TouchInput {
     return { x: (T.roll - T.roll0) / FULL_TILT, z: (T.pitch0 - T.pitch) / FULL_TILT };
   }
 
-  // through the tilt curves: steer / carve (+ right), lean (+ forward)
+  // through the tilt curves: steer / carve (+ right), lean (+ forward); with buttons, the joystick
   get steer() {
+    if (this.scheme === 'buttons') return leanCurve(this.joy.x, this.settings.x);
     return this.tilt.has ? leanCurve((this.tilt.roll - this.tilt.roll0) / FULL_TILT, this.settings.x) : 0;
   }
   get leanZ() {
+    if (this.scheme === 'buttons') return leanCurve(-this.joy.y, this.settings.z);
     return this.tilt.has ? leanCurve((this.tilt.pitch0 - this.tilt.pitch) / FULL_TILT, this.settings.z) : 0;
+  }
+
+  setScheme(scheme) {
+    this.scheme = scheme === 'buttons' ? 'buttons' : 'swipe';
+    this.ui.dataset.scheme = this.scheme;
   }
 
   // ---------------------------------------------------------------- fingers
   role(fx, fy) {
     // (a drone, and walking a river bank: a stick each side)
     if (this.mode === 'drone' || this.mode === 'bank') return fx < 0.5 ? 'stickL' : 'stickR';
+    if (this.scheme === 'buttons') return fx < JOY.right && fy > JOY.top && this.joy.id === null ? 'joy' : 'look';
     if (fx >= BOARD[0] && fx <= BOARD[1]) return 'board';
     if (fx > BOARD[1] && fy > LOOK_TOP) return 'look';
     return fx < BOARD[0] ? 'paddleL' : 'paddleR';
@@ -151,7 +170,13 @@ export class TouchInput {
     for (const t of e.changedTouches) {
       const fx = (t.clientX - r.left) / r.width,
         fy = (t.clientY - r.top) / r.height;
-      this.touches.set(t.identifier, { role: this.role(fx, fy), x0: t.clientX, y0: t.clientY, x: t.clientX, y: t.clientY, t0: this.time, top: t.clientY, low: t.clientY, armed: true, speed: 0, at: performance.now(), decided: false });
+      const role = this.role(fx, fy);
+      this.touches.set(t.identifier, { role, x0: t.clientX, y0: t.clientY, x: t.clientX, y: t.clientY, t0: this.time, top: t.clientY, low: t.clientY, armed: true, speed: 0, at: performance.now(), decided: false });
+      // (the joystick's centre is wherever your thumb lands)
+      if (role === 'joy') {
+        this.joy.id = t.identifier;
+        this.placeJoy(t.clientX - r.left, t.clientY - r.top, 0, 0);
+      }
     }
   }
 
@@ -199,6 +224,18 @@ export class TouchInput {
           } else if (this.mode === 'sitting' && !down) this.events.push('forward', 'toggleStand'); // lie down, then up
           else if (this.mode === 'standing' && down) this.events.push('toggleStand'); // back to paddling
         }
+      } else if (f.role === 'joy') {
+        const R = 0.13 * H;
+        let jx = (f.x - f.x0) / R,
+          jy = (f.y - f.y0) / R;
+        const m = Math.hypot(jx, jy);
+        if (m > 1) {
+          jx /= m;
+          jy /= m;
+        }
+        this.joy.x = Math.abs(jx) < 0.08 ? 0 : jx;
+        this.joy.y = Math.abs(jy) < 0.08 ? 0 : jy;
+        this.placeJoy(null, null, jx, jy);
       } else if (f.role === 'stickL' || f.role === 'stickR') {
         const R = 0.13 * H;
         const sx = Math.max(-1, Math.min(1, (f.x - f.x0) / R)),
@@ -224,6 +261,7 @@ export class TouchInput {
         if (this.mode === 'prone') this.events.push('back');
         else if (this.mode === 'sitting') this.events.push('forward');
       }
+      if (f.role === 'joy') this.releaseJoy();
       if (f.role === 'stickL') this.sticks[0] = this.sticks[1] = 0;
       if (f.role === 'stickR') this.sticks[2] = this.sticks[3] = 0;
     }
@@ -260,12 +298,62 @@ export class TouchInput {
     hold('lineup', (v) => v && this.events.push('reset'));
     hold('jump', (v) => v && this.events.push('toggleStand')); // (on a river bank: jump in)
     hold('level', (v) => v && this.events.push('level'));
+    // buttons
+    for (const side of ['L', 'R'])
+      hold('paddle' + side, (v, b) => {
+        b.classList.toggle('on', v);
+        if (v) this.stroke(side);
+        this.paddling[side] = v ? STROKE_EVERY : -1;
+      });
+    hold('duckdive', (v, b) => {
+      this.duck = v;
+      b.classList.toggle('on', v);
+    });
+    hold('sit', (v) => v && this.events.push(this.mode === 'sitting' ? 'forward' : 'back')); // (sit up, or lie back down)
+    hold('stand', (v) => v && this.events.push(this.mode === 'sitting' ? 'forward' : 'toggleStand'));
+    hold('lie', (v) => v && this.mode === 'standing' && this.events.push('toggleStand')); // back to paddling
+  }
+
+  // a stroke with one arm (a Paddle button): lying down only (from sitting it lies you down)
+  stroke(side) {
+    if (this.mode === 'prone' || this.mode === 'sitting') this.events.push({ stroke: side === 'L' ? -1 : 1, strength: 0.85 });
+  }
+
+  // the joystick's look: where its base sits (px in the game's area; null: leave it) and its knob
+  placeJoy(x, y, jx, jy) {
+    const el = this.ui.querySelector('.t-joy');
+    if (!el) return;
+    if (x !== null) {
+      el.style.left = x + 'px';
+      el.style.top = y + 'px';
+      el.classList.add('held');
+    }
+    el.style.setProperty('--jx', jx.toFixed(3));
+    el.style.setProperty('--jy', jy.toFixed(3));
+  }
+
+  releaseJoy() {
+    this.joy.x = this.joy.y = 0;
+    this.joy.id = null;
+    const el = this.ui.querySelector('.t-joy');
+    if (!el) return;
+    el.classList.remove('held');
+    el.style.left = el.style.top = '';
+    el.style.setProperty('--jx', 0);
+    el.style.setProperty('--jy', 0);
+  }
+
+  // buttons: show Stand (you're moving fast enough, or a wave has you)
+  setFast(on) {
+    this.ui.classList.toggle('fast', on);
   }
 
   // what the on-screen buttons show, for the surfer's state now
   showButtons(visible) {
     this.ui.hidden = !visible;
     this.ui.dataset.mode = this.mode;
+    const sit = this.ui.querySelector('[data-t="sit"]');
+    if (sit) sit.textContent = this.mode === 'sitting' ? 'Lie down' : 'Sit';
     if (this.mode !== 'standing' && this.crouch) {
       this.crouch = false;
       this.ui.querySelector('[data-t="crouch"]').classList.remove('on');
@@ -274,6 +362,15 @@ export class TouchInput {
 
   update(dt) {
     this.time += dt;
+    // held Paddle buttons keep stroking
+    for (const side of ['L', 'R']) {
+      if (this.paddling[side] < 0) continue;
+      this.paddling[side] -= dt;
+      if (this.paddling[side] <= 0) {
+        this.stroke(side);
+        this.paddling[side] += STROKE_EVERY;
+      }
+    }
   }
 
   consumeLook() {
@@ -290,6 +387,9 @@ export class TouchInput {
 
   reset() {
     this.touches.clear();
+    this.releaseJoy();
+    this.paddling.L = this.paddling.R = -1;
+    for (const b of this.ui.querySelectorAll('.t-btn.on:not([data-t="crouch"])')) b.classList.remove('on');
     this.duck = this.charge = false;
     this.climb = 0;
     this.sticks.fill(0);

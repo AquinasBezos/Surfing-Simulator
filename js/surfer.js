@@ -27,6 +27,19 @@ const _rz = new THREE.Vector3();
 const _rq = new THREE.Quaternion();
 const _rf = new THREE.Vector3();
 const _rr = new THREE.Vector3();
+const _fu = new THREE.Vector3();
+
+// Backflip: crouch with Snap held, spring up out of the crouch into the air, let go of Snap just
+// after you uncrouch (within FLIP_RELEASE s) and look up sharply, and you throw yourself over
+// backwards. FLIP_SPIN: how
+// fast you go round for a firm flick (rad/s; a sharper one faster); FLIP_POP: the lift the throw
+// adds (m/s); FLIP_PIVOT: how far above the board you turn (your middle, m). Land before you're
+// FLIP_LAND of the way round and you wipe out; past it, you ride away.
+export const FLIP_PIVOT = 0.8;
+const FLIP_RELEASE = 0.45,
+  FLIP_SPIN = 11,
+  FLIP_POP = 2.2,
+  FLIP_LAND = 2 * Math.PI - 0.6;
 
 // The least change to the drawn board that keeps it out of the water: a turn about its middle
 // (phi, + nose up) and a lift (dy >= 0). need[i]: how far station i is too deep; k[i]: how much
@@ -100,6 +113,12 @@ export class Surfer {
     // underneath while the wave passes over. 0..1 how far over it is
     this.turtle = 0;
     this.turtleT = 0;
+    this.flip = null; // a backflip under way: { angle (rad, 0 .. 2 pi), rate, done }
+    this.flipArm = null; // uncrouched with Snap held: { t: since (s), release: when you let go of Snap (s after) }
+    this.flipRest = 0; // (what's left of a flip landed a little short, easing out)
+    this.flipGrab = 0; // 0 .. 1: tucked and holding the nose rail through a backflip (it's only drawn)
+    this.upFlickT = 9; // since you last looked up sharply (s), and how sharply
+    this.upFlickPower = 0;
     this.quatBase = new THREE.Quaternion(); // the view's frame: the surface under you (smoothed), with the board's lean and trim
     this.effPitch = 0; // nose-down angle of the board including a pitching ledge (rad)
     this.ledgePitch = 0; // ...of which the pitching ledge, beyond the smooth surface (rad)
@@ -111,6 +130,7 @@ export class Surfer {
     this.normalBoard = new THREE.Vector3(0, 1, 0); // ...and closely, for the board as it's drawn
     this.quat = new THREE.Quaternion();
     this.position = new THREE.Vector3();
+    this.flipShift = new THREE.Vector3(); // how far a backflip has moved the board from where it rides (it turns about your middle)
     this.s = {};
     this.wipeReason = '';
     this.inTube = false;
@@ -169,6 +189,8 @@ export class Surfer {
     this.diving = false;
     this.diveDepth = this.diveRate = 0;
     this.turtle = 0;
+    this.flip = this.flipArm = null;
+    this.flipRest = this.flipGrab = 0;
     this.pearlT = this.lipT = 0;
     this.ledgePitch = 0;
     this.paddleEffort = 0;
@@ -211,6 +233,7 @@ export class Surfer {
     this.air = false;
     this.diving = false;
     this.knockX = this.knockZ = 0;
+    this.flip = this.flipArm = null;
     this.setState(STATE.WIPEOUT);
     this.emit('wipeout', { reason });
   }
@@ -227,6 +250,25 @@ export class Surfer {
     this.knockX += -fz * dvLat;
     this.knockZ += fx * dvLat;
     if (!this.move) this.yawRate += clamp(dYaw, -6, 6);
+  }
+
+  // A sharp look upwards (power: how sharp, about 1 for a firm flick). In the air, after a pop
+  // with Snap let go in time, it throws you into a backflip (updateFlip).
+  flipUp(power = 1) {
+    this.upFlickT = 0;
+    this.upFlickPower = power;
+  }
+
+  // crouch as it's drawn and sent (others' and the replay's character): through a backflip
+  // you tuck right down (1) and above 1 is how far you've reached for the rail (character.js)
+  get poseCrouch() {
+    const g = this.flipGrab;
+    return g ? this.crouch + (1 - this.crouch) * Math.min(1, g * 2) + g : this.crouch;
+  }
+
+  // how far round a backflip has turned you (rad; 0 when you're not flipping)
+  get flipAngle() {
+    return this.flip ? this.flip.angle : this.flipRest;
   }
 
   // A quick look/head turn while charged: snap, cutback or tailslide toward `dir`
@@ -469,8 +511,14 @@ export class Surfer {
       if (hit > (this.model.river ? 1.5 : 3.5) && this.state === STATE.STANDING) return this.wipeout('Ran into the wall');
     }
 
+    this.snapHeld = !!inp.charge;
+    // springing up out of a crouch with Snap held: a backflip's on, if you let go of it in time
+    const crouchIn = standing && (inp.crouch || 0) > 0.5;
+    if (this.crouchHeld && !crouchIn && this.snapHeld && !this.air) this.flipArm = { t: 0, release: null };
+    this.crouchHeld = crouchIn;
     this.updateVertical(h, s, ext);
     if (this.state === STATE.WIPEOUT) return;
+    this.updateFlip(h, inp);
     this.updatePitch(h, hx, hz, slope, fx, fz, s);
     if (!this.air) this.checkRules(s, h, deep);
   }
@@ -555,6 +603,7 @@ export class Surfer {
           this.move = null;
           this.yawRate = 0;
         }
+        this.flip = null;
         this.emit('takeoff', {});
       } else {
         this.y = target;
@@ -568,9 +617,45 @@ export class Surfer {
     }
   }
 
+  // A backflip: once armed (you sprang out of a crouch with Snap held), let go of Snap in time,
+  // and once you're in the air with a sharp look up just before or then, over you go, about
+  // your middle, at a rate set by how sharply you looked. It stops once you're all the way round.
+  updateFlip(h, inp) {
+    this.upFlickT += h;
+    const A = this.flipArm;
+    if (A) {
+      A.t += h;
+      if (!inp.charge && A.release === null) A.release = A.t;
+      // (too late letting go, or never left the water)
+      if ((A.release !== null && A.release > FLIP_RELEASE) || (A.release === null && A.t > FLIP_RELEASE) || (!this.air && A.t > 1)) this.flipArm = null;
+    }
+    if (!this.air) return;
+    if (this.flipArm && !this.flip) {
+      if (this.flipArm.release !== null && this.upFlickT < 0.3) {
+        this.flip = { angle: 0, rate: FLIP_SPIN * clamp(this.upFlickPower, 0.8, 1.25), done: false };
+        this.flipArm = null;
+        this.vy += FLIP_POP;
+        this.emit('flipstart', {});
+      }
+    }
+    const F = this.flip;
+    if (F && !F.done) {
+      F.angle = Math.min(2 * Math.PI, F.angle + F.rate * h);
+      F.done = F.angle >= 2 * Math.PI;
+    }
+  }
+
   land(target) {
     this.air = false;
     this.y = target;
+    const flip = this.flip;
+    this.flip = this.flipArm = null;
+    if (flip) {
+      // not far enough round: you land on your back, or the nose
+      if (flip.angle < FLIP_LAND) return this.wipeout('Under-rotated the backflip');
+      this.flipRest = flip.angle - 2 * Math.PI; // (a little short: the rest eases out)
+      this.emit('backflip', {});
+    }
     const [fx, fz] = this.forward;
     // (which way you're going through the water: on a river, relative to it)
     const wvz = this.model.river ? this.s.waterVz || 0 : 0;
@@ -697,6 +782,12 @@ export class Surfer {
     const n = this.air ? this._n.set(0, 1, 0) : this._n.set(-gx, 1, -gz).normalize();
     this.normal.lerp(n, 1 - Math.exp(-dt * (this.air ? 3 : 10))).normalize();
     this.normalBoard.lerp(n, 1 - Math.exp(-dt * (this.air ? 3 : 30))).normalize();
+    this.flipRest *= Math.exp(-dt * 14);
+    if (Math.abs(this.flipRest) < 1e-3) this.flipRest = 0;
+    // grab the rail as you go over, let go as you come round to land
+    const grabTo = this.flip && this.flip.angle < 2 * Math.PI - 0.7 ? 1 : 0;
+    this.flipGrab += (grabTo - this.flipGrab) * (1 - Math.exp(-dt * (grabTo ? 14 : 7)));
+    if (this.flipGrab < 1e-3) this.flipGrab = 0;
     this.position.set(this.x, this.y, this.z);
 
     // rail lean, trim, dives and ledges
@@ -722,9 +813,18 @@ export class Surfer {
     // settles onto it as it lands)
     this.frameOn(this.normalBoard, this.quat).multiply(this._q);
     this.ride.tilt = this.ride.lift = 0;
-    if (!this.diving && this.turtle === 0 && st !== STATE.WIPEOUT) this.rideOnWater();
+    const flip = this.flipAngle;
+    if (!this.diving && this.turtle === 0 && st !== STATE.WIPEOUT && !flip) this.rideOnWater();
     // turtle roll: over onto its back about its length
     if (this.turtle > 0) this.quat.multiply(this._q.setFromAxisAngle(AXIS_Z, this.turtleAngle));
+    // backflip: over backwards (nose up and over), about your middle above the board
+    this.flipShift.set(0, 0, 0);
+    if (flip) {
+      _fu.set(0, FLIP_PIVOT, 0).applyQuaternion(this.quat);
+      this.quat.multiply(this._q.setFromAxisAngle(RIDE_X, flip));
+      this.flipShift.copy(_fu).sub(_rp.set(0, FLIP_PIVOT, 0).applyQuaternion(this.quat));
+      this.position.add(this.flipShift);
+    }
   }
 
   // The board's frame on a surface with normal `up`, facing the way it's heading, into out

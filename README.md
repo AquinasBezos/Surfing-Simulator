@@ -11,7 +11,7 @@ Paddle into glassy waves, pop up, and race the peeling lip through the barrel, o
 - The board, arms and hands stay visible when they dip under the surface, tinted by the water they're seen through.
 - Duck dive under breaking waves. Underwater you get Snell's window, the seabed (at Teahupo'o, the coral reef sloping away into the deep), light shafts and bubbles. In the ocean, a school of fish sometimes swims past (silvery baitfish at Margaret River, reef fish at Teahupo'o) and scatters if you get close.
 - Shortboard or longboard. On the longboard you walk to the nose to hang five, or to the tail for tight turns. A longboard is too big to duck dive, so you turtle roll instead: grab the rails and roll over, hanging upside down under the board while the wave passes over. The view rolls with you, in a headset too.
-- You can crouch under the lip and spring off the top of the wave for an air. Snaps, cutbacks and tailslides come from flicking your view.
+- You can crouch under the lip and spring off the top of the wave for an air, and throw a backflip in it. Snaps, cutbacks and tailslides come from flicking your view.
 - Four ways to play: keyboard and mouse, a game controller, touch on a phone or tablet (swipe to paddle, tilt to steer), and body movement on Quest (paddle with your arms, stand up to pop up, lean to carve).
 - Pick the wave size, from knee high to well overhead, or let it wander: sets build and fade over a few minutes. On small waves you can keep riding the whitewater after the wave breaks.
 - Your surfer is a rigged, animated character (paddling, popping up, a surf stance that crouches and leans with you). Choose skin tone, hair colour and board colour; a turntable preview shows your look. In first person you see that character's own arms: on PC and phones they paddle in smooth, flowing strokes, and in VR they follow your controllers.
@@ -37,6 +37,7 @@ In the menus, the arrow keys move between the cards, `Enter` picks one and `Esc`
 | Surf (weight shift) | `A` / `D` carve, `W` / `S` lean forward (trim) or back (stall) | Lean your head and body (how much a lean counts is adjustable: see below) |
 | Crouch | Hold `Ctrl` (or `C`); let go at the lip to spring into an air | Crouch for real; stand up fast at the lip to hop |
 | Snap · cutback · tailslide | Hold `Shift` and flick the mouse left or right | Hold either grip and whip your head round |
+| Backflip | Crouch with `Shift` held, spring up into the air, let go of `Shift` just after and flick the mouse up | The same with a grip, crouching for real, and look up sharply |
 | Longboard | `W` / `S` walk toward the nose or the tail | Walk forward or back on the board |
 | Look | Mouse (click the game to capture it) | Your head |
 | Other | `R` back to the lineup · `Esc` pause menu | `Y` pause menu · `B` back to the lineup · trigger: recalibrate |
@@ -63,6 +64,7 @@ Any controller the browser recognises works on PC (Xbox, PlayStation, Switch Pro
 | Stand up / lie down | `A` |
 | Duck dive (longboard: turtle roll) / crouch | Hold `B` (duck dive while paddling, crouch while surfing) |
 | Snap, cutback, tailslide | Hold `LB` or `RB` and flick the right stick: straight out and back for a tailslide, a short flick for a snap, held out for a cutback |
+| Backflip | Crouch with `LB` or `RB` held, spring up into the air, let go just after and flick the right stick up |
 | Look around | Right stick (the view drifts back to straight ahead when you let go) |
 | Back to the lineup | `Y` |
 | Pause menu | `Menu` (Start) |
@@ -71,7 +73,24 @@ Every button can be changed in **Controls and settings → Controller**: click a
 
 ### Phones and tablets
 
-Hold the phone sideways (upright works too, with less of the wave in view). The layout fits any screen, whatever its size or shape, and keeps clear of notches and rounded corners. In fullscreen the game stays in landscape where the browser allows it. Where your finger first touches decides what it does until you lift it, so a paddle stroke that starts high on the right and runs down into the look area never turns the view.
+Hold the phone sideways (upright works too, with less of the wave in view). The layout fits any screen, whatever its size or shape, and keeps clear of notches and rounded corners. In fullscreen the game stays in landscape where the browser allows it.
+
+There are two ways to play, and the game asks which you want the first time you play (it remembers; change it in **Controls and settings → Touch**): **Swipe and tilt**, or **Buttons**.
+
+**Buttons:**
+
+| Action | Touch |
+| :-- | :-- |
+| Steer and carve | The joystick at the bottom left: put your thumb down anywhere there and drag. Standing, push it forward and back to trim, stall or walk the longboard |
+| Paddle | Paddle left and Paddle right at the bottom right: tap for a stroke with that arm, hold to keep stroking. Take turns with them |
+| Duck dive (longboard: turtle roll) | Hold Duck dive while paddling |
+| Sit up / lie down | Sit (it says Lie down while you're sitting) |
+| Stand up | Stand up, at the bottom, once you're moving over 5 mph or a wave has you |
+| Back to paddling | Paddle, at the bottom, while you're standing |
+| Crouch, tricks | Crouch and Snap at the bottom right while you're standing (the moves are as below) |
+| Look around | Drag anywhere that isn't a button or the joystick |
+
+**Swipe and tilt:** where your finger first touches decides what it does until you lift it, so a paddle stroke that starts high on the right and runs down into the look area never turns the view.
 
 | Action | Touch |
 | :-- | :-- |
@@ -84,9 +103,12 @@ Hold the phone sideways (upright works too, with less of the wave in view). The 
 | Look around | Drag in the bottom right quarter of the screen |
 | Crouch | The Crouch button on the left while you're surfing (tap on, tap off) |
 | Snap, cutback, tailslide | Hold Snap on the left and swipe sideways in the look area |
+| Backflip | Tap Crouch, hold Snap, tap Crouch again to spring up, let go of Snap just after and swipe up quickly in the look area |
 | Pause, back to the lineup, recalibrate the tilt | The buttons at the top left (◎ makes the way you're holding it now level) |
 
-A guide to the touch zones shows for the first few seconds. **Controls and settings → Touch** has sensitivity curves with graphs for the tilt, and the look sensitivity.
+A guide to the touch zones shows for the first few seconds.
+
+**Backflips.** In the air after springing up out of a crouch with your trick button (Snap) held, let go of it within about half a second of uncrouching and look up sharply (a flick of the mouse or the right stick, a quick swipe up, or a jerk of your head in VR) to throw yourself over backwards: you tuck down and grab the rail by the nose to take the board round with you (in the replay and to other players). A sharper look spins you faster. You need a good pop to get all the way round: land before you're nearly round and you wipe out. On PC and phones the view goes over with you; in a headset it stays level, for comfort. **Controls and settings → Touch** has sensitivity curves with graphs for the tilt, and the look sensitivity.
 
 **If tilting steers the wrong way** (some tablets, such as iPads, report the screen turned 90° from how it really is):
 

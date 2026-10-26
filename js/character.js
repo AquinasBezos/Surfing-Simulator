@@ -5,7 +5,9 @@
 //   lying down : the Paddle clip, sped up with paddling effort
 //   up         : the Surf clip (crossfaded through the pop-up), with crouch and rail lean
 //                added by moving the hips and re-solving the legs (two-bone IK) so the
-//                feet stay planted on the deck; on a longboard the stance slides along it
+//                feet stay planted on the deck; on a longboard the stance slides along it.
+//                Crouch above 1 is a backflip: tucked right down, the leading hand holding
+//                the toe-side rail by the nose
 //   sitting    : a sitting pose made here, for waiting out the back
 //   walking    : the Walk clip (Idle when still), board under the right arm (a river bank)
 // and turned to look where the player is looking (head and neck, or the whole upper body
@@ -172,7 +174,7 @@ export class SurferCharacter {
     if (hair && this.mats.Hair) this.mats.Hair.color.set(hair);
   }
 
-  // p: { pose: 'prone' | 'stand' | 'sit' | 'walk', effort, crouch, lean, foot, proneZ, lookYaw, lookPitch }
+  // p: { pose: 'prone' | 'stand' | 'sit' | 'walk', effort, crouch (1 .. 2: grabbing the rail), lean, foot, proneZ, lookYaw, lookPitch }
   //    (lookYaw / lookPitch: where they're looking, relative to the board's nose, + = left / up;
   //    walking, effort is how fast: 0 standing about .. 1 running)
   update(dt, p) {
@@ -262,10 +264,11 @@ export class SurferCharacter {
     const k = up;
     // crouch: the clip is already bent; 0 stands a little taller, 1 is tucked low
     const crouch = THREE.MathUtils.clamp(p.crouch || 0, 0, 1);
-    hips.position.y += (0.05 - 0.26 * crouch) * k;
+    const grab = THREE.MathUtils.clamp((p.crouch || 0) - 1, 0, 1) * k;
+    hips.position.y += (0.05 - 0.26 * crouch) * k - 0.16 * grab;
     // lean toward the toes (+) or heels (-): hips shift that way, upper body tips
     const lean = THREE.MathUtils.clamp(p.lean || 0, -1, 1);
-    hips.position.x -= 0.07 * lean * k; // (model space is turned round: -x here is toward the toes)
+    hips.position.x -= 0.07 * lean * k - 0.08 * grab; // (model space is turned round: -x here is toward the toes)
     hips.updateMatrixWorld(true);
     for (const [i, [u, l, f]] of feet.entries()) solveTwoBone(u, l, f, targets[i]);
     if (B.Spine && lean) {
@@ -273,5 +276,27 @@ export class SurferCharacter {
       const axis = _v.copy(AXIS_Z).applyQuaternion(_q2); // along the board
       rotateWorld(B.Spine, _q.setFromAxisAngle(axis, -0.32 * lean * k));
     }
+    if (grab > 0.01) this.grabRail(grab);
+  }
+
+  // A backflip: fold over toward your toes and take hold of the toe-side rail ahead of your
+  // front foot with your leading hand (the one nearer the nose), so you take the board round
+  // with you. In the root's frame the nose is -z and your toes face +x.
+  grabRail(g) {
+    const B = this.bones;
+    if (!B.Spine || !B.LeftHand || !B.RightHand) return;
+    this.root.updateMatrixWorld(true);
+    this.root.getWorldQuaternion(_q2);
+    const along = _v.copy(AXIS_Z).applyQuaternion(_q2);
+    rotateWorld(B.Spine, _q.setFromAxisAngle(along, -0.65 * g));
+    if (B.Chest) rotateWorld(B.Chest, _q.setFromAxisAngle(_v.copy(AXIS_Z).applyQuaternion(_q2), -0.45 * g));
+    const local = (bone) => this.root.worldToLocal(bone.getWorldPosition(new THREE.Vector3()));
+    const left = local(B.LeftHand).z < local(B.RightHand).z;
+    const [u, l, h] = left ? [B.LeftUpperArm, B.LeftLowerArm, B.LeftHand] : [B.RightUpperArm, B.RightLowerArm, B.RightHand];
+    if (!u || !l) return;
+    const front = Math.min(local(B.LeftFoot).z, local(B.RightFoot).z);
+    const rail = this.root.localToWorld(new THREE.Vector3(0.23, 0.06, front - 0.22));
+    const hand = h.getWorldPosition(new THREE.Vector3());
+    solveTwoBone(u, l, h, hand.lerp(rail, g));
   }
 }

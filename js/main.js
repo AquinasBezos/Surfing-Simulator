@@ -246,6 +246,7 @@ const game = {
   teleport: 0, // fade timer
   look: { yaw: 0, pitch: 0 },
   lookRate: 0,
+  lookUpRate: 0, // how fast the view tilts up (rad/s): a sharp look up in the air is a backflip
   flick: null,
   moveFollow: 0,
   standBlend: 0,
@@ -332,6 +333,7 @@ function applySettings(s) {
   const turned = tilt.turn !== touch.settings.turn;
   touch.settings = tilt;
   if (turned) touch.calibrate(); // (the tilt directions were turned by hand: apply it now)
+  touch.setScheme(s.touch);
   applyTimeOfDay(inRoom() ? net.time : s.time); // a room's time of day is the same for everyone
 }
 const inRoom = () => !!(net && net.room);
@@ -573,6 +575,8 @@ function respawn(fadeOut = true) {
 
 function startGame(mode, platform) {
   if (mode === 'multi' && (!net || !net.room)) return;
+  // the first time on a touch screen: swipes and tilt, or buttons? (then on into the game)
+  if (device === 'touch' && platform === 'pc' && !settings.touch) return menu.askTouchScheme(() => startGame(mode, platform));
   if (spot && spot.river && !river) return; // (still loading: Play is greyed out until it's there)
   audio.start();
   endReplay();
@@ -624,11 +628,12 @@ function startToast(flying) {
     return;
   }
   if (device === 'touch') {
-    TouchInput.askForTilt();
+    if (touch.scheme === 'swipe') TouchInput.askForTilt();
     touch.ui.classList.add('guide'); // the zones, for a few seconds
     setTimeout(() => touch.ui.classList.remove('guide'), 6000);
     const tip = window.innerHeight > window.innerWidth ? '<br>Tip: turn the screen sideways to see more of the wave' : '';
     if (flying) hud.toast(`Drag on the left to fly, on the right to turn · ▲ ▼ climb and descend${tip}`, 6);
+    else if (touch.scheme === 'buttons') hud.toast(`Tap Paddle left and right in turn to paddle · the joystick steers · Stand up appears once you're moving${tip}`, 7);
     else hud.toast(`Swipe down beside the board to paddle · tilt to steer · swipe up on the board to stand${tip}`, 7);
   } else if (device === 'pad') {
     const b = (id) => controls.padText(id);
@@ -650,7 +655,7 @@ function resume() {
   pc.enabled = true;
   touch.reset();
   touch.calibrate(); // the way the phone is held now is level
-  if (device === 'touch') TouchInput.askForTilt();
+  if (device === 'touch' && touch.scheme === 'swipe') TouchInput.askForTilt();
   // (a controller can't grab the mouse or go fullscreen: that needs a click or a key)
   if (device !== 'pad') pc.capture(settings.fullscreen, device !== 'touch');
 }
@@ -754,7 +759,7 @@ model.onSpawn = () => {
   game.waves++;
 };
 
-const TRICK_NAMES = { snap: 'Snap', cutback: 'Cutback', tailslide: 'Tailslide' };
+const TRICK_NAMES = { snap: 'Snap', cutback: 'Cutback', tailslide: 'Tailslide', backflip: 'Backflip' };
 
 surfer.onEvent = (type, data) => {
   if (type === 'wipeout') {
@@ -782,6 +787,13 @@ surfer.onEvent = (type, data) => {
     hud.callout('Air!', `${data.time.toFixed(1)} s · +40`);
     if (game.ride) game.ride.tricks.push('air');
     sendEvent({ k: 'air', t: Math.round(data.time * 10) / 10 });
+  } else if (type === 'flipstart') {
+    audio.whoosh(1.2);
+  } else if (type === 'backflip') {
+    hud.callout('Backflip!', '+100');
+    audio.splash(1);
+    if (game.ride) game.ride.tricks.push('backflip');
+    sendEvent({ k: 'trick', kind: 'backflip' });
   } else if (type === 'takeoff') {
     audio.splash(0.6);
     if (spot && spot.river && river) riverExitJump();
@@ -808,7 +820,7 @@ function endRide(reason) {
   const counts = {};
   for (const t of r.tricks) counts[t] = (counts[t] || 0) + 1;
   for (const [k, n] of Object.entries(counts)) parts.push(`${n} ${k === 'air' ? 'air' : k}${n > 1 ? 's' : ''}`);
-  const score = Math.round(r.time * 10 + r.top * 6 + r.tube * 60 + r.nose * 25 + r.tricks.length * 40);
+  const score = Math.round(r.time * 10 + r.top * 6 + r.tube * 60 + r.nose * 25 + r.tricks.length * 40 + (counts.backflip || 0) * 60);
   const best = !game.best || score > game.best;
   if (best) game.best = score;
   const title = { wipeout: 'Ride over', kickout: 'Nice kick-out!', closeout: 'Closed out' }[reason] || 'Ride over';
@@ -1411,7 +1423,7 @@ function fillPose() {
   poseBuf[6] = q.z;
   poseBuf[7] = q.w;
   poseBuf[8] = STATE_CODE[surfer.state];
-  poseBuf[9] = surfer.crouch;
+  poseBuf[9] = surfer.poseCrouch; // (above 1: grabbing the rail in a backflip)
   poseBuf[10] = surfer.footPos;
   poseBuf[11] = surfer.leanX;
   poseBuf[12] = surfer.paddleEffort;
@@ -1536,6 +1548,7 @@ const _v = new THREE.Vector3();
 const _e = new THREE.Euler();
 const Yaxis = new THREE.Vector3(0, 1, 0);
 const _Z = new THREE.Vector3(0, 0, 1);
+const _X = new THREE.Vector3(1, 0, 0);
 const _v2 = new THREE.Vector3();
 const focus = new THREE.Vector3();
 const wrap = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -1578,10 +1591,21 @@ function updateCamYaw(dt, inXR) {
   game.camYaw += d * (1 - Math.exp(-dt * 7));
 }
 
-function detectFlickPC(dt, lx) {
+function detectFlickPC(dt, lx, ly) {
   // look turn speed (+ = left) while Shift is held
   const rate = dt > 0 ? (-lx * 0.0024) / dt : 0;
   game.lookRate += (rate - game.lookRate) * (1 - Math.exp(-dt / 0.03));
+  // a sharp look up (the mouse, or a quick swipe up on the touch screen's look area): in the
+  // air, after a pop with Snap let go in time, a backflip
+  const up = dt > 0 ? (-ly * 0.0024) / dt : 0;
+  game.lookUpRate += (up - game.lookUpRate) * (1 - Math.exp(-dt / 0.03));
+  game.upCool = Math.max(0, (game.upCool || 0) - dt);
+  // (a swipe turns the view slower than a flick of the mouse)
+  const sharp = device === 'touch' ? 3 : 5;
+  if (game.lookUpRate > sharp && !game.upCool && surfer.state === STATE.STANDING) {
+    surfer.flipUp((game.lookUpRate / sharp) * 0.55);
+    game.upCool = 0.4;
+  }
   const f = game.flick;
   if (f) {
     // keep measuring while the look keeps turning: short fast flick = tailslide, medium = snap,
@@ -1627,7 +1651,9 @@ function updateCameraPC(dt) {
     game.look.yaw *= k;
     game.look.pitch *= k;
   }
-  detectFlickPC(dt, lx);
+  detectFlickPC(dt, lx, ly);
+  // in a backflip your eyes come back down from the look up that threw it, to spot the landing
+  if (surfer.flip) game.look.pitch *= Math.exp(-dt * 5);
 
   updateCamYaw(dt, false);
   _qYaw.setFromAxisAngle(Yaxis, game.camYaw);
@@ -1665,6 +1691,13 @@ function updateCameraPC(dt) {
     pitch += Math.sin(t * 2.3) * 0.8 * Math.min(1, t);
   }
   camera.rotation.set(pitch, yaw, roll, 'YXZ');
+  // a backflip: the view goes over with you, about your middle (the rig rides the board, which
+  // surfer.js has already turned that way round)
+  const flip = surfer.flipAngle;
+  if (flip) {
+    camera.position.applyAxisAngle(_X, flip);
+    camera.quaternion.premultiply(_qh.setFromAxisAngle(_X, flip));
+  }
 }
 
 function updateCameraXR(dt) {
@@ -1674,7 +1707,8 @@ function updateCameraXR(dt) {
   rig.rotation.set(0, rigYaw, 0);
   _qYaw.setFromAxisAngle(Yaxis, surfer.yaw);
   const turtle = surfer.turtleAngle;
-  const eyeW = _v.copy(eyeProne).applyAxisAngle(_Z, turtle).applyQuaternion(_qYaw).add(surfer.position);
+  // (in a backflip your head stays put: the view stays level in a headset, for comfort)
+  const eyeW = _v.copy(eyeProne).applyAxisAngle(_Z, turtle).applyQuaternion(_qYaw).add(surfer.position).sub(surfer.flipShift);
   if (turtle > 0) {
     // turtle roll: the whole world turns over around your head, about the way you're facing
     // (so you end up under the board, upside down, wherever you're looking)
@@ -2157,7 +2191,7 @@ function recordFrame(b) {
     f[o + RF.qz] = q.z;
     f[o + RF.qw] = q.w;
     f[o + RF.state] = STATE_CODE[surfer.state];
-    f[o + RF.crouch] = surfer.crouch;
+    f[o + RF.crouch] = surfer.poseCrouch;
     f[o + RF.foot] = surfer.footPos;
     f[o + RF.lean] = surfer.leanX;
     f[o + RF.effort] = surfer.paddleEffort;
@@ -2501,6 +2535,8 @@ function frame(time, xrFrame) {
   const onBank = !flying && (game.bank || !!game.jumpIn);
   touch.mode = flying ? 'drone' : onBank ? 'bank' : surfer.state === STATE.POPUP ? 'standing' : surfer.state;
   touch.showButtons(touch.enabled && device === 'touch');
+  // (buttons: Stand up shows once you're moving over 5 mph, or a wave has you)
+  touch.setFast(surfer.state === STATE.PRONE && !surfer.diving && (surfer.speed > 2.24 || surfer.catching));
   if (inXR) {
     const gestures = xr.update(dt, xrFrame, onBank ? 'bank' : surfer.state, surfer.board);
     if (acceptInput) {
@@ -2522,6 +2558,7 @@ function frame(time, xrFrame) {
         if (e === 'reset') replaying ? replayControl('restart') : respawn(true);
         else if (e === 'recalibrate') xr.calibrate(); // re-centre the view under the drone
       } else if (typeof e === 'object' && e.flick) surfer.flick(e.flick, e.omega, e.sweep);
+      else if (typeof e === 'object' && e.flipUp) surfer.flipUp(e.flipUp);
       else if (e === 'recalibrate') {
         xr.calibrate();
         hud.toast('Calibrated paddling position', 2);
@@ -2574,6 +2611,7 @@ function frame(time, xrFrame) {
           if (surfer.state === STATE.SITTING) surfer.layDown();
           if (surfer.state === STATE.PRONE && !surfer.diving) arms.stroke(e.stroke, e.strength);
         } else if (e.flick) surfer.flick(e.flick, e.omega, e.sweep);
+        else if (e.flipUp) surfer.flipUp(e.flipUp);
       } else if (e === 'toggleStand') {
         if (surfer.state === STATE.PRONE) surfer.popUp();
         else surfer.layDown(); // (from sitting too)

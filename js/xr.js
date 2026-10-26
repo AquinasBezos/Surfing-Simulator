@@ -59,6 +59,9 @@ export class XRControls {
     this.prevYaw = null;
     this.flickWin = null;
     this.flickCool = 0;
+    this.pitchRate = 0;
+    this.prevPitch = null;
+    this.upCool = 0;
     this.out = { paddle: 0, pulse: 0, turn: 0, steer: 0, leanX: 0, leanZ: 0, walk: 0, walkTo: null, crouch: 0, duck: false, charge: false };
     this.hands = [];
     this.onHandModel = null;
@@ -150,6 +153,14 @@ export class XRControls {
     this.lookPitch = this.headPitch;
     const lh = this.toBody(this.head, this.local);
 
+    // head tilt speed (+ = up): a sharp look up, in the air, is a backflip
+    if (this.prevPitch != null && dt > 0) this.pitchRate += ((this.headPitch - this.prevPitch) / dt - this.pitchRate) * (1 - Math.exp(-dt / 0.04));
+    this.prevPitch = this.headPitch;
+    this.upCool = Math.max(0, this.upCool - dt);
+    if (state === STATE.STANDING && this.pitchRate > 2.6 && this.upCool <= 0) {
+      this.events.push({ flipUp: this.pitchRate / 4 });
+      this.upCool = 0.5;
+    }
     // head turn speed (+ = left)
     if (this.prevYaw !== null && dt > 0) {
       let d = this.headYaw - this.prevYaw;

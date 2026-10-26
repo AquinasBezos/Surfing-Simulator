@@ -221,7 +221,10 @@ class Avatar {
     // heading: carried on at the rate it was turning
     _ea.setFromQuaternion(_q.set(last.qx, last.qy, last.qz, last.qw));
     _eb.setFromQuaternion(_q2.set(prev.qx, prev.qy, prev.qz, prev.qw));
-    const yawRate = a.length > 1 ? Math.max(-4, Math.min(4, wrapAngle(_ea.y - _eb.y) / span)) : 0;
+    // (a jump of half a turn is the heading flipping as the board goes vertical in a backflip,
+    // not a turn)
+    const turned = wrapAngle(_ea.y - _eb.y);
+    const yawRate = a.length > 1 && Math.abs(turned) < 1.5 ? Math.max(-4, Math.min(4, turned / span)) : 0;
     _q.premultiply(_q2.setFromAxisAngle(_Y, yawRate * lead));
     const P = this.pred || (this.pred = { x: tx, y: ty, z: tz, heave: 0, q: new THREE.Quaternion().copy(_q), on: false });
     if (!P.on || Math.hypot(tx - P.x, tz - P.z) > 4 || Math.abs(ty - P.y) > 6) {

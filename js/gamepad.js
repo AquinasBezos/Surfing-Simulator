@@ -159,6 +159,12 @@ export class GamepadInput {
     }
     // tricks: with a charge button held, flick the right stick sideways
     this.detectFlick(dt, rx);
+    // a quick flick of the right stick up from the middle: a sharp look up (in the air, a backflip)
+    if (Math.hypot(rx, ry) < 0.3) this.restT = this.time;
+    else if (ry < -0.75 && this.time - this.restT < 0.15) {
+      this.events.push({ flipUp: 1.1 });
+      this.restT = -1e9;
+    }
     // the menus
     this.navigate(dt, pressed, values, lx, ly);
     this.prev = pressed;
