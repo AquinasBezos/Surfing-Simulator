@@ -143,9 +143,12 @@ end
 
 local function paintMargaret(x, z, h, slope, veg, s)
 	if h < -0.6 then
-		-- the seabed: sand with patches of weed and rock
+		-- the seabed, seen through the water: sand with patches of weed, darker going deeper
+		if h < -10 then
+			return M.Mud
+		end
 		local n = Land.vnoise(x * 0.0042 + 11, z * 0.0042)
-		if n > 0.68 then
+		if n > 0.68 or h < -6 then
 			return M.Ground
 		end
 		return M.Sand
@@ -283,6 +286,9 @@ function Builder.build(id, lib)
 		local L = Land.teahupoo
 		local function paint(x, z, h, slope, _mtn, s)
 			if h < -0.5 then
+				if h < -14 then
+					return M.Basalt -- the deep water off the reef
+				end
 				local d = z - L.reefEdge(x)
 				if d > -30 and d < 140 and Land.vnoise(x * 0.07, z * 0.07) > 0.35 then
 					return M.Limestone -- coral heads on the reef
@@ -313,7 +319,7 @@ function Builder.build(id, lib)
 			if placed >= 260 then
 				break
 			end
-			local x = -1400 + rng:NextNumber() * 3400
+			local x = B[1] + rng:NextNumber() * (B[2] - B[1])
 			local s = 4 + rng:NextNumber() ^ 1.4 * 110
 			local z = L.shoreZ(x) + s
 			local h = L.land(x, z)
@@ -337,9 +343,9 @@ function Builder.build(id, lib)
 				wedge.Parent = roof
 			end
 		end
-		local n = trees(o, "teahupoo", 900, 77, function(r)
-			local x = -1500 + r:NextNumber() * 3600
-			return x, L.shoreZ(x) + 60 + r:NextNumber() * 330
+		local n = trees(o, "teahupoo", 600, 77, function(r)
+			local x = B[1] + r:NextNumber() * (B[2] - B[1])
+			return x, math.min(L.shoreZ(x) + 60 + r:NextNumber() * 330, B[4] - 10)
 		end, function(h)
 			return h > 8
 		end)
@@ -416,10 +422,8 @@ function Builder.build(id, lib)
 			local cf = CFrame.new(o + Vector3.new(x, L.deck + 1.3, z) * S)
 			block(f, "Cabin", Vector3.new(3, 2.6, 3), cf, ({ Color3.fromRGB(80, 160, 200), Color3.fromRGB(240, 200, 70), Color3.fromRGB(230, 110, 90) })[k % 3 + 1], M.WoodPlanks)
 		end
-		local n = trees(o, "pool", 500, 5, function(r)
-			local a = r:NextNumber() * math.pi * 2
-			local d = 200 + r:NextNumber() ^ 0.7 * 900
-			return math.cos(a) * d, math.sin(a) * d
+		local n = trees(o, "pool", 250, 5, function(r)
+			return -410 + r:NextNumber() * 820, -310 + r:NextNumber() * 720
 		end, function(_h, _veg, ins)
 			-- (hedgerow trees, well away from the pool)
 			return ins < -25
@@ -429,29 +433,16 @@ function Builder.build(id, lib)
 	end
 	if id == "margaret" then
 		local L = Land.margaret
-		-- the bay: seabed under the lineup, the beach, dunes and hills behind
+		-- near the lineup: the seabed under the see-through water, the beach, the dunes and the
+		-- start of the hills (everything further off is in the 3D skybox: Landscape)
+		local B = L.bounds
 		progress("sampling")
-		local sample = makeSampler(L.land, -2400, 2400, -160, 1800, 6)
-		fill(o, sample, -2400, 2400, -160, 1800, paintMargaret, -18)
-		-- the headland (it reaches out to sea at z = -620)
-		local head = makeSampler(L.land, 600, 1500, -900, -160, 6)
-		fill(o, head, 600, 1500, -900, -160, paintMargaret, -6)
-		-- the island offshore
-		local I = L.island
-		local isl = makeSampler(L.land, I[1] - 330, I[1] + 330, I[2] - 330, I[2] + 330, 8)
-		fill(o, isl, I[1] - 330, I[1] + 330, I[2] - 330, I[2] + 330, paintMargaret, -2)
+		local sample = makeSampler(L.land, B[1], B[2], B[3], B[4], 5)
+		fill(o, sample, B[1], B[2], B[3], B[4], paintMargaret, -18)
 		progress("trees")
-		local H = L.headland
-		local n = trees(o, "margaret", 1100, 4242, function(rng)
-			local pick = rng:NextNumber()
-			if pick < 0.45 then
-				local t = rng:NextNumber()
-				return H[1][1] + (H[2][1] - H[1][1]) * t + (rng:NextNumber() * 2 - 1) * 170, H[1][2] + (H[2][2] - H[1][2]) * t + (rng:NextNumber() * 2 - 1) * 170
-			elseif pick < 0.55 then
-				return I[1] + (rng:NextNumber() * 2 - 1) * 220, I[2] + (rng:NextNumber() * 2 - 1) * 220
-			end
-			local x = (rng:NextNumber() * 2 - 1) * 2200
-			return x, L.shoreZ(x) + 72 + rng:NextNumber() ^ 1.6 * 700
+		local n = trees(o, "margaret", 500, 4242, function(rng)
+			local x = B[1] + rng:NextNumber() * (B[2] - B[1])
+			return x, math.min(L.shoreZ(x) + 72 + rng:NextNumber() ^ 1.4 * 500, B[4] - 10)
 		end)
 		progress(("done: %d trees"):format(n))
 	end

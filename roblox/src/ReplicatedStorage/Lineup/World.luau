@@ -59,9 +59,20 @@ local LOOK = {
 }
 World.LOOK = LOOK
 
+-- Graphics: "high" or "low". Low drops shadows, bloom and sun rays: they cost the GPU and the
+-- render thread every frame for little on open water.
+World.quality = "high"
+function World.setQuality(q)
+	World.quality = q
+	if World.time then
+		World.applyTime(World.time)
+	end
+end
+
 function World.applyTime(name)
 	local L = LOOK[name] or LOOK.day
 	World.time = name
+	local high = World.quality ~= "low"
 	Lighting.GeographicLatitude = -22
 	Lighting.ClockTime = L.clock
 	Lighting.Brightness = L.brightness
@@ -70,7 +81,7 @@ function World.applyTime(name)
 	Lighting.ExposureCompensation = L.exposure
 	Lighting.EnvironmentDiffuseScale = 1
 	Lighting.EnvironmentSpecularScale = 0.6
-	Lighting.GlobalShadows = true
+	Lighting.GlobalShadows = high
 	Lighting.ShadowSoftness = 0.2
 	pcall(function()
 		Lighting.Technology = Enum.Technology.Future
@@ -92,10 +103,12 @@ function World.applyTime(name)
 	for k, v in pairs(L.bloom) do
 		bloom[k] = v
 	end
+	bloom.Enabled = high
 	local rays = ensure("SunRaysEffect", "SunRays")
 	for k, v in pairs(L.rays) do
 		rays[k] = v
 	end
+	rays.Enabled = high
 	-- underwater (off until the camera goes under)
 	local uw = ensure("ColorCorrectionEffect", "Underwater")
 	uw.Enabled = false

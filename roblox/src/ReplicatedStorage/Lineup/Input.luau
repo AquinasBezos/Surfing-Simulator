@@ -87,8 +87,10 @@ function Input.new()
 	UserInputService.InputBegan:Connect(function(io, processed)
 		local t = io.UserInputType
 		if t == Enum.UserInputType.Keyboard then
-			-- (Roblox takes Tab for its player list: pause on it anyway)
-			if processed and not (has("pause", io.KeyCode) and not UserInputService:GetFocusedTextBox()) then
+			-- Keys count unless you're typing (chat): Roblox marks some as already handled even so
+			-- (Tab for its player list; and with Ctrl held to crouch, A and D become Ctrl+A and
+			-- Ctrl+D, which would otherwise stop you carving while crouched).
+			if processed and UserInputService:GetFocusedTextBox() then
 				return
 			end
 			setDevice("pc")

@@ -1,25 +1,25 @@
 --!native
--- Ocean surface (port of js/ocean.js and js/oceanGrid.js). Roblox has no custom shaders,
--- so what the web version does on the GPU happens on the CPU each frame:
---   * an adaptive lattice (cols x rows) whose column x and row z positions are recomputed
---     every frame, so vertices cluster at the camera, the crest and the breaking point
---     (here, on the main thread: it's cheap);
---   * every vertex displaced by the breaking waves (profile + curling lip) and the swell,
---     and the water's look baked into vertex colours (OceanCore), worked out in parallel by
---     one OceanWorker actor per strip of rows. EditableMesh allows 20,000 triangles a mesh,
---     so the strips are separate meshes anyway.
-
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
+-- The ocean (after js/ocean.js and js/oceanGrid.js), done the way that suits Roblox:
+--   * near the camera (within HALF metres), the real waves: an adaptive lattice whose rows
+--     and columns cluster at the camera, the crest and the breaking point, deformed on the
+--     CPU with the curling lip (OceanCore) by one OceanWorker actor per strip of rows, in
+--     parallel. EditableMesh allows 20,000 triangles a mesh, so the strips are separate.
+--   * the water is one translucent colour in Roblox's Glass material, which refracts the
+--     seabed under it and reflects the sky; the whitewater is particles (Foam).
+--   * beyond, the open sea is flat: four planes framing the patch, following the camera.
+--     (A part can't be more than 2048 studs across, but a SpecialMesh can scale it further.)
 
 local Config = require(script.Parent.Config)
 local WM = require(script.Parent.WaveModel)
 
 local WAVE = Config.WAVE
 local CURL = WM.CURL
+local S = Config.SCALE
 
 local exp, sqrt, abs, max, min = math.exp, math.sqrt, math.abs, math.max, math.min
 
-local WORLD_RADIUS = 5000
+local HALF = 400 -- metres: the patch of real waves round the camera
+local FAR = 12000 -- metres: how far the flat sea reaches
 
 local function smoothstep(a, b, x)
 	local t = (x - a) / (b - a)
@@ -73,45 +73,57 @@ end
 local Ocean = {}
 Ocean.__index = Ocean
 
--- Quality presets: columns, strips (actors) and rows per strip. (The engine's cost of
--- taking the changed mesh each frame, about a microsecond a vertex, sets the budget.)
+-- Quality presets: columns, strips (actors), rows per strip, and how often it's redrawn
+-- (every frame, or every other frame on low).
 Ocean.QUALITY = {
-	high = { cols = 100, strips = 6, rows = 34 },
-	low = { cols = 76, strips = 4, rows = 33 },
+	high = { cols = 84, strips = 4, rows = 32, every = 1 },
+	low = { cols = 56, strips = 2, rows = 38, every = 2 },
 }
 
--- model: WaveModel; opts: { quality, parent, water, origin (studs), spot }
+-- model: WaveModel; opts: { quality, parent, origin (studs), spot, water }
 function Ocean.new(model, opts)
 	local self = setmetatable({}, Ocean)
 	self.model = model
 	local Q = Ocean.QUALITY[opts.quality or "high"]
+	self.Q = Q
 	local C = Q.cols
 	local R = Q.strips * (Q.rows - 1) + 1
 	self.C, self.R = C, R
 	self.rowsPerStrip = Q.rows
 	self.xs, self.zs, self.co = table.create(C, 0), table.create(R, 0), table.create(C, 0)
 	self.origin = opts.origin or Vector3.zero
-	self.water = opts.water
 	self.spot = opts.spot or "margaret"
 	self.frame = 0
-	-- (the strips write their colours every other frame, taking turns; on low quality only
-	-- every other one of those)
-	self.colorEvery = if opts.quality == "low" then 2 else 1
-	self.visible = true
-	self.sun = { -0.36, 0.6, -0.71 }
-	self.sunCol = { 1, 0.95, 0.86 }
-	self.amb = { 0.85, 0.85, 0.85 }
-	self.sky = { { 0.25, 0.5, 0.78 }, { 0.75, 0.82, 0.89 } }
 	self.sec = {}
 	for k = 1, WAVE.slots do
 		self.sec[k] = { H = table.create(C, 0), b = table.create(C, 0), kappa = table.create(C, 0), steep = table.create(C, 0), age = table.create(C, 0), Lf = table.create(C, 0), Lb = table.create(C, 0) }
 	end
 
-	-- the strips, each in its own actor
 	local folder = Instance.new("Folder")
 	folder.Name = "Ocean"
 	folder.Parent = opts.parent or workspace
 	self.folder = folder
+
+	-- the open sea: four planes framing the patch
+	self.far = {}
+	for i = 1, 4 do
+		local p = Instance.new("Part")
+		p.Name = "OpenSea"
+		p.Anchored = true
+		p.CanCollide = false
+		p.CanQuery = false
+		p.CanTouch = false
+		p.CastShadow = false
+		p.Size = Vector3.new(1000, 0.2, 1000)
+		local m = Instance.new("SpecialMesh")
+		m.MeshType = Enum.MeshType.Brick
+		m.Parent = p
+		p.Parent = folder
+		self.far[i] = { part = p, mesh = m }
+	end
+	self:setWater(opts.water)
+
+	-- the waves near the camera, each strip in its own actor
 	self.actors = {}
 	local template = script.Parent:WaitForChild("OceanWorker")
 	for s = 1, Q.strips do
@@ -142,31 +154,43 @@ function Ocean:ready()
 	return true
 end
 
+-- The water's look: water = a spot's water (Spots).
 function Ocean:setWater(water)
 	self.water = water
+	self.look = {
+		color = water.surface,
+		material = Enum.Material.Glass,
+		transparency = water.transparency,
+		reflectance = 0.15,
+	}
+	-- (Studio tuning: LineupWaterMaterial / Transparency / Reflectance override the look)
+	if game:GetService("RunService"):IsStudio() then
+		local m = workspace:GetAttribute("LineupWaterMaterial")
+		if m then
+			self.look.material = Enum.Material[m]
+		end
+		self.look.transparency = workspace:GetAttribute("LineupWaterTransparency") or self.look.transparency
+		self.look.reflectance = workspace:GetAttribute("LineupWaterReflectance") or self.look.reflectance
+	end
+	for _, f in ipairs(self.far) do
+		-- (open water is deep: nothing to see through it)
+		f.part.Color = water.open
+		f.part.Material = Enum.Material.SmoothPlastic
+		f.part.Reflectance = 0
+	end
 end
 
 function Ocean:setSpot(id, origin, water)
 	self.spot = id
 	self.origin = origin
-	self.water = water
+	self:setWater(water)
 end
 
-local function c3(c)
-	return { c.R, c.G, c.B }
-end
-
--- The water is drawn unlit (its colours are what you see), so it takes the light itself:
--- the sun's direction and colour, the sky's colours, and how bright the water's body is lit.
-function Ocean:setLight(sunDir, sunColor, zenith, horizon, ambient)
-	self.sun = { sunDir.X, sunDir.Y, sunDir.Z }
-	self.sunCol = c3(sunColor)
-	self.sky = { c3(zenith), c3(horizon) }
-	self.amb = c3(ambient)
-end
+-- (kept for the old interface: the Glass water takes its light from Roblox's own lighting)
+function Ocean:setLight() end
 
 function Ocean:setVisible(v)
-	self.visible = v
+	self.folder.Parent = if v then self.folder.Parent else nil
 end
 
 -- Recompute the lattice for the camera at (camX, camZ) (simulation metres).
@@ -178,9 +202,9 @@ function Ocean:updateGrid(camX, camZ)
 		if not w.active or w.H < 0.15 then
 			continue
 		end
-		local S = w.S
-		local d = max(0, abs(camRow - w.crestZ0) - 3 * S)
-		table.insert(cores, { c = w.crestZ0, S = S, k = 1 + d / 35 })
+		local S_ = w.S
+		local d = max(0, abs(camRow - w.crestZ0) - 3 * S_)
+		table.insert(cores, { c = w.crestZ0, S = S_, k = 1 + d / 35 })
 		if w.tau > -2 then
 			local px, bx = WM.peelPoints(w)
 			local near = 1 + d / 30
@@ -195,42 +219,74 @@ function Ocean:updateGrid(camX, camZ)
 	end
 	local nc, np = #cores, #peels
 	local function rowSpacing(z)
-		local s = 0.1 + 0.06 * abs(z - camRow)
+		local s = 0.15 + 0.07 * abs(z - camRow)
 		for q = 1, nc do
 			local c = cores[q]
 			local u = (z - c.c) / c.S
 			local outCurl = max(0, -0.3 - u, u - 0.85)
 			local outCore = max(0, -1.7 - u, u - 2.3)
-			local sc = c.S * (0.026 + 0.018 * min(1, outCurl / 0.35)) * c.k + 0.06 * outCore * c.S
+			local sc = c.S * (0.03 + 0.02 * min(1, outCurl / 0.35)) * c.k + 0.06 * outCore * c.S
 			if sc < s then
 				s = sc
 			end
 		end
-		return min(s, 380)
+		return min(s, 60)
 	end
 	local function colSpacing(x)
-		local s = 0.25 + 0.06 * abs(x - camX)
+		local s = 0.3 + 0.07 * abs(x - camX)
 		for q = 1, np do
 			local p = peels[q]
-			local sp = (0.35 + 0.055 * abs(x - p.x)) * p.k
+			local sp = (0.4 + 0.06 * abs(x - p.x)) * p.k
 			if sp < s then
 				s = sp
 			end
 		end
-		return min(s, 380)
+		return min(s, 60)
 	end
-	self._rs = distribute(self.zs, self.R, -WORLD_RADIUS, WORLD_RADIUS, rowSpacing, self._rs)
-	self._cs = distribute(self.xs, self.C, camX - WORLD_RADIUS, camX + WORLD_RADIUS, colSpacing, self._cs)
+	-- (rows are crest-aligned: the patch's rows reach a little further so its curved edge
+	-- still covers the square the open sea frames)
+	local far = max(abs(camX - HALF), abs(camX + HALF))
+	local coMin = -min(WAVE.curveMax, WAVE.curveK * far * far)
+	self._rs = distribute(self.zs, self.R, camZ - HALF, camZ + HALF - coMin, rowSpacing, self._rs)
+	self._cs = distribute(self.xs, self.C, camX - HALF, camX + HALF, colSpacing, self._cs)
 end
 
--- The whole surface, for the camera at (camX, camY, camZ) (simulation metres). lead: how
--- far ahead to work it out (s): the workers' result shows a frame later.
+-- Place the open sea round the patch at (camX, camZ).
+function Ocean:placeFar(camX, camZ)
+	local o = self.origin
+	-- (a little overlap, so there's no gap at the seam, and half a metre down: where the
+	-- patch's curved rows run out over it, it's under the water, not a sheet in it)
+	local h = HALF - 2
+	local y = o.Y - 0.5 * S
+	local rects = {
+		{ camX - FAR, camX + FAR, camZ + h, camZ + FAR }, -- toward the beach
+		{ camX - FAR, camX + FAR, camZ - FAR, camZ - h }, -- out to sea
+		{ camX - FAR, camX - h, camZ - h, camZ + h }, -- left and right
+		{ camX + h, camX + FAR, camZ - h, camZ + h },
+	}
+	for i, r in ipairs(rects) do
+		local f = self.far[i]
+		local sx, sz = (r[2] - r[1]) * S, (r[4] - r[3]) * S
+		f.mesh.Scale = Vector3.new(sx / 1000, 1, sz / 1000)
+		f.part.CFrame = CFrame.new(o.X + (r[1] + r[2]) / 2 * S, y, o.Z + (r[3] + r[4]) / 2 * S)
+	end
+end
+
+-- The surface for the camera at (camX, camY, camZ) (simulation metres). lead: how far
+-- ahead to work it out (s): the workers' result shows a frame later.
 function Ocean:update(camX, camY, camZ, lead)
+	self.frame += 1
 	if not self:ready() then
 		return
 	end
+	-- (low quality: redrawn every other frame, a frame further ahead)
+	if self.frame % self.Q.every ~= 0 then
+		return
+	end
+	lead = (lead or 0) * self.Q.every
 	local model = self.model
 	self:updateGrid(camX, camZ)
+	self:placeFar(camX, camZ)
 	local C = self.C
 	local xs, co = self.xs, self.co
 	for i = 1, C do
@@ -240,7 +296,6 @@ function Ocean:update(camX, camY, camZ, lead)
 	-- per wave, per column: the section state (WaveModel:section, less a pool's walls)
 	local lfLo, lfHi, lbLo, lbHi = CURL.lfLo, CURL.lfHi, CURL.lbLo, CURL.lbHi
 	local waves = {}
-	local dtau = (lead or 0) * WAVE.speed
 	for k, w in ipairs(model.waves) do
 		if not w.active or w.H < 0.01 then
 			continue
@@ -250,7 +305,7 @@ function Ocean:update(camX, camY, camZ, lead)
 		local spill = 1 - smoothstep(WAVE.spill[1], WAVE.spill[2], w.H)
 		local tT = WAVE.tTube * (1 - 0.7 * spill)
 		local tC = WAVE.tCollapse * (1 - 0.3 * spill)
-		local tau = w.tau + (lead or 0)
+		local tau = w.tau + lead
 		for i = 1, C do
 			local x = xs[i]
 			local side = if w.dir == 0 then w.peakX - abs(x) else (x - w.peakX) * w.dir
@@ -273,10 +328,8 @@ function Ocean:update(camX, camY, camZ, lead)
 			sLf[i] = lfLo + (lfHi - lfLo) * steep
 			sLb[i] = lbLo + (lbHi - lbLo) * steep
 		end
-		table.insert(waves, { crestZ0 = w.crestZ0 + dtau, H = w.H, S = w.S, spill = spill, sec = sec })
+		table.insert(waves, { crestZ0 = w.crestZ0 + lead * WAVE.speed, H = w.H, S = w.S, spill = spill, sec = sec })
 	end
-	self.frame += 1
-	local wa = self.water
 	local F = {
 		C = C,
 		R = self.R,
@@ -284,31 +337,16 @@ function Ocean:update(camX, camY, camZ, lead)
 		zs = self.zs,
 		co = co,
 		waves = waves,
-		time = model.time + (lead or 0),
+		time = model.time + lead,
 		cam = { camX, camY, camZ },
-		spot = self.spot,
+		half = HALF,
 		curl = { rin = CURL.rin, yc = CURL.yc, ex = CURL.ex, sweep = CURL.sweep, acoshYc = CURL.acoshYc, trough = CURL.trough, lip = CURL.lip },
-		wave = { tThrow = WAVE.tThrow, speed = WAVE.speed, pool = WAVE.pool },
-		water = { deep = c3(wa.deep), shallow = c3(wa.shallow), glow = c3(wa.glow) },
-		sun = self.sun,
-		sunCol = self.sunCol,
-		amb = self.amb,
-		sky = self.sky,
+		wave = { tThrow = WAVE.tThrow, pool = WAVE.pool },
 		origin = self.origin,
-		colour = (self.frame % self.colorEvery) == 0,
-		visible = self.visible,
+		look = self.look,
 	}
-	-- The strips near the camera are worked out every frame; the far ones (distant, mostly
-	-- flat water) every third, taking turns: what the engine costs is per vertex changed.
-	local camRow = camZ - WM.crestOffset(camX)
-	local zs, rows = self.zs, self.rowsPerStrip
-	for s, a in ipairs(self.actors) do
-		local r0 = (s - 1) * (rows - 1) + 1
-		local r1 = r0 + rows - 1
-		local near = camRow > zs[r0] - 120 and camRow < zs[r1] + 120
-		if near or (self.frame + s) % 3 == 0 then
-			a:SendMessage("frame", F)
-		end
+	for _, a in ipairs(self.actors) do
+		a:SendMessage("frame", F)
 	end
 end
 

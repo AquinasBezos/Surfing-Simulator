@@ -1,6 +1,6 @@
 -- Spray (after js/spray.js and js/spraysheet.js): spray blown off the lip and the crest as
--- a section pitches, mist over the whitewater, the fan off your tail in a turn, white water
--- off the nose as you drop in, and bursts for wipeouts.
+-- a section pitches, the fan off your tail in a turn, white water off the nose as you drop
+-- in, and bursts for wipeouts. (The whitewater itself is Foam.)
 
 local Config = require(script.Parent.Config)
 local WM = require(script.Parent.WaveModel)
@@ -36,8 +36,9 @@ end
 
 local WHITE = ColorSequence.new(Color3.fromRGB(245, 250, 252))
 
-function Spray.new(parent)
+function Spray.new(parent, quality)
 	local self = setmetatable({}, Spray)
+	self.low = quality == "low"
 	local folder = Instance.new("Folder")
 	folder.Name = "Spray"
 	folder.Parent = parent
@@ -56,21 +57,6 @@ function Spray.new(parent)
 			RotSpeed = NumberRange.new(-40, 40),
 		})
 		self.lips[i] = { part = p, e = e }
-	end
-	self.mists = {}
-	for i = 1, 6 do
-		local p, e = emitter(folder, {
-			Color = WHITE,
-			Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1 * S), NumberSequenceKeypoint.new(1, 3 * S) }),
-			Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.6), NumberSequenceKeypoint.new(1, 1) }),
-			Lifetime = NumberRange.new(1.2, 2.2),
-			Speed = NumberRange.new(0.5 * S, 2 * S),
-			SpreadAngle = Vector2.new(60, 60),
-			Acceleration = Vector3.new(0, -0.5 * S, 0),
-			Drag = 1,
-			Rotation = NumberRange.new(0, 360),
-		})
-		self.mists[i] = { part = p, e = e }
 	end
 	-- the board: a fan off the tail in a turn, white water off the nose on the drop
 	self.tail, self.tailE = emitter(folder, {
@@ -117,9 +103,10 @@ end
 
 function Spray:update(dt, model, surfer, origin, camSim)
 	self.origin = origin
-	-- the lip: emitters spread along the breaking sections nearest the camera
-	local used, mused = 0, 0
-	for _, w in ipairs(model.waves) do
+	-- the lip: emitters spread along the breaking sections nearest the camera (none on low
+	-- graphics)
+	local used = 0
+	for _, w in ipairs(if self.low then {} else model.waves) do
 		if not w.active or w.H < 0.6 or w.tau < -0.5 then
 			continue
 		end
@@ -142,20 +129,10 @@ function Spray:update(dt, model, surfer, origin, camSim)
 			L.part.CFrame = CFrame.lookAt(origin + Vector3.new(p.x, p.y + 0.1, p.z) * S, origin + Vector3.new(p.x, p.y + 1, p.z - 1.2) * S)
 				* CFrame.Angles(-math.pi / 2, 0, 0)
 			L.e.Rate = 40 * sc.b * (1 - sc.kappa) * math.min(1, sc.H / 2)
-			-- whitewater mist where it's collapsing
-			if sc.kappa > 0.4 and mused < #self.mists then
-				mused += 1
-				local m = self.mists[mused]
-				m.part.Position = origin + Vector3.new(x, sc.H * 0.6, w.crestZ0 + WM.crestOffset(x) + sc.S * 1.2) * S
-				m.e.Rate = 12 * sc.kappa * math.min(1, sc.H / 2)
-			end
 		end
 	end
 	for i = used + 1, LIP_EMITTERS do
 		self.lips[i].e.Rate = 0
-	end
-	for i = mused + 1, #self.mists do
-		self.mists[i].e.Rate = 0
 	end
 
 	-- the board

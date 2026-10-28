@@ -146,10 +146,13 @@ Land.margaret = {
 	color = margaretColor,
 	bed = margaretBed,
 	shoreZ = mShoreZ,
-	-- the area the terrain covers (m): x range, z range (see TerrainBuilder)
-	bounds = { -2400, 2400, -900, 1800 },
-	-- the distant land, as meshes (Landscape): { x0, x1, z0, z1, step }
-	far = { { -2400, 2400, 230, 1800, 45 }, { 600, 1500, -900, 300, 36 }, { -2080, -1420, -3280, -2620, 45 } },
+	-- the area the terrain covers (m): x range, z range (TerrainBuilder); it reaches out to
+	-- sea far enough to put a seabed under all the see-through water near the lineup
+	bounds = { -1000, 1000, -500, 700 },
+	-- the rest, in the 3D skybox (Landscape): x range, z range, step (one mesh: at a quarter
+	-- scale it has to fit in 2048 studs, and 20,000 triangles)
+	sky = { -3600, 3600, -3300, 2400, 70 },
+	lineup = { 0, -5 },
 	island = ISLAND,
 	headland = { HEAD_A, HEAD_B },
 }
@@ -317,8 +320,9 @@ do
 		bed = bed,
 		shoreZ = shoreZ,
 		reefEdge = reefEdge,
-		bounds = { -1600, 2200, -260, 1000 },
-		far = { { -3000, 5000, 400, 4400, 200 } },
+		bounds = { -1000, 1200, -500, 900 },
+		sky = { -4000, 4000, -300, 4400, 80 },
+		lineup = { 9, -13 },
 	}
 end
 
@@ -466,8 +470,9 @@ do
 		arch = ARCH,
 		corners = P0,
 		deck = DECK,
-		bounds = { -260, 260, -200, 260 },
-		far = { { -1800, 1800, -1800, 1800, 60 } },
+		bounds = { -420, 420, -320, 420 },
+		sky = { -3000, 3000, -3000, 3000, 75 },
+		lineup = { 59, -10 },
 	}
 end
 

@@ -5,7 +5,9 @@
 -- origin: where the spot's simulation frame sits in the Roblox world (studs). Every spot
 -- lives in the same place, far apart, so players at different spots never meet.
 --
--- water (vertex shading, see Ocean): deep = the body of the water looking into it,
+-- water: surface / transparency = the Glass water's tint and how see-through it is, open =
+-- the flat open sea beyond the waves, underwater = the water round you when you go under;
+-- deep = the body of the water looking into it,
 -- shallow = over a pale bottom, glow = light through thin water (crest, lip), bed = the
 -- seabed colour seen through it.
 
@@ -42,6 +44,9 @@ Spots.margaret = {
 	sunset = { 0.71, -0.71 },
 	inside = { z = 45, x = 650 },
 	water = {
+		surface = Color3.fromRGB(46, 150, 138),
+		transparency = 0.32,
+		open = Color3.fromRGB(22, 86, 98),
 		deep = Color3.fromRGB(16, 92, 88),
 		shallow = Color3.fromRGB(48, 160, 142),
 		glow = Color3.fromRGB(110, 220, 180),
@@ -81,6 +86,9 @@ Spots.teahupoo = {
 	sunset = { 0.71, -0.71 },
 	inside = { z = 95, x = 650 },
 	water = {
+		surface = Color3.fromRGB(26, 104, 160),
+		transparency = 0.3,
+		open = Color3.fromRGB(10, 46, 98),
 		deep = Color3.fromRGB(8, 52, 108),
 		shallow = Color3.fromRGB(28, 128, 165),
 		glow = Color3.fromRGB(80, 200, 225),
@@ -131,6 +139,9 @@ Spots.pool = {
 	sunset = { 0.71, -0.71 },
 	inside = { z = 1e9, x = 1e9 },
 	water = {
+		surface = Color3.fromRGB(56, 160, 182),
+		transparency = 0.35,
+		open = Color3.fromRGB(30, 100, 122),
 		deep = Color3.fromRGB(14, 80, 108),
 		shallow = Color3.fromRGB(40, 136, 158),
 		glow = Color3.fromRGB(100, 210, 220),

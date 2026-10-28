@@ -26,6 +26,7 @@ local Remote = require(Lineup.Remote)
 local Spray = require(Lineup.Spray)
 local Audio = require(Lineup.Audio)
 local Landscape = require(Lineup.Landscape)
+local Foam = require(Lineup.Foam)
 
 local net = ReplicatedStorage:WaitForChild("LineupNet")
 local player = Players.LocalPlayer
@@ -79,25 +80,31 @@ settings.quality = if UserInputService.TouchEnabled and not UserInputService.Key
 if RunService:IsStudio() and workspace:GetAttribute("LineupQuality") then
 	settings.quality = workspace:GetAttribute("LineupQuality")
 end
+World.quality = settings.quality
+
+-- Both boards are built first, before anything else takes the client's budget for editable
+-- meshes (and kept: switching boards is then instant). Hidden until used.
+local boards = {}
+for _, kind in ipairs({ "shortboard", "longboard" }) do
+	local m, place = Board.create(kind, settings.deck)
+	boards[kind] = { model = m, place = place }
+end
+local boardModel, placeBoard = nil, nil
+local function ensureBoard()
+	for kind, b in pairs(boards) do
+		b.model.Parent = if kind == settings.board then folder else nil
+	end
+	local b = boards[settings.board]
+	boardModel, placeBoard = b.model, b.place
+end
+
 local ocean = Ocean.new(model, { quality = settings.quality, parent = folder, water = spot.water, origin = spot.origin, spot = spot.id })
+local foam = Foam.new(folder, settings.quality)
 local arms = Arms.new(folder)
 arms:setSkin(settings.skin)
 local remote = Remote.new(folder, model)
-local spray = Spray.new(folder)
+local spray = Spray.new(folder, settings.quality)
 local audio = Audio.new()
-
-local boardModel, placeBoard, boardKind, boardDeck = nil, nil, nil, nil
-local function ensureBoard()
-	if boardModel and boardKind == settings.board and boardDeck == settings.deck then
-		return
-	end
-	if boardModel then
-		boardModel:Destroy()
-	end
-	boardModel, placeBoard = Board.create(settings.board, settings.deck)
-	boardKind, boardDeck = settings.board, settings.deck
-	boardModel.Parent = folder
-end
 
 local hud = Hud.new()
 local input = Input.new()
@@ -162,14 +169,17 @@ local function applySpot(id)
 	remote:setSpot(id, spot.origin)
 	task.spawn(Landscape.build, id, spot.origin, folder, function()
 		return ocean:ready()
-	end)
+	end, settings.time)
 	-- (a pool's walls and pier keep you in the water)
 	surfer.collide = Land[id] and Land[id].collide or nil
 end
 
 local function applyTime()
 	World.applyTime(settings.time)
-	ocean:setLight(World.light(settings.time))
+	-- (the far land's haze is baked in: the 3D skybox is rebuilt for the time of day)
+	task.spawn(Landscape.build, spot.id, spot.origin, folder, function()
+		return ocean:ready()
+	end, settings.time)
 end
 
 ---------------------------------------------------------------- the lineup
@@ -604,7 +614,10 @@ menu.onChange = function(what)
 		-- a new ocean at the other quality (the old one's meshes go first: memory budget)
 		ocean:destroy()
 		ocean = Ocean.new(model, { quality = settings.quality, parent = folder, water = spot.water, origin = spot.origin, spot = spot.id })
-		ocean:setLight(World.light(settings.time))
+		foam:destroy()
+		foam = Foam.new(folder, settings.quality)
+		spray.low = settings.quality == "low"
+		World.setQuality(settings.quality)
 	elseif what == "waves" then
 		local w = settings.waves[settings.spot]
 		net.SetWaves:FireServer(settings.spot, w.mode, w.height)
@@ -800,6 +813,8 @@ local function frame(dt)
 		local t0 = os.clock()
 		ocean:update(camSim.X, camSim.Y, camSim.Z, dt)
 		local t1 = os.clock()
+		Landscape.place(camera.CFrame.Position)
+		foam:update(dt, model, spot.origin, camSim)
 		spray:update(dt, model, surfer, spot.origin, camSim)
 		remote:update(dt)
 		-- (frame timings for tuning: see the LineupClient folder's attributes)
@@ -816,9 +831,9 @@ local function frame(dt)
 		if RunService:IsStudio() then
 			-- (what the surfer's doing, for tests)
 			local s = surfer.s
-			folder:SetAttribute("Surfer", ("%s spd=%.1f catching=%s riding=%s tube=%s un=%.2f H=%.1f x=%.1f z=%.1f yaw=%.2f wipe=%s"):format(
+			folder:SetAttribute("Surfer", ("%s spd=%.1f catching=%s riding=%s tube=%s un=%.2f H=%.1f x=%.1f z=%.1f yaw=%.2f wipe=%s steer=%.1f crouch=%.1f"):format(
 				surfer.state, surfer:planeSpeed(), tostring(surfer.catching), tostring(surfer.riding), tostring(surfer.inTube),
-				s.un or 99, s.H or 0, surfer.x, surfer.z, surfer.yaw, surfer.wipeReason))
+				s.un or 99, s.H or 0, surfer.x, surfer.z, surfer.yaw, surfer.wipeReason, inp.steer or 0, inp.crouch or 0))
 		end
 
 		-- under the water?
@@ -876,6 +891,8 @@ local function frame(dt)
 		camera.CameraType = Enum.CameraType.Scriptable
 		camera.CFrame = CFrame.lookAt(spot.origin + camSim * S, spot.origin + Vector3.new(0, 1.5, -10) * S)
 		ocean:update(camSim.X, camSim.Y, camSim.Z, dt)
+		Landscape.place(camera.CFrame.Position)
+		foam:update(dt, model, spot.origin, camSim)
 		World.underwater(-1, spot.water)
 	end
 end
@@ -894,5 +911,6 @@ RunService:BindToRenderStep("Lineup", Enum.RenderPriority.Camera.Value + 1, fram
 if RunService:IsStudio() and workspace:GetAttribute("LineupAutoPlay") then
 	settings.spot = workspace:GetAttribute("LineupSpot") or settings.spot
 	settings.time = workspace:GetAttribute("LineupTime") or settings.time
+	settings.board = workspace:GetAttribute("LineupBoard") or settings.board
 	startGame()
 end

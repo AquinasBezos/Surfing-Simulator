@@ -83,6 +83,49 @@ function Board.railHalfWidth(kind, t)
 	return math.max(outlineAt((SHAPES[kind] or SHAPES.shortboard).outline, math.clamp(t, 0, 1)), 0)
 end
 
+-- A plain board (an elongated ellipsoid and a fin), for when there's no room left for an
+-- editable mesh. Same interface as Board.create.
+function Board.simple(kind, deck, L)
+	local S = Config.SCALE
+	local spec = SHAPES[kind] or SHAPES.shortboard
+	local w = 0
+	for _, p in ipairs(spec.outline) do
+		w = math.max(w, 2 * p[2])
+	end
+	local model = Instance.new("Model")
+	model.Name = "Board"
+	local root = Instance.new("Part")
+	root.Name = "Root"
+	root.Size = Vector3.new(0.1, 0.1, 0.1)
+	root.Transparency = 1
+	root.Anchored = true
+	root.CanCollide = false
+	root.CanQuery = false
+	root.Parent = model
+	model.PrimaryPart = root
+	local hull = Instance.new("Part")
+	hull.Name = "Hull"
+	hull.Size = Vector3.new(w, spec.thick, L) * S
+	hull.Color = deck
+	hull.Material = Enum.Material.SmoothPlastic
+	hull.Anchored = true
+	hull.CanCollide = false
+	hull.CanQuery = false
+	hull.CanTouch = false
+	hull.CastShadow = false
+	local mesh = Instance.new("SpecialMesh")
+	mesh.MeshType = Enum.MeshType.Sphere
+	mesh.Parent = hull
+	hull.Parent = model
+	model:SetAttribute("Length", L)
+	model:SetAttribute("Kind", kind)
+	local off = CFrame.new(0, 0.005 * S, 0)
+	return model, function(cf)
+		root.CFrame = cf
+		hull.CFrame = cf * off
+	end
+end
+
 -- A board model: the hull (deck colour + a stringer and rails in the classic finish) and
 -- its fins, welded to a root part at the board's origin. Returns the Model (PrimaryPart =
 -- root). color: deck colour, or nil for the classic white.
@@ -96,8 +139,11 @@ function Board.create(kind, color)
 	local bottomCol = Color3.fromRGB(235, 236, 232)
 
 	local em = AssetService:CreateEditableMesh()
+	if not em then
+		-- (no room left for editable meshes on this device: a plainer board)
+		return Board.simple(kind, deck, L)
+	end
 	local ids, pts = {}, {}
-	local lo, hi = Vector3.one * 1e9, -Vector3.one * 1e9
 	for i = 0, NL do
 		pts[i] = {}
 		local s = i / NL
@@ -115,7 +161,6 @@ function Board.create(kind, color)
 			local yBot = -th * 0.38 * math.abs(sn) ^ 0.28
 			local y = (if sn >= 0 then yTop else yBot) + r - 0.025
 			local p = Vector3.new(x, y, z) * S
-			lo, hi = lo:Min(p), hi:Max(p)
 			ids[i][j] = em:AddVertex(p)
 			pts[i][j] = p
 		end
@@ -165,6 +210,9 @@ function Board.create(kind, color)
 	-- (a fixed-size copy takes much less of the client's budget for editable meshes)
 	local fixed = AssetService:CreateEditableMeshAsync(Content.fromObject(em), { FixedSize = true })
 	em:Destroy()
+	if not fixed then
+		return Board.simple(kind, deck, L)
+	end
 	local hull = AssetService:CreateMeshPartAsync(Content.fromObject(fixed), { CollisionFidelity = Enum.CollisionFidelity.Box })
 	hull.Name = "Hull"
 	hull.Material = Enum.Material.SmoothPlastic
@@ -188,8 +236,8 @@ function Board.create(kind, color)
 	root.CanTouch = false
 	root.Parent = model
 	model.PrimaryPart = root
-	-- the hull mesh is drawn centred on its bounding box
-	local offset = CFrame.new((lo + hi) / 2)
+	-- (an editable mesh's vertices are drawn where they are in the part's frame)
+	local offset = CFrame.identity
 	hull.Parent = model
 	model:SetAttribute("Length", L)
 	local parts = { { hull, offset } }

@@ -12,8 +12,9 @@ mouse, a controller (PC and console) and touch (phones and tablets). VR isn't po
 | `…Lineup.Spots` | `Spots.luau` | Margaret River, Teahupo'o, Wave Pool: waves, sizes, water colours |
 | `…Lineup.WaveModel` | `WaveModel.luau` | The breaking-wave model (port of `js/wave.js`), on the server's seed and clock |
 | `…Lineup.Surfer` | `Surfer.luau` | Board physics and the prone / pop-up / standing / wipeout state machine (port of `js/surfer.js`) |
-| `…Lineup.Ocean`, `OceanCore`, `OceanWorker` | | The ocean: an adaptive lattice (`js/oceanGrid.js`) deformed on the CPU with the curling lip (`js/shaders/waveChunk.js`) and shaded in vertex colours (`js/ocean.js`), one EditableMesh strip per Actor, worked out in parallel |
-| `…Lineup.Land`, `Landscape` | | Each spot's seabed and land (`js/terrain.js`, `js/teahupoo.js`, `js/wavepool.js`); far-off land as meshes |
+| `…Lineup.Ocean`, `OceanCore`, `OceanWorker` | | The ocean: within 400 m of the camera, an adaptive lattice (`js/oceanGrid.js`) deformed on the CPU with the curling lip (`js/shaders/waveChunk.js`), one EditableMesh strip per Actor, worked out in parallel, in translucent Glass; beyond, flat open sea |
+| `…Lineup.Foam` | | Whitewater as particles: the bore, foam left lying behind it, the lip's landing, spilling crests |
+| `…Lineup.Land`, `Landscape` | | Each spot's seabed and land (`js/terrain.js`, `js/teahupoo.js`, `js/wavepool.js`); the distant land as a 3D skybox |
 | `…Lineup.Board`, `Arms` | | Parametric boards (`js/board.js`); first-person paddling arms (`js/body.js`) |
 | `…Lineup.Input`, `Hud`, `Menu` | | Keyboard and mouse, controller and touch; HUD, stickers, score card; menus |
 | `…Lineup.World`, `Spray`, `Audio`, `Remote` | | Light and sky (midday, sunset), underwater; spray; sound; other players |
@@ -59,17 +60,31 @@ around), `Players.CharacterAutoLoads` off (the server also sets it), and for the
 `Lighting.Technology = Future` (scripts can't set it).
 
 Studio-only test hooks (workspace attributes): `LineupAutoPlay`, `LineupSpot`, `LineupTime`,
-`LineupDevice`, `LineupQuality`, `LineupCam` (`"x,y,z,yawDeg,pitchDeg"`, a free camera in
+`LineupBoard`, `LineupDevice`, `LineupQuality`, `LineupWaterMaterial` / `Transparency` /
+`Reflectance`, `LineupCam` (`"x,y,z,yawDeg,pitchDeg"`, a free camera in
 metres), `LineupTimeOffset`, `LineupTestPaddle` / `Steer` / `Lean` / `Event`.
 
-## Differences from the web version
+## How it's done on Roblox
 
-- No custom shaders in Roblox: the water's refraction, Fresnel sky, light through the lip,
-  foam and seabed are worked out per vertex on the CPU and drawn unlit (Neon), so they're a
-  little softer than the web version's per-pixel water.
-- The ocean costs about a microsecond per vertex in the engine each frame; Graphics: Low (pause
-  menu, and the default on phones) halves it. Roblox lowers its view distance when the frame
-  rate drops, which hides distant land.
+Roblox has no custom shaders and draws only so far out (less when it turns the graphics down),
+so a few things are done differently from the web version:
+
+- **Water.** One translucent colour in Roblox's Glass material, which refracts the real seabed
+  terrain under it and reflects the sky; the seabed darkens with depth. The waves' shape is
+  the web version's maths, but only within 400 m of the camera; beyond, the open sea is flat.
+- **Whitewater** is particles (`Foam`): churning puffs on the bore, flat sheets of foam left on
+  the water behind it, the explosion where the lip lands. The emitters move with the wave, so
+  the foam trails behind it.
+- **Distant land** is a 3D skybox, as in Source games (CS:GO, CS2): a miniature at a tenth of
+  the size, placed every frame on the line from the camera to the real land, so it looks the
+  same but is drawn ten times closer: always within the draw distance, and a single mesh. The
+  land near the lineup is real terrain. (Something more than a tenth of the way to the land
+  behind it, a surfer far ahead riding toward the beach say, can be hidden by the miniature.)
+- An EditableMesh's vertices are drawn where they are in its part's frame (no recentring), and
+  editable meshes share a small memory budget on each client: the boards are built first, and
+  there's a plain fallback board if a mesh can't be made.
+- **Graphics: Low** (pause menu; the default on phones): a smaller wave patch redrawn every other
+  frame, fewer foam particles, no lip spray, no shadows, bloom or sun rays.
 - Not ported: the Eisbach river wave, VR, replays and the camera drone, and the web version's
   rooms (a Roblox server is the room: everyone at the same spot rides the same waves, and
   anyone can change the wave size).
