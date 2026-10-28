@@ -87,7 +87,8 @@ function Input.new()
 	UserInputService.InputBegan:Connect(function(io, processed)
 		local t = io.UserInputType
 		if t == Enum.UserInputType.Keyboard then
-			if processed then
+			-- (Roblox takes Tab for its player list: pause on it anyway)
+			if processed and not (has("pause", io.KeyCode) and not UserInputService:GetFocusedTextBox()) then
 				return
 			end
 			setDevice("pc")

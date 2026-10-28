@@ -129,18 +129,21 @@ function Hud.new()
 	-- stickers, toasts, the ride card
 	self.stickers = new("Frame", { Name = "Stickers", BackgroundTransparency = 1, Size = UDim2.new(1, 0, 1, 0) })
 	self.stickers.Parent = gui
+	-- (at the top, clear of the touch controls; wraps on narrow screens)
 	self.toastLabel = label({
 		Name = "Toast",
-		AnchorPoint = Vector2.new(0.5, 1),
-		Position = UDim2.new(0.5, 0, 1, -120),
-		Size = UDim2.new(0, 0, 0, 40),
-		AutomaticSize = Enum.AutomaticSize.X,
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 62),
+		Size = UDim2.new(0.9, 0, 0, 0),
+		AutomaticSize = Enum.AutomaticSize.Y,
+		TextWrapped = true,
 		BackgroundColor3 = PANEL,
 		BackgroundTransparency = 1,
 		TextTransparency = 1,
 		TextSize = 20,
 	}, nil)
-	new("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16), Parent = self.toastLabel })
+	new("UIPadding", { PaddingLeft = UDim.new(0, 16), PaddingRight = UDim.new(0, 16), PaddingTop = UDim.new(0, 8), PaddingBottom = UDim.new(0, 8), Parent = self.toastLabel })
+	new("UISizeConstraint", { MaxSize = Vector2.new(720, math.huge), Parent = self.toastLabel })
 	corner(10).Parent = self.toastLabel
 	self.toastLabel.Parent = gui
 

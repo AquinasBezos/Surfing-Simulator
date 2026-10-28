@@ -93,7 +93,6 @@ function Board.create(kind, color)
 	local NL = if kind == "longboard" then 48 else 40
 	local NA = 20
 	local deck = color or Color3.fromRGB(245, 244, 238)
-	local stringer = Color3.fromRGB(60, 45, 35)
 	local bottomCol = Color3.fromRGB(235, 236, 232)
 
 	local em = AssetService:CreateEditableMesh()
@@ -136,21 +135,10 @@ function Board.create(kind, color)
 			nids[i][j] = em:AddNormal(n.Unit)
 		end
 	end
-	local function colourAt(i, j)
-		local a = j / NA * math.pi * 2
-		local sn = math.sin(a)
-		local c = math.cos(a)
-		if sn >= 0 then
-			-- deck: a dark stringer down the middle on the classic board
-			if not color and math.abs(c) > 0.985 then
-				return deck
-			end
-			if not color and math.abs(math.abs(c) ^ 0.42 * math.sign(c)) < 0.02 then
-				return stringer
-			end
-			return deck
-		end
-		return bottomCol
+	-- (the ring is too coarse for the web version's painted stringer: the deck is one colour)
+	local function colourAt(_i, j)
+		local sn = math.sin(j / NA * math.pi * 2)
+		return if sn >= 0 then deck else bottomCol
 	end
 	local faces = {}
 	local fcols = {}

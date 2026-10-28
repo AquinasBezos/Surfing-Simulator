@@ -101,6 +101,10 @@ end
 
 local hud = Hud.new()
 local input = Input.new()
+-- (Studio testing: LineupDevice = "pc" | "pad" | "touch" shows that device's controls)
+if RunService:IsStudio() and workspace:GetAttribute("LineupDevice") then
+	input.device = workspace:GetAttribute("LineupDevice")
+end
 hud:buildTouch(input)
 local menu = Menu.new(settings)
 
@@ -156,8 +160,11 @@ local function applySpot(id)
 	settings.waves[id] = { mode = cfg.mode, height = cfg.height }
 	ocean:setSpot(id, spot.origin, spot.water)
 	remote:setSpot(id, spot.origin)
-	task.spawn(Landscape.build, id, spot.origin, folder)
-	surfer.collide = nil
+	task.spawn(Landscape.build, id, spot.origin, folder, function()
+		return ocean:ready()
+	end)
+	-- (a pool's walls and pier keep you in the water)
+	surfer.collide = Land[id] and Land[id].collide or nil
 end
 
 local function applyTime()
@@ -882,7 +889,10 @@ respawn(false)
 menu:showMain(true)
 RunService:BindToRenderStep("Lineup", Enum.RenderPriority.Camera.Value + 1, frame)
 
--- (testing in Studio: set workspace attribute LineupAutoPlay to skip the menu)
+-- (testing in Studio: set workspace attribute LineupAutoPlay to skip the menu, and
+-- LineupSpot / LineupTime to choose where and when)
 if RunService:IsStudio() and workspace:GetAttribute("LineupAutoPlay") then
+	settings.spot = workspace:GetAttribute("LineupSpot") or settings.spot
+	settings.time = workspace:GetAttribute("LineupTime") or settings.time
 	startGame()
 end

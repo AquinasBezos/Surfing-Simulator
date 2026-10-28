@@ -13,18 +13,16 @@ local SINK = 1.5 -- metres under the terrain
 
 local Landscape = {}
 
-local TILE = 1800 -- metres (a mesh can't be more than 2048 studs across)
+local TILE = 2000 -- studs (a mesh can't be more than 2048 across)
 
 local function grid(L, origin, x0, x1, z0, z1, step, parent)
 	-- (big areas in tiles, sharing their edges)
 	if (x1 - x0) * S > TILE or (z1 - z0) * S > TILE then
-		local tx = math.ceil((x1 - x0) * S / TILE)
-		local tz = math.ceil((z1 - z0) * S / TILE)
-		local sx = math.ceil((x1 - x0) / tx / step) * step
-		local sz = math.ceil((z1 - z0) / tz / step) * step
-		for a = x0, x1 - 1, sx do
-			for b = z0, z1 - 1, sz do
-				grid(L, origin, a, math.min(a + sx, x1), b, math.min(b + sz, z1), step, parent)
+		-- (whole steps per tile, as many as fit)
+		local span = math.floor(TILE / S / step) * step
+		for a = x0, x1 - 1, span do
+			for b = z0, z1 - 1, span do
+				grid(L, origin, a, math.min(a + span, x1), b, math.min(b + span, z1), step, parent)
 			end
 		end
 		return
@@ -42,16 +40,16 @@ local function grid(L, origin, x0, x1, z0, z1, step, parent)
 	for j = 0, nz - 1 do
 		for i = 0, nx - 1 do
 			local x, z = math.min(x0 + i * step, x1), math.min(z0 + j * step, z1)
-			local h, veg, s = L.land(x, z)
-			local hx = L.land(x + 3, z) - L.land(x - 3, z)
-			local hz = L.land(x, z + 3) - L.land(x, z - 3)
-			local slope = math.sqrt(hx * hx + hz * hz) / 6
+			local h, veg, s, extra = L.land(x, z)
+			local hx = L.land(x + step * 0.5, z) - L.land(x - step * 0.5, z)
+			local hz = L.land(x, z + step * 0.5) - L.land(x, z - step * 0.5)
+			local slope = math.sqrt(hx * hx + hz * hz) / step
 			local k = j * nx + i + 1
 			H[k] = h
 			local p = Vector3.new(x * S, (h - SINK) * S, z * S)
 			lo, hi = lo:Min(p), hi:Max(p)
 			vid[k] = em:AddVertex(p)
-			cid[k] = em:AddColor(L.color(x, z, h, slope, veg or 0, s or 0), 1)
+			cid[k] = em:AddColor(L.color(x, z, h, slope, veg or 0, s or 0, extra), 1)
 		end
 		if j % 10 == 0 then
 			task.wait()
@@ -97,19 +95,34 @@ local function grid(L, origin, x0, x1, z0, z1, step, parent)
 	part.Parent = parent
 end
 
--- Build the distant land of spot `id` (once); returns its folder.
+-- Build the distant land of spot `id`, dropping any other spot's (editable meshes share a
+-- tight memory budget on the client, and the ocean comes first: ready() says when it's
+-- built). Returns its folder.
 local built = {}
-function Landscape.build(id, origin, parent)
+function Landscape.build(id, origin, parent, ready)
 	if built[id] then
 		return built[id]
+	end
+	for other, f in pairs(built) do
+		f:Destroy()
+		built[other] = nil
 	end
 	local L = Land[id]
 	local folder = Instance.new("Folder")
 	folder.Name = "FarLand_" .. id
 	folder.Parent = parent
 	built[id] = folder
+	while ready and not ready() do
+		task.wait(0.1)
+	end
+	if built[id] ~= folder then
+		return folder
+	end
 	if L and L.far then
 		for _, g in ipairs(L.far) do
+			if built[id] ~= folder then
+				break -- (another spot was chosen meanwhile)
+			end
 			grid(L, origin, g[1], g[2], g[3], g[4], g[5], folder)
 		end
 	end
