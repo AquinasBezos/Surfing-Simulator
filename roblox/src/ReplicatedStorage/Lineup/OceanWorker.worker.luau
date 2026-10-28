@@ -27,14 +27,19 @@ actor:BindToMessage("init", function(cfg)
 	-- Editable meshes share a small memory budget on the client; just after the graphics
 	-- setting changes, the old ocean's may not have been let go yet. No room: try again
 	-- shortly, for as long as it takes (the strip is part of the sea).
-	local em = AssetService:CreateEditableMesh()
+	local em = Config.editableMesh()
 	while not em do
+		if Config.meshBlocked then
+			-- (the experience doesn't allow editable meshes at all: waiting won't help)
+			actor:SetAttribute("Blocked", true)
+			return
+		end
 		actor:SetAttribute("Waiting", true)
 		task.wait(0.25)
 		if dead or not actor.Parent then
 			return
 		end
-		em = AssetService:CreateEditableMesh()
+		em = Config.editableMesh()
 	end
 	actor:SetAttribute("Waiting", nil)
 	local n = (r1 - r0 + 1) * C

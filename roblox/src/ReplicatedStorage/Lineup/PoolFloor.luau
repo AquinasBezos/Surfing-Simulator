@@ -33,7 +33,7 @@ function PoolFloor.build(id, origin, parent)
 	local z0, z1 = P.bz - 4, P.fz + 4
 	local nx = math.ceil((x1 - x0) / STEP) + 1
 	local nz = math.ceil((z1 - z0) / STEP) + 1
-	local em = AssetService:CreateEditableMesh()
+	local em = Config.editableMesh()
 	if not em then
 		warn("[Lineup] no room for the pool's floor")
 		return

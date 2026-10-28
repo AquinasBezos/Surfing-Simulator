@@ -160,7 +160,7 @@ function Landscape.build(id, origin, parent, ready, timeName)
 		local xs = axis(x0, x1, N[1] - N[3], N[1] + N[3], step)
 		local zs = axis(z0, z1, N[2] - N[3], N[2] + N[3], step)
 		local nx, nz = #xs, #zs
-		local em = AssetService:CreateEditableMesh()
+		local em = Config.editableMesh()
 		if not em then
 			return false
 		end
@@ -225,7 +225,7 @@ function Landscape.build(id, origin, parent, ready, timeName)
 
 	-- The trees beyond the near circle, as low-poly blobs (an octahedron each, squashed:
 	-- canopies are wider than tall); the near ones are parts (TerrainBuilder).
-	local tm = AssetService:CreateEditableMesh()
+	local tm = Config.editableMesh()
 	if not tm then
 		return
 	end

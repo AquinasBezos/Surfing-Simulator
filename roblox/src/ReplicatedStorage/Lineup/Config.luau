@@ -2,7 +2,30 @@
 -- Global tunables for the simulator (port of js/config.js). Units are metres, seconds,
 -- radians. The simulation runs in metres; the world is drawn SCALE studs to the metre.
 
+local AssetService = game:GetService("AssetService")
+
 local Config = {}
+
+-- A new editable mesh, or nil: none when the client's budget for them is spent, and none at
+-- all in a published experience that doesn't allow them (Game Settings > Security > Allow
+-- Mesh / Image APIs), Studio included once the place is published. There the mesh is made
+-- but any edit of it throws, so one is tried; Config.meshBlocked says which it was.
+function Config.editableMesh()
+	local ok, em = pcall(AssetService.CreateEditableMesh, AssetService)
+	if ok and em then
+		local usable = pcall(function()
+			em:RemoveVertex(em:AddVertex(Vector3.zero))
+		end)
+		if usable then
+			return em
+		end
+		pcall(em.Destroy, em)
+	end
+	if not ok or em then
+		Config.meshBlocked = true
+	end
+	return nil
+end
 
 -- studs per metre for everything drawn (physics stays in metres). One: the hills behind the
 -- beach are a kilometre or two away, and Roblox only draws so many studs out.

@@ -138,7 +138,7 @@ function Board.create(kind, color)
 	local deck = color or Color3.fromRGB(245, 244, 238)
 	local bottomCol = Color3.fromRGB(235, 236, 232)
 
-	local em = AssetService:CreateEditableMesh()
+	local em = Config.editableMesh()
 	if not em then
 		-- (no room left for editable meshes on this device: a plainer board)
 		return Board.simple(kind, deck, L)

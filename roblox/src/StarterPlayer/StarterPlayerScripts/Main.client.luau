@@ -45,6 +45,42 @@ pcall(function()
 	StarterGui:SetCoreGuiEnabled(Enum.CoreGuiType.Health, false)
 end)
 
+-- The sea, the boards and the far land are editable meshes. A published experience has to
+-- allow them (Studio always does): without that there's no sea, so say what to switch on.
+do
+	local probe = Config.editableMesh()
+	if probe then
+		probe:Destroy()
+	elseif Config.meshBlocked then
+		warn("[Lineup] editable meshes are blocked: enable Game Settings > Security > Allow Mesh / Image APIs, then publish again")
+		local gui = Instance.new("ScreenGui")
+		gui.Name = "LineupMeshNotice"
+		gui.DisplayOrder = 100
+		gui.ResetOnSpawn = false
+		local text = Instance.new("TextLabel")
+		text.AnchorPoint = Vector2.new(0.5, 0)
+		text.Position = UDim2.new(0.5, 0, 0, 12)
+		text.Size = UDim2.new(0.9, 0, 0, 0)
+		text.AutomaticSize = Enum.AutomaticSize.Y
+		text.BackgroundColor3 = Color3.fromRGB(20, 28, 38)
+		text.BackgroundTransparency = 0.1
+		text.TextColor3 = Color3.new(1, 1, 1)
+		text.Font = Enum.Font.GothamMedium
+		text.TextSize = 18
+		text.TextWrapped = true
+		text.Text = "The ocean can't load: this experience doesn't allow mesh APIs yet.\nOwner: in Studio, Game Settings > Security > turn on \"Allow Mesh / Image APIs\", save, and publish again."
+		local pad = Instance.new("UIPadding")
+		pad.PaddingTop, pad.PaddingBottom = UDim.new(0, 10), UDim.new(0, 10)
+		pad.PaddingLeft, pad.PaddingRight = UDim.new(0, 14), UDim.new(0, 14)
+		pad.Parent = text
+		local round = Instance.new("UICorner")
+		round.CornerRadius = UDim.new(0, 10)
+		round.Parent = text
+		text.Parent = gui
+		gui.Parent = player:WaitForChild("PlayerGui")
+	end
+end
+
 ---------------------------------------------------------------- settings
 local SKINS = { Color3.fromRGB(241, 194, 160), Color3.fromRGB(224, 172, 130), Color3.fromRGB(192, 132, 101), Color3.fromRGB(150, 98, 66), Color3.fromRGB(104, 66, 44) }
 local DECKS = { nil, Color3.fromRGB(250, 214, 80), Color3.fromRGB(110, 200, 230), Color3.fromRGB(240, 120, 90), Color3.fromRGB(150, 220, 150) }

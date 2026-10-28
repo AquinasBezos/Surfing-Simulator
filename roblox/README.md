@@ -59,6 +59,11 @@ Place settings it relies on: `Workspace.StreamingEnabled` off (there's no avatar
 around), `Players.CharacterAutoLoads` off (the server also sets it), and for the best look
 `Lighting.Technology = Future` (scripts can't set it).
 
+**Publishing:** the sea, boards and far land are EditableMeshes, which a published experience
+must allow: Game Settings > Security > **Allow Mesh / Image APIs** (Roblox only offers it to
+ID-verified creators). Without it there's no sea, on Roblox's servers and in Studio too once
+the place is published; the game says so on screen and carries on with a plain board.
+
 Studio-only test hooks (workspace attributes): `LineupAutoPlay`, `LineupSpot`, `LineupTime`,
 `LineupBoard`, `LineupDevice`, `LineupQuality`, `LineupWaterMaterial` / `Transparency` /
 `Reflectance`, `LineupCam` (`"x,y,z,yawDeg,pitchDeg"`, a free camera in
