@@ -149,6 +149,46 @@ local function heightsFor(id)
 	return if ok then cfg else { mode = "set", height = Spots[id].heights.default }
 end
 
+-- The pool's floor and the 3D skybox for the spot. Editable meshes share a small memory
+-- budget on the client and the sea comes first: these wait until every strip of the ocean
+-- is built (the skybox makes do with a coarser grid if it's short of room).
+local sceneryJob = 0
+local function buildScenery()
+	sceneryJob += 1
+	local job = sceneryJob
+	local id = spot.id
+	task.spawn(function()
+		while not ocean:ready() do
+			task.wait(0.1)
+			if job ~= sceneryJob then
+				return
+			end
+		end
+		PoolFloor.build(id, spot.origin, folder)
+		Landscape.build(id, spot.origin, folder, nil, settings.time)
+	end)
+end
+
+-- The sea always comes back: if a strip of it has been waiting for room for a couple of
+-- seconds, the scenery gives up its meshes until the whole ocean is built, then returns.
+task.spawn(function()
+	local waitingFor = 0
+	while true do
+		task.wait(0.5)
+		if ocean:waiting() then
+			waitingFor += 0.5
+			if waitingFor >= 2 then
+				waitingFor = 0
+				Landscape.clear()
+				PoolFloor.build(nil)
+				buildScenery()
+			end
+		else
+			waitingFor = 0
+		end
+	end
+end)
+
 local waveConn = nil
 local function applySpot(id)
 	spot = Spots[id]
@@ -168,15 +208,7 @@ local function applySpot(id)
 	settings.waves[id] = { mode = cfg.mode, height = cfg.height }
 	ocean:setSpot(id, spot.origin, spot.water)
 	remote:setSpot(id, spot.origin)
-	task.spawn(function()
-		-- (the ocean takes the budget for editable meshes first, then the pool's floor, then
-		-- the 3D skybox)
-		while not ocean:ready() do
-			task.wait(0.1)
-		end
-		PoolFloor.build(id, spot.origin, folder)
-		Landscape.build(id, spot.origin, folder, nil, settings.time)
-	end)
+	buildScenery()
 	-- (a pool's walls and pier keep you in the water)
 	surfer.collide = Land[id] and Land[id].collide or nil
 end
@@ -618,9 +650,14 @@ menu.onChange = function(what)
 	if what == "time" then
 		applyTime()
 	elseif what == "quality" then
-		-- a new ocean at the other quality (the old one's meshes go first: memory budget)
+		-- A new ocean at the other quality. Everything holding editable meshes lets them go
+		-- first, so the new sea has all the room it needs; the scenery comes back once it's
+		-- built.
+		Landscape.clear()
+		PoolFloor.build(nil)
 		ocean:destroy()
 		ocean = Ocean.new(model, { quality = settings.quality, parent = folder, water = spot.water, origin = spot.origin, spot = spot.id })
+		buildScenery()
 		foam:destroy()
 		foam = Foam.new(folder, settings.quality)
 		spray.low = settings.quality == "low"
@@ -836,6 +873,7 @@ local function frame(dt)
 			P.ocean, P.sim, P.n = 0, 0, 0
 		end
 		if RunService:IsStudio() then
+			folder:SetAttribute("OceanStrips", ("%d/%d"):format(ocean:builtCount()))
 			-- (what the surfer's doing, for tests)
 			local s = surfer.s
 			folder:SetAttribute("Surfer", ("%s spd=%.1f catching=%s riding=%s tube=%s un=%.2f H=%.1f x=%.1f z=%.1f yaw=%.2f wipe=%s steer=%.1f crouch=%.1f"):format(

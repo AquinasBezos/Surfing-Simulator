@@ -94,6 +94,20 @@ local function finish(me, em, n, name, material)
 	return true
 end
 
+-- Drop the miniature, letting its meshes go at once (their share of the client's budget for
+-- editable meshes is wanted back: the ocean comes first).
+function Landscape.clear()
+	local cur = current
+	current = nil
+	if cur then
+		for _, p in ipairs(cur.parts) do
+			p.part:Destroy()
+			p.fixed:Destroy()
+		end
+		cur.folder:Destroy()
+	end
+end
+
 -- Build spot `id`'s far land for time of day `timeName`, replacing any other. ready(): the
 -- ocean is built (editable meshes share a tight budget on the client; the ocean comes first).
 function Landscape.build(id, origin, parent, ready, timeName)
@@ -101,10 +115,7 @@ function Landscape.build(id, origin, parent, ready, timeName)
 	if current and current.id == id and current.time == timeName then
 		return
 	end
-	if current then
-		current.folder:Destroy()
-		current = nil
-	end
+	Landscape.clear()
 	local L = Land[id]
 	local folder = Instance.new("Folder")
 	folder.Name = "SkyLand_" .. id

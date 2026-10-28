@@ -19,7 +19,9 @@ local current = nil
 -- Build it at the spot's origin (studs) under parent; anything else drops it.
 function PoolFloor.build(id, origin, parent)
 	if current then
-		current:Destroy()
+		-- (its mesh let go at once: the budget for editable meshes is small)
+		current.part:Destroy()
+		current.fixed:Destroy()
 		current = nil
 	end
 	if id ~= "pool" then
@@ -82,7 +84,7 @@ function PoolFloor.build(id, origin, parent)
 	-- (an editable mesh's vertices are drawn where they are in the part's frame)
 	part.CFrame = CFrame.new(origin)
 	part.Parent = parent
-	current = part
+	current = { part = part, fixed = fixed }
 end
 
 return PoolFloor

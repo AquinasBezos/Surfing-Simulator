@@ -276,7 +276,7 @@ end
 -- ahead to work it out (s): the workers' result shows a frame later.
 function Ocean:update(camX, camY, camZ, lead)
 	self.frame += 1
-	if not self:ready() then
+	if self.dead then
 		return
 	end
 	-- (low quality: redrawn every other frame, a frame further ahead)
@@ -345,13 +345,60 @@ function Ocean:update(camX, camY, camZ, lead)
 		origin = self.origin,
 		look = self.look,
 	}
+	-- (every strip that's built: one still waiting for room mustn't hold up the rest)
 	for _, a in ipairs(self.actors) do
-		a:SendMessage("frame", F)
+		if a:GetAttribute("Built") then
+			a:SendMessage("frame", F)
+		end
 	end
 end
 
+-- Let go of everything. The strips free their meshes first (an actor that's simply destroyed
+-- keeps its mesh's share of the client's budget until it's collected, and the new ocean needs
+-- it now); the folder goes once they have, or after a second at most.
 function Ocean:destroy()
-	self.folder:Destroy()
+	self.dead = true
+	for _, a in ipairs(self.actors) do
+		a:SendMessage("destroy")
+	end
+	local folder, actors = self.folder, self.actors
+	task.spawn(function()
+		local t0 = os.clock()
+		while os.clock() - t0 < 1 do
+			local all = true
+			for _, a in ipairs(actors) do
+				if not a:GetAttribute("Freed") and a:GetAttribute("Built") then
+					all = false
+				end
+			end
+			if all then
+				break
+			end
+			task.wait()
+		end
+		folder:Destroy()
+	end)
+end
+
+-- Is a strip still waiting for room for its mesh?
+function Ocean:waiting()
+	for _, a in ipairs(self.actors) do
+		if a:GetAttribute("Waiting") and not a:GetAttribute("Built") then
+			return true
+		end
+	end
+	return false
+end
+
+-- How many strips are drawing (for checks).
+function Ocean:builtCount()
+	local n = 0
+	for _, a in ipairs(self.actors) do
+		if a:GetAttribute("Built") then
+			n += 1
+		end
+	end
+	return n, #self.actors
 end
 
 return Ocean

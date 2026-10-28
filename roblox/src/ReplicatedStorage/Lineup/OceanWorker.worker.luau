@@ -18,16 +18,25 @@ local S = Config.SCALE
 local strip = nil
 local P = { PX = {}, PY = {}, PZ = {} }
 
+local dead = false
+
 actor:BindToMessage("init", function(cfg)
 	-- (one row into each neighbour, so the strips always meet)
 	local C = cfg.C
 	local r0, r1 = math.max(1, cfg.r0 - 1), math.min(cfg.R, cfg.r1 + 1)
+	-- Editable meshes share a small memory budget on the client; just after the graphics
+	-- setting changes, the old ocean's may not have been let go yet. No room: try again
+	-- shortly, for as long as it takes (the strip is part of the sea).
 	local em = AssetService:CreateEditableMesh()
-	if not em then
-		warn("[Lineup] no room for an ocean strip")
-		actor:SetAttribute("Built", true)
-		return
+	while not em do
+		actor:SetAttribute("Waiting", true)
+		task.wait(0.25)
+		if dead or not actor.Parent then
+			return
+		end
+		em = AssetService:CreateEditableMesh()
 	end
+	actor:SetAttribute("Waiting", nil)
 	local n = (r1 - r0 + 1) * C
 	local pos, nrm = table.create(n), table.create(n)
 	local k = 0
@@ -57,10 +66,22 @@ actor:BindToMessage("init", function(cfg)
 	end
 	em:BatchSetFaceAttributes(faces, fN)
 	-- (Precise: no levels of detail to rebuild every time the mesh changes)
-	local part = AssetService:CreateMeshPartAsync(Content.fromObject(em), {
-		CollisionFidelity = Enum.CollisionFidelity.Box,
-		RenderFidelity = Enum.RenderFidelity.Precise,
-	})
+	local part
+	repeat
+		local ok, p = pcall(AssetService.CreateMeshPartAsync, AssetService, Content.fromObject(em), {
+			CollisionFidelity = Enum.CollisionFidelity.Box,
+			RenderFidelity = Enum.RenderFidelity.Precise,
+		})
+		if ok then
+			part = p
+		else
+			task.wait(0.25)
+		end
+		if dead or not actor.Parent then
+			em:Destroy()
+			return
+		end
+	until part
 	part.Name = "OceanStrip"
 	part.Anchored = true
 	part.CanCollide = false
@@ -70,6 +91,19 @@ actor:BindToMessage("init", function(cfg)
 	part.Parent = actor
 	strip = { em = em, part = part, vIds = vIds, nIds = nIds, pos = pos, nrm = nrm, r0 = r0, r1 = r1 }
 	actor:SetAttribute("Built", true)
+end)
+
+-- The ocean's being replaced: let the mesh go now (destroying the actor alone leaves it
+-- holding its share of the budget until it's collected).
+actor:BindToMessage("destroy", function()
+	dead = true
+	local st = strip
+	strip = nil
+	if st then
+		st.part:Destroy()
+		st.em:Destroy()
+	end
+	actor:SetAttribute("Freed", true)
 end)
 
 actor:BindToMessageParallel("frame", function(F)
