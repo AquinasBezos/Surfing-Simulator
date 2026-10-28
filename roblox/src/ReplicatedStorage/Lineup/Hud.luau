@@ -133,7 +133,7 @@ function Hud.new()
 	self.toastLabel = label({
 		Name = "Toast",
 		AnchorPoint = Vector2.new(0.5, 0),
-		Position = UDim2.new(0.5, 0, 0, 62),
+		Position = UDim2.new(0.5, 0, 0, 70),
 		Size = UDim2.new(0.9, 0, 0, 0),
 		AutomaticSize = Enum.AutomaticSize.Y,
 		TextWrapped = true,
@@ -437,8 +437,12 @@ function Hud:buildTouch(input)
 	button("Pause", "II", UDim2.new(0, 60, 0, 170), UDim2.new(0, 48, 0, 40), function()
 		table.insert(input.events, "pause")
 	end)
-	buttons.Lineup.Position = UDim2.new(0, 70, 0, 150)
-	buttons.Pause.Position = UDim2.new(0, 150, 0, 150)
+	-- (top middle: clear of the joystick and the paddle buttons on a phone held sideways, and
+	-- of the readouts in the top corners)
+	buttons.Lineup.AnchorPoint = Vector2.new(1, 0)
+	buttons.Lineup.Position = UDim2.new(0.5, -6, 0, 12)
+	buttons.Pause.AnchorPoint = Vector2.new(0, 0)
+	buttons.Pause.Position = UDim2.new(0.5, 6, 0, 12)
 	self.touchButtons = buttons
 
 	-- held paddle buttons keep stroking

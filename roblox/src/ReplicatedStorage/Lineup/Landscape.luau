@@ -31,7 +31,68 @@ local HAZE = {
 	sunset = { Color3.fromRGB(200, 140, 120), 0.00018 },
 }
 
-local current = nil -- { id, time, folder, parts = { { part, centre } }, origin }
+local current = nil -- { id, time, folder, parts = { { part } }, origin }
+
+-- Grid coordinates from lo to hi that include b0 and b1 exactly: s0 apart next to them,
+-- spreading out with distance from them; between them (under the near terrain) only a few.
+local function axis(lo, hi, b0, b1, s0)
+	local GROW = 0.05
+	b0, b1 = math.clamp(b0, lo, hi), math.clamp(b1, lo, hi)
+	local out = {}
+	local p = b0
+	while p > lo do
+		table.insert(out, 1, p)
+		p -= s0 + GROW * (b0 - p)
+	end
+	if out[1] ~= lo then
+		table.insert(out, 1, lo)
+	end
+	local inner = math.max(1, math.ceil((b1 - b0) / 200))
+	for q = 1, inner - 1 do
+		table.insert(out, b0 + (b1 - b0) * q / inner)
+	end
+	if b1 > b0 then
+		p = b1
+		while p < hi do
+			table.insert(out, p)
+			p += s0 + GROW * (p - b1)
+		end
+	end
+	if out[#out] ~= hi then
+		table.insert(out, hi)
+	end
+	return out
+end
+
+-- Turn a built mesh into a part of the miniature (n: its triangles).
+local function finish(me, em, n, name, material)
+	if n == 0 then
+		em:Destroy()
+		return
+	end
+	-- (a fixed-size copy takes much less of the budget for editable meshes)
+	local fixed = AssetService:CreateEditableMeshAsync(Content.fromObject(em), { FixedSize = true })
+	em:Destroy()
+	if not fixed or current ~= me then
+		return false
+	end
+	local part = AssetService:CreateMeshPartAsync(Content.fromObject(fixed), {
+		CollisionFidelity = Enum.CollisionFidelity.Box,
+		RenderFidelity = Enum.RenderFidelity.Precise,
+	})
+	part.Name = name
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.CastShadow = false
+	part.Material = material
+	part.Color = Color3.new(1, 1, 1)
+	part.Parent = me.folder
+	-- (an editable mesh's vertices are drawn where they are in the part's frame: no recentring)
+	table.insert(me.parts, { part = part, fixed = fixed })
+	return true
+end
 
 -- Build spot `id`'s far land for time of day `timeName`, replacing any other. ready(): the
 -- ocean is built (editable meshes share a tight budget on the client; the ocean comes first).
@@ -60,83 +121,114 @@ function Landscape.build(id, origin, parent, ready, timeName)
 		return
 	end
 	local haze = HAZE[timeName] or HAZE.day
-	local B = L.bounds
-	local x0, x1, z0, z1, step = table.unpack(L.sky)
-	local nx = math.ceil((x1 - x0) / step) + 1
-	local nz = math.ceil((z1 - z0) / step) + 1
-	local em = AssetService:CreateEditableMesh()
-	if not em then
-		warn("[Lineup] no room for the distant land")
-		return
-	end
-	local H, P, inside, vid, cid = {}, {}, {}, {}, {}
+	local N = L.near
+	local terrain = workspace.Terrain
 	local lx, lz = L.lineup and L.lineup[1] or 0, L.lineup and L.lineup[2] or 0
-	for j = 0, nz - 1 do
-		for i = 0, nx - 1 do
-			local x, z = math.min(x0 + i * step, x1), math.min(z0 + j * step, z1)
-			local h, veg, s, extra = L.land(x, z)
-			local hx = L.land(x + step * 0.5, z) - L.land(x - step * 0.5, z)
-			local hz = L.land(x, z + step * 0.5) - L.land(x, z - step * 0.5)
-			local slope = math.sqrt(hx * hx + hz * hz) / step
-			local k = j * nx + i + 1
-			H[k] = h
-			-- (well inside the near terrain: drawn by the terrain)
-			inside[k] = x > B[1] + step and x < B[2] - step and z > B[3] + step and z < B[4] - step
-			local p = Vector3.new(x, h - 0.5, z) * S * K
-			P[k] = p
-			vid[k] = em:AddVertex(p)
-			local c = L.color(x, z, h, slope, veg or 0, s or 0, extra)
-			local d = math.sqrt((x - lx) ^ 2 + (z - lz) ^ 2)
-			cid[k] = em:AddColor(c:Lerp(haze[1], 1 - math.exp(-d * haze[2])), 1)
+	local function hazed(c, x, z)
+		local d = math.sqrt((x - lx) ^ 2 + (z - lz) ^ 2)
+		return c:Lerp(haze[1], 1 - math.exp(-d * haze[2]))
+	end
+
+	-- The land: true when it's built, false when there was no room for it at this step.
+	local function landMesh(step)
+		local x0, x1, z0, z1 = table.unpack(L.sky)
+		-- Everything above the water further than N[3] from the lineup is drawn here (the real
+		-- terrain draws the land within it, and the seabed). The grid is finest round that circle,
+		-- spreading out with distance.
+		local xs = axis(x0, x1, N[1] - N[3], N[1] + N[3], step)
+		local zs = axis(z0, z1, N[2] - N[3], N[2] + N[3], step)
+		local nx, nz = #xs, #zs
+		local em = AssetService:CreateEditableMesh()
+		if not em then
+			return false
 		end
-		if j % 8 == 0 then
-			task.wait()
-			if current ~= me then
-				em:Destroy()
-				return
+		local H, inside, vid, cid = {}, {}, {}, {}
+		for j = 1, nz do
+			for i = 1, nx do
+				local x, z = xs[i], zs[j]
+				local h, veg, s, extra = L.land(x, z)
+				local e = 3
+				local hx = L.land(x + e, z) - L.land(x - e, z)
+				local hz = L.land(x, z + e) - L.land(x, z - e)
+				local slope = math.sqrt(hx * hx + hz * hz) / (2 * e)
+				local k = (j - 1) * nx + i
+				H[k] = h
+				-- (within the near circle: drawn by the terrain)
+				inside[k] = (x - N[1]) ^ 2 + (z - N[2]) ^ 2 <= N[3] * N[3]
+				vid[k] = em:AddVertex(Vector3.new(x, h, z) * S * K)
+				-- half the colour of the terrain material that would be there (so it matches the
+				-- terrain where they meet), half the web version's, then the haze
+				local c = terrain:GetMaterialColor(L.material(x, z, h, slope, veg or 0, s or 0))
+				c = c:Lerp(L.color(x, z, h, slope, veg or 0, s or 0, extra), 0.5)
+				cid[k] = em:AddColor(hazed(c, x, z), 1)
+			end
+			if j % 6 == 0 then
+				task.wait()
+				if current ~= me then
+					em:Destroy()
+					return true
+				end
 			end
 		end
-	end
-	local n = 0
-	for j = 1, nz - 1 do
-		for i = 1, nx - 1 do
-			local a = (j - 1) * nx + i
-			local b, c = a + 1, a + nx
-			local d = c + 1
-			if math.max(H[a], H[b], H[c], H[d]) > 0.3 and not (inside[a] and inside[b] and inside[c] and inside[d]) then
-				local f1 = em:AddTriangle(vid[a], vid[c], vid[b])
-				em:SetFaceColors(f1, { cid[a], cid[c], cid[b] })
-				local f2 = em:AddTriangle(vid[b], vid[c], vid[d])
-				em:SetFaceColors(f2, { cid[b], cid[c], cid[d] })
-				n += 2
+		local n = 0
+		for j = 1, nz - 1 do
+			for i = 1, nx - 1 do
+				local a = (j - 1) * nx + i
+				local b, c = a + 1, a + nx
+				local d = c + 1
+				if math.max(H[a], H[b], H[c], H[d]) > 0.05 and not (inside[a] and inside[b] and inside[c] and inside[d]) and n < 19800 then
+					local f1 = em:AddTriangle(vid[a], vid[c], vid[b])
+					em:SetFaceColors(f1, { cid[a], cid[c], cid[b] })
+					local f2 = em:AddTriangle(vid[b], vid[c], vid[d])
+					em:SetFaceColors(f2, { cid[b], cid[c], cid[d] })
+					n += 2
+				end
 			end
 		end
+		return finish(me, em, n, "SkyLand", Enum.Material.SmoothPlastic) ~= false
 	end
-	if n == 0 then
-		em:Destroy()
+
+	-- (editable meshes share a small memory budget on each client, smaller on some devices:
+	-- if there's no room, a coarser grid)
+	local step = L.sky[5]
+	for _ = 1, 3 do
+		if landMesh(step) then
+			break
+		end
+		step *= 2
+	end
+	if current ~= me then
 		return
 	end
-	-- (a fixed-size copy takes much less of the budget for editable meshes)
-	local fixed = AssetService:CreateEditableMeshAsync(Content.fromObject(em), { FixedSize = true })
-	em:Destroy()
-	if not fixed or current ~= me then
+
+	-- The trees beyond the near circle, as low-poly blobs (an octahedron each, squashed:
+	-- canopies are wider than tall); the near ones are parts (TerrainBuilder).
+	local tm = AssetService:CreateEditableMesh()
+	if not tm then
 		return
 	end
-	local part = AssetService:CreateMeshPartAsync(Content.fromObject(fixed), {
-		CollisionFidelity = Enum.CollisionFidelity.Box,
-		RenderFidelity = Enum.RenderFidelity.Precise,
-	})
-	part.Name = "SkyLand"
-	part.Anchored = true
-	part.CanCollide = false
-	part.CanQuery = false
-	part.CanTouch = false
-	part.CastShadow = false
-	part.Material = Enum.Material.SmoothPlastic
-	part.Color = Color3.new(1, 1, 1)
-	part.Parent = folder
-	-- (an editable mesh's vertices are drawn where they are in the part's frame: no recentring)
-	table.insert(me.parts, { part = part, fixed = fixed })
+	local A, Bc = Color3.fromRGB(28, 51, 25), Color3.fromRGB(52, 80, 42)
+	local nt = 0
+	local DIRS = { Vector3.xAxis, -Vector3.xAxis, Vector3.zAxis, -Vector3.zAxis, Vector3.new(0, 0.85, 0), Vector3.new(0, -0.6, 0) }
+	-- (the faces, as indices into DIRS: +x -x +z -z top bottom)
+	local FACES = { { 5, 3, 1 }, { 5, 2, 3 }, { 5, 4, 2 }, { 5, 1, 4 }, { 6, 1, 3 }, { 6, 3, 2 }, { 6, 2, 4 }, { 6, 4, 1 } }
+	for _, t in ipairs(Land.trees(id)) do
+		if (t.x - N[1]) ^ 2 + (t.z - N[2]) ^ 2 <= N[3] * N[3] or nt > 19000 then
+			continue
+		end
+		local c = Vector3.new(t.x, t.h + 0.35 * t.r, t.z)
+		local col = tm:AddColor(hazed(A:Lerp(Bc, t.shade * t.shade):Lerp(Color3.new(0, 0, 0), t.shade * 0.2), t.x, t.z), 1)
+		local v = {}
+		for q, dir in ipairs(DIRS) do
+			v[q] = tm:AddVertex((c + dir * t.r) * S * K)
+		end
+		for _, f in ipairs(FACES) do
+			local face = tm:AddTriangle(v[f[1]], v[f[2]], v[f[3]])
+			tm:SetFaceColors(face, { col, col, col })
+		end
+		nt += 8
+	end
+	finish(me, tm, nt, "SkyTrees", Enum.Material.Grass)
 end
 
 -- Every frame, after the camera has moved: put the miniature where it projects right.

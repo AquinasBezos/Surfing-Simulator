@@ -140,18 +140,46 @@ local function margaretColor(x, z, h, slope, veg, s)
 	return Color3.new(math.min(c.R * k, 1), math.min(c.G * k, 1), math.min(c.B * k, 1))
 end
 
+-- the terrain material at a point (TerrainBuilder paints with it, and the 3D skybox takes
+-- its colours from it, so the two match where they meet)
+local M = Enum.Material
+local function margaretMaterial(x, z, h, slope, veg, s)
+	if h < -0.6 then
+		-- the seabed, seen through the water: sand with patches of weed, darker going deeper
+		if h < -10 then
+			return M.Mud
+		end
+		if vnoise(x * 0.0042 + 11, z * 0.0042) > 0.68 or h < -6 then
+			return M.Ground
+		end
+		return M.Sand
+	end
+	if slope > 0.85 and h > 1 then
+		return M.Rock
+	end
+	if veg > 0.55 then
+		return M.LeafyGrass
+	end
+	if h > 4.5 and s > 45 then
+		return M.Grass
+	end
+	return M.Sand
+end
+
 Land.margaret = {
 	seabedY = margaretSeabed,
 	land = margaretLand,
 	color = margaretColor,
+	material = margaretMaterial,
 	bed = margaretBed,
 	shoreZ = mShoreZ,
 	-- the area the terrain covers (m): x range, z range (TerrainBuilder); it reaches out to
 	-- sea far enough to put a seabed under all the see-through water near the lineup
 	bounds = { -1000, 1000, -500, 700 },
-	-- the rest, in the 3D skybox (Landscape): x range, z range, step (one mesh: at a quarter
-	-- scale it has to fit in 2048 studs, and 20,000 triangles)
-	sky = { -3600, 3600, -3300, 2400, 70 },
+	-- the rest, in the 3D skybox (Landscape): x range, z range, and its finest step, where it
+	-- meets the terrain (one mesh: at its scale it has to fit in 2048 studs, and 20,000
+	-- triangles)
+	sky = { -3600, 3600, -3300, 2400, 15 },
 	lineup = { 0, -5 },
 	island = ISLAND,
 	headland = { HEAD_A, HEAD_B },
@@ -313,15 +341,39 @@ do
 		local r, g, b = mix(0.32, sR, k), mix(0.3, sG, k), mix(0.26, sB, k)
 		return mix(r, cr, reef), mix(g, cg, reef), mix(b, cb, reef)
 	end
+	local M = Enum.Material
+	local function material(x, z, h, slope)
+		if h < -0.5 then
+			if h < -14 then
+				return M.Basalt -- the deep water off the reef
+			end
+			local d = z - reefEdge(x)
+			if d > -30 and d < 140 and vnoise(x * 0.07, z * 0.07) > 0.35 then
+				return M.Limestone -- coral heads on the reef
+			end
+			return M.Sand
+		end
+		if slope > 1.4 and h > 20 then
+			return M.Rock
+		end
+		if h > 4 then
+			return M.LeafyGrass
+		end
+		if h > 1.6 then
+			return M.Grass
+		end
+		return M.Sand
+	end
 	Land.teahupoo = {
 		seabedY = seabedY,
 		land = land,
 		color = color,
+		material = material,
 		bed = bed,
 		shoreZ = shoreZ,
 		reefEdge = reefEdge,
 		bounds = { -1000, 1200, -500, 900 },
-		sky = { -4000, 4000, -300, 4400, 80 },
+		sky = { -4000, 4000, -300, 4400, 15 },
 		lineup = { 9, -13 },
 	}
 end
@@ -458,10 +510,33 @@ do
 		end
 		return hit
 	end
+	-- The terrain round the pool: none in the pool or under the walkway's edge (the pool's floor
+	-- is a mesh, PoolFloor, and its edges straight slabs: voxels can't follow a diagonal wall),
+	-- sunk a little under the rest of the walkway, then the fields.
+	local function terrainHeight(x, z)
+		local ins = inside(x, z)
+		if ins > -2 then
+			return -12, 0, ins
+		elseif ins > -12 then
+			return 0.6, 0, ins
+		end
+		return ground(x, z), 0, ins
+	end
+	local M = Enum.Material
+	local function material(_x, _z, _h, _slope, _veg, ins)
+		if ins and ins > -12 then
+			return M.Pavement
+		end
+		return M.Grass
+	end
 	Land.pool = {
 		seabedY = seabedY,
 		land = land,
+		terrainHeight = terrainHeight,
 		color = color,
+		material = material,
+		poolFloor = poolFloor,
+		edges = { back = BACK, front = FRONT },
 		bed = bed,
 		inside = inside,
 		ground = ground,
@@ -471,9 +546,73 @@ do
 		corners = P0,
 		deck = DECK,
 		bounds = { -420, 420, -320, 420 },
-		sky = { -3000, 3000, -3000, 3000, 75 },
+		sky = { -2600, 2600, -2600, 2600, 25 },
 		lineup = { 59, -10 },
 	}
+end
+
+-- Where each spot's real terrain draws the land: within `near` = { x, z, radius } of the
+-- lineup (Roblox always draws that far, on any graphics setting); the land further off is
+-- in the 3D skybox (Landscape), the seabed is terrain everywhere it's built.
+Land.margaret.near = { 0, -5, 330 }
+Land.teahupoo.near = { 9, -13, 300 }
+Land.pool.near = { 0, 20, 260 }
+
+-- Every spot's trees, the same on every client and in the builder: { x, z, h, r, shade }.
+-- (The builder makes the near ones as parts; the 3D skybox draws the rest.)
+local treeCache = {}
+function Land.trees(id)
+	if treeCache[id] then
+		return treeCache[id]
+	end
+	local L = Land[id]
+	local list = {}
+	local function grow(count, seed, places, ok)
+		local rng = Random.new(seed)
+		local placed, tries = 0, 0
+		while placed < count and tries < count * 40 do
+			tries += 1
+			local x, z = places(rng)
+			local h, veg, s = L.land(x, z)
+			if ok(h, veg, s) then
+				table.insert(list, { x = x, z = z, h = h, r = 3.5 + rng:NextNumber() ^ 1.5 * 6, shade = rng:NextNumber() })
+				placed += 1
+			end
+		end
+	end
+	if id == "margaret" then
+		local H, I = L.headland, L.island
+		grow(1400, 4242, function(rng)
+			local pick = rng:NextNumber()
+			if pick < 0.35 then
+				local t = rng:NextNumber()
+				return H[1][1] + (H[2][1] - H[1][1]) * t + (rng:NextNumber() * 2 - 1) * 170, H[1][2] + (H[2][2] - H[1][2]) * t + (rng:NextNumber() * 2 - 1) * 170
+			elseif pick < 0.45 then
+				return I[1] + (rng:NextNumber() * 2 - 1) * 220, I[2] + (rng:NextNumber() * 2 - 1) * 220
+			end
+			local x = (rng:NextNumber() * 2 - 1) * 3000
+			return x, L.shoreZ(x) + 72 + rng:NextNumber() ^ 1.4 * 1100
+		end, function(h, veg)
+			return veg >= 0.55 and h >= 3
+		end)
+	elseif id == "teahupoo" then
+		-- rainforest up the slopes behind the shore
+		grow(1200, 77, function(rng)
+			local x = -2600 + rng:NextNumber() * 5600
+			return x, L.shoreZ(x) + 60 + rng:NextNumber() * 500
+		end, function(h)
+			return h > 8
+		end)
+	elseif id == "pool" then
+		-- hedgerow trees round the fields, well away from the pool
+		grow(700, 5, function(rng)
+			return -1400 + rng:NextNumber() * 2800, -1400 + rng:NextNumber() * 2800
+		end, function(_h, _veg, ins)
+			return ins < -25
+		end)
+	end
+	treeCache[id] = list
+	return list
 end
 
 Land.active = Land.margaret

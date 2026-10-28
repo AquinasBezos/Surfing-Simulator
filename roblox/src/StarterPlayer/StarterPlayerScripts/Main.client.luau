@@ -27,6 +27,7 @@ local Spray = require(Lineup.Spray)
 local Audio = require(Lineup.Audio)
 local Landscape = require(Lineup.Landscape)
 local Foam = require(Lineup.Foam)
+local PoolFloor = require(Lineup.PoolFloor)
 
 local net = ReplicatedStorage:WaitForChild("LineupNet")
 local player = Players.LocalPlayer
@@ -167,9 +168,15 @@ local function applySpot(id)
 	settings.waves[id] = { mode = cfg.mode, height = cfg.height }
 	ocean:setSpot(id, spot.origin, spot.water)
 	remote:setSpot(id, spot.origin)
-	task.spawn(Landscape.build, id, spot.origin, folder, function()
-		return ocean:ready()
-	end, settings.time)
+	task.spawn(function()
+		-- (the ocean takes the budget for editable meshes first, then the pool's floor, then
+		-- the 3D skybox)
+		while not ocean:ready() do
+			task.wait(0.1)
+		end
+		PoolFloor.build(id, spot.origin, folder)
+		Landscape.build(id, spot.origin, folder, nil, settings.time)
+	end)
 	-- (a pool's walls and pier keep you in the water)
 	surfer.collide = Land[id] and Land[id].collide or nil
 end

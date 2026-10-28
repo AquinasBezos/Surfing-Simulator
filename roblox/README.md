@@ -77,9 +77,17 @@ so a few things are done differently from the web version:
   the foam trails behind it.
 - **Distant land** is a 3D skybox, as in Source games (CS:GO, CS2): a miniature at a tenth of
   the size, placed every frame on the line from the camera to the real land, so it looks the
-  same but is drawn ten times closer: always within the draw distance, and a single mesh. The
-  land near the lineup is real terrain. (Something more than a tenth of the way to the land
-  behind it, a surfer far ahead riding toward the beach say, can be hidden by the miniature.)
+  same but is drawn ten times closer: always within the draw distance (Roblox stops drawing far
+  terrain when it turns the graphics down), and a single mesh. Real terrain draws the land
+  within a few hundred metres of the lineup (`Land.<spot>.near`) and the seabed; everything
+  above water beyond is the miniature, trees included, its grid finest where the two meet and
+  coloured from the terrain's own materials. (Something more than a tenth of the way to the
+  land behind it, a surfer far ahead riding toward the beach say, can be hidden by it.)
+- **Terrain heights**: Roblox draws a voxel's surface half a voxel above where occupancy counted
+  from its bottom puts it; the builder counts from the middle, so the terrain is within a few
+  centimetres of the land functions.
+- **The wave pool** has no voxels in it: its floor is a mesh (`PoolFloor`) and its edges straight
+  concrete walkway slabs and walls.
 - An EditableMesh's vertices are drawn where they are in its part's frame (no recentring), and
   editable meshes share a small memory budget on each client: the boards are built first, and
   there's a plain fallback board if a mesh can't be made.

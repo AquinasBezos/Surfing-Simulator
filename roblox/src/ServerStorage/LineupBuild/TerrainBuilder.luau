@@ -110,8 +110,10 @@ local function fill(o, sample, x0, x1, z0, z1, paint, minY)
 						materials[i][y], occ[i][y] = {}, {}
 						local vy = (yb + y - 1) * VOX
 						for k = 1, nz do
+							-- (Roblox puts the surface half a voxel above where occupancy counted
+							-- from the voxel's bottom says: measured, 2 studs. So count from its middle.)
 							local top = hs[i][k]
-							local o_ = math.clamp((top - vy) / VOX, 0, 1)
+							local o_ = math.clamp((top - VOX / 2 - vy) / VOX, 0, 1)
 							if o_ > 0 then
 								materials[i][y][k] = mats[i][k]
 								occ[i][y][k] = o_
@@ -134,80 +136,39 @@ local function fill(o, sample, x0, x1, z0, z1, paint, minY)
 	end
 end
 
--- Margaret River: a sandy beach with dunes and wooded hills, a forested headland, and an
--- offshore island.
-local function smooth(a, b, x)
-	local t = math.clamp((x - a) / (b - a), 0, 1)
-	return t * t * (3 - 2 * t)
-end
-
-local function paintMargaret(x, z, h, slope, veg, s)
-	if h < -0.6 then
-		-- the seabed, seen through the water: sand with patches of weed, darker going deeper
-		if h < -10 then
-			return M.Mud
-		end
-		local n = Land.vnoise(x * 0.0042 + 11, z * 0.0042)
-		if n > 0.68 or h < -6 then
-			return M.Ground
-		end
-		return M.Sand
-	end
-	if slope > 0.85 and h > 1 then
-		return M.Rock
-	end
-	if veg > 0.55 then
-		return M.LeafyGrass
-	end
-	if h > 4.5 and s > 45 then
-		return M.Grass
-	end
-	return M.Sand
-end
-
--- ok(h, veg, s): whether a tree grows there (default: vegetated ground above 3 m)
-local function trees(o, spotLand, count, seed, places, ok)
-	ok = ok or function(h, veg)
-		return veg >= 0.55 and h >= 3
-	end
+-- The spot's trees near the lineup, as parts (Land.trees; the 3D skybox draws the rest).
+local function trees(o, spotLand)
 	local folder = workspace:FindFirstChild("LineupLand") or Instance.new("Folder")
 	folder.Name = "LineupLand"
 	folder.Parent = workspace
 	local holder = Instance.new("Folder")
 	holder.Name = "Trees_" .. spotLand
-	local rng = Random.new(seed)
-	local placed, tries = 0, 0
 	local A = Color3.fromRGB(28, 51, 25)
 	local B = Color3.fromRGB(52, 80, 42)
-	while placed < count and tries < count * 40 do
-		tries += 1
-		local x, z = places(rng)
-		local h, veg, s = Land[spotLand].land(x, z)
-		if not ok(h, veg, s) then
+	local N = Land[spotLand].near
+	local placed = 0
+	for _, t in ipairs(Land.trees(spotLand)) do
+		if math.sqrt((t.x - N[1]) ^ 2 + (t.z - N[2]) ^ 2) > N[3] then
 			continue
 		end
-		local r = 3.5 + rng:NextNumber() ^ 1.5 * 6
+		local r = t.r
 		local p = Instance.new("Part")
-		p.Shape = Enum.PartType.Ball
-		p.Size = Vector3.new(r * 2, r * 2, r * 2) * S
+		p.Shape = Enum.PartType.Block
+		p.Size = Vector3.new(r * 2, r * 1.7, r * 2) * S
 		p.Material = M.Grass
-		p.Color = A:Lerp(B, rng:NextNumber() * rng:NextNumber()):Lerp(Color3.new(0, 0, 0), rng:NextNumber() * 0.25)
+		p.Color = A:Lerp(B, t.shade * t.shade):Lerp(Color3.new(0, 0, 0), t.shade * 0.2)
 		p.Anchored = true
 		p.CanCollide = false
 		p.CanQuery = false
 		p.CanTouch = false
 		p.CastShadow = true
-		p.CFrame = CFrame.new(o + Vector3.new(x, h + 0.25 * r, z) * S)
+		p.CFrame = CFrame.new(o + Vector3.new(t.x, t.h + 0.25 * r, t.z) * S)
+		-- (a squashed sphere: canopies are wider than tall)
+		local mesh = Instance.new("SpecialMesh")
+		mesh.MeshType = Enum.MeshType.Sphere
+		mesh.Parent = p
 		p.Parent = holder
 		placed += 1
-		-- squash it a little: canopies are wider than tall
-		if rng:NextNumber() < 0.6 then
-			p.Shape = Enum.PartType.Block
-			local mesh = Instance.new("SpecialMesh")
-			mesh.MeshType = Enum.MeshType.Sphere
-			mesh.Scale = Vector3.new(1, 0.7 + rng:NextNumber() * 0.4, 1)
-			mesh.Parent = p
-		end
 	end
 	local old = folder:FindFirstChild(holder.Name)
 	if old then
@@ -249,125 +210,54 @@ local function block(parent, name, size, cf, color, material, shape)
 	return p
 end
 
--- A palm: a leaning, slightly curved trunk and a crown of drooping fronds.
-local function palm(parent, at, rng)
-	local m = Instance.new("Model")
-	m.Name = "Palm"
-	local h = 8 + rng:NextNumber() * 7
-	local lean = (rng:NextNumber() * 0.35 + 0.08) * (if rng:NextNumber() < 0.5 then -1 else 1)
-	local yaw = rng:NextNumber() * math.pi * 2
-	local base = CFrame.new(at) * CFrame.Angles(0, yaw, 0)
-	local segs = 4
-	local cf = base
-	local trunk = Color3.fromRGB(120, 100, 75)
-	for i = 1, segs do
-		cf = cf * CFrame.Angles(0, 0, lean / segs * (0.6 + i * 0.25))
-		local len = h / segs
-		-- (a cylinder runs along its X: turned to stand up)
-		local d = 0.38 - i * 0.04
-		block(m, "Trunk", Vector3.new(len + 0.1, d, d), cf * CFrame.new(0, len * S / 2, 0) * CFrame.Angles(0, 0, math.pi / 2), trunk, M.Wood, Enum.PartType.Cylinder)
-		cf = cf * CFrame.new(0, len * S, 0)
-	end
-	local leaf = Color3.fromRGB(58, 96, 40):Lerp(Color3.fromRGB(90, 120, 50), rng:NextNumber())
-	for k = 1, 8 do
-		local a = k / 8 * math.pi * 2 + rng:NextNumber() * 0.3
-		local frond = cf * CFrame.Angles(0, a, 0) * CFrame.Angles(-0.45 - rng:NextNumber() * 0.4, 0, 0)
-		block(m, "Frond", Vector3.new(0.9, 0.08, 4.2), frond * CFrame.new(0, 0, -2.0 * S), leaf, M.Grass)
-	end
-	m.Parent = parent
-end
-
 function Builder.build(id, lib)
 	load(lib)
 	id = id or "margaret"
 	local spot = Spots[id]
 	local o = spot.origin
 	if id == "teahupoo" then
+		-- the reef and the lagoon, the beach and the foot of the hills (the peaks are in the 3D
+		-- skybox); rainforest up the slopes
 		local L = Land.teahupoo
-		local function paint(x, z, h, slope, _mtn, s)
-			if h < -0.5 then
-				if h < -14 then
-					return M.Basalt -- the deep water off the reef
-				end
-				local d = z - L.reefEdge(x)
-				if d > -30 and d < 140 and Land.vnoise(x * 0.07, z * 0.07) > 0.35 then
-					return M.Limestone -- coral heads on the reef
-				end
-				return M.Sand
-			end
-			if slope > 1.4 and h > 20 then
-				return M.Rock
-			end
-			if h > 4 then
-				return M.LeafyGrass
-			end
-			if h > 1.6 then
-				return M.Grass
-			end
-			return M.Sand
-		end
 		progress("sampling")
 		local B = L.bounds
 		local sample = makeSampler(L.land, B[1], B[2], B[3], B[4], 5)
-		fill(o, sample, B[1], B[2], B[3], B[4], paint, -40)
-		-- palms along the shore, houses among them, rainforest up the slopes
-		progress("palms")
-		local f = landFolder("teahupoo")
-		local rng = Random.new(9001)
-		local placed = 0
-		for _ = 1, 4000 do
-			if placed >= 260 then
-				break
-			end
-			local x = B[1] + rng:NextNumber() * (B[2] - B[1])
-			local s = 4 + rng:NextNumber() ^ 1.4 * 110
-			local z = L.shoreZ(x) + s
-			local h = L.land(x, z)
-			if h > 0.8 and h < 14 then
-				palm(f, o + Vector3.new(x, h - 0.2, z) * S, rng)
-				placed += 1
-			end
-		end
-		for _ = 1, 26 do
-			local x = -900 + rng:NextNumber() * 2200
-			local z = L.shoreZ(x) + 25 + rng:NextNumber() * 60
-			local h = L.land(x, z)
-			if h > 1 and h < 10 then
-				local w, d = 6 + rng:NextNumber() * 5, 5 + rng:NextNumber() * 4
-				local cf = CFrame.new(o + Vector3.new(x, h + 1.4, z) * S) * CFrame.Angles(0, rng:NextNumber() * 0.6 - 0.3, 0)
-				local walls = ({ Color3.fromRGB(235, 228, 210), Color3.fromRGB(210, 230, 225), Color3.fromRGB(240, 215, 190) })[rng:NextInteger(1, 3)]
-				block(f, "House", Vector3.new(w, 2.8, d), cf, walls, M.Plaster)
-				local roof = block(f, "Roof", Vector3.new(w + 1, 1.6, d + 1), cf * CFrame.new(0, 2.2 * S, 0), Color3.fromRGB(150, 70, 50), M.ClayRoofTiles)
-				local wedge = Instance.new("SpecialMesh")
-				wedge.MeshType = Enum.MeshType.Wedge
-				wedge.Parent = roof
-			end
-		end
-		local n = trees(o, "teahupoo", 600, 77, function(r)
-			local x = B[1] + r:NextNumber() * (B[2] - B[1])
-			return x, math.min(L.shoreZ(x) + 60 + r:NextNumber() * 330, B[4] - 10)
-		end, function(h)
-			return h > 8
-		end)
-		progress(("done: %d palms, %d trees"):format(placed, n))
+		fill(o, sample, B[1], B[2], B[3], B[4], L.material, -40)
+		landFolder("teahupoo")
+		local n = trees(o, "teahupoo")
+		progress(("done: %d trees"):format(n))
 		return
 	elseif id == "pool" then
+		-- The ground round the pool (none in the pool: its floor is a mesh, PoolFloor, made in
+		-- the game; voxels can't follow its diagonal walls), straight concrete slabs along its
+		-- edges for the walkway, the walls, the pier, the clubhouse.
 		local L = Land.pool
 		local P = L.corners
-		local function paint(x, z, h, _slope, _veg, ins)
-			if ins >= 0 then
-				return if h > -0.3 then M.Sand else M.Concrete
-			end
-			if ins > -10 then
-				return M.Pavement
-			end
-			return M.Grass
-		end
 		progress("sampling")
-		local sample = makeSampler(L.land, -420, 420, -320, 420, 3)
-		fill(o, sample, -420, 420, -320, 420, paint, -6)
+		local sample = makeSampler(L.terrainHeight, -420, 420, -320, 420, 3)
+		fill(o, sample, -420, 420, -320, 420, L.material, -14)
 		local f = landFolder("pool")
 		local concrete = Color3.fromRGB(196, 192, 184)
+		-- the walkway: a slab along each edge, its inner side exactly on the edge
+		local RING = 12
+		for _, sx in ipairs({ -1, 1 }) do
+			for _, e in ipairs({ { 0, P.bz, sx * P.sx, P.sz }, { sx * P.sx, P.sz, 0, P.fz } }) do
+				local a = Vector3.new(e[1], 0, e[2])
+				local b = Vector3.new(e[3], 0, e[4])
+				local along = (b - a).Unit
+				-- outward: away from the middle of the pool
+				local out = Vector3.new(-along.Z, 0, along.X)
+				local midPool = Vector3.new(0, 0, (P.bz + P.fz) / 2)
+				if out:Dot(midPool - a) > 0 then
+					out = -out
+				end
+				local len = (b - a).Magnitude + RING * 2
+				local c = (a + b) / 2 + out * RING / 2
+				local y0, y1 = L.deck - 2.5, L.deck + 0.05
+				local cf = CFrame.lookAt(o + Vector3.new(c.X, (y0 + y1) / 2, c.Z) * S, o + Vector3.new(c.X + along.X, (y0 + y1) / 2, c.Z + along.Z) * S)
+				block(f, "Walkway", Vector3.new(RING, y1 - y0, len), cf, Color3.fromRGB(205, 200, 190), M.Pavement)
+			end
+		end
 		-- the back walls: concrete, from the floor to the walkway
 		for _, sx in ipairs({ -1, 1 }) do
 			local a = Vector3.new(0, 0, P.bz)
@@ -422,12 +312,7 @@ function Builder.build(id, lib)
 			local cf = CFrame.new(o + Vector3.new(x, L.deck + 1.3, z) * S)
 			block(f, "Cabin", Vector3.new(3, 2.6, 3), cf, ({ Color3.fromRGB(80, 160, 200), Color3.fromRGB(240, 200, 70), Color3.fromRGB(230, 110, 90) })[k % 3 + 1], M.WoodPlanks)
 		end
-		local n = trees(o, "pool", 250, 5, function(r)
-			return -410 + r:NextNumber() * 820, -310 + r:NextNumber() * 720
-		end, function(_h, _veg, ins)
-			-- (hedgerow trees, well away from the pool)
-			return ins < -25
-		end)
+		local n = trees(o, "pool")
 		progress(("done: pool, %d trees"):format(n))
 		return
 	end
@@ -438,12 +323,9 @@ function Builder.build(id, lib)
 		local B = L.bounds
 		progress("sampling")
 		local sample = makeSampler(L.land, B[1], B[2], B[3], B[4], 5)
-		fill(o, sample, B[1], B[2], B[3], B[4], paintMargaret, -18)
+		fill(o, sample, B[1], B[2], B[3], B[4], L.material, -18)
 		progress("trees")
-		local n = trees(o, "margaret", 500, 4242, function(rng)
-			local x = B[1] + rng:NextNumber() * (B[2] - B[1])
-			return x, math.min(L.shoreZ(x) + 72 + rng:NextNumber() ^ 1.4 * 500, B[4] - 10)
-		end)
+		local n = trees(o, "margaret")
 		progress(("done: %d trees"):format(n))
 	end
 end
