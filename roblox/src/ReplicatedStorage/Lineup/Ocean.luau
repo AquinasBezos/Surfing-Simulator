@@ -18,7 +18,7 @@ local S = Config.SCALE
 
 local exp, sqrt, abs, max, min = math.exp, math.sqrt, math.abs, math.max, math.min
 
-local HALF = 400 -- metres: the patch of real waves round the camera
+local HALF = 400 -- metres: the patch of real waves round the camera (a spot can set its own)
 local FAR = 12000 -- metres: how far the flat sea reaches
 
 local function smoothstep(a, b, x)
@@ -93,6 +93,7 @@ function Ocean.new(model, opts)
 	self.xs, self.zs, self.co = table.create(C, 0), table.create(R, 0), table.create(C, 0)
 	self.origin = opts.origin or Vector3.zero
 	self.spot = opts.spot or "margaret"
+	self.half = opts.patch or HALF
 	self.frame = 0
 	self.sec = {}
 	for k = 1, WAVE.slots do
@@ -173,16 +174,19 @@ function Ocean:setWater(water)
 		self.look.reflectance = workspace:GetAttribute("LineupWaterReflectance") or self.look.reflectance
 	end
 	for _, f in ipairs(self.far) do
-		-- (open water is deep: nothing to see through it)
+		-- (open water is deep: nothing to see through it. A spot inland makes it its fields.)
 		f.part.Color = water.open
-		f.part.Material = Enum.Material.SmoothPlastic
+		f.part.Material = water.openMaterial or Enum.Material.SmoothPlastic
 		f.part.Reflectance = 0
 	end
+	self.openHeight = water.openHeight or -0.5
 end
 
-function Ocean:setSpot(id, origin, water)
+-- spot: the Spots entry (its patch size, if it has one, and water)
+function Ocean:setSpot(id, origin, water, patch)
 	self.spot = id
 	self.origin = origin
+	self.half = patch or HALF
 	self:setWater(water)
 end
 
@@ -245,10 +249,11 @@ function Ocean:updateGrid(camX, camZ)
 	end
 	-- (rows are crest-aligned: the patch's rows reach a little further so its curved edge
 	-- still covers the square the open sea frames)
-	local far = max(abs(camX - HALF), abs(camX + HALF))
+	local half = self.half
+	local far = max(abs(camX - half), abs(camX + half))
 	local coMin = -min(WAVE.curveMax, WAVE.curveK * far * far)
-	self._rs = distribute(self.zs, self.R, camZ - HALF, camZ + HALF - coMin, rowSpacing, self._rs)
-	self._cs = distribute(self.xs, self.C, camX - HALF, camX + HALF, colSpacing, self._cs)
+	self._rs = distribute(self.zs, self.R, camZ - half, camZ + half - coMin, rowSpacing, self._rs)
+	self._cs = distribute(self.xs, self.C, camX - half, camX + half, colSpacing, self._cs)
 end
 
 -- Place the open sea round the patch at (camX, camZ).
@@ -256,8 +261,8 @@ function Ocean:placeFar(camX, camZ)
 	local o = self.origin
 	-- (a little overlap, so there's no gap at the seam, and half a metre down: where the
 	-- patch's curved rows run out over it, it's under the water, not a sheet in it)
-	local h = HALF - 2
-	local y = o.Y - 0.5 * S
+	local h = self.half - 2
+	local y = o.Y + self.openHeight * S
 	local rects = {
 		{ camX - FAR, camX + FAR, camZ + h, camZ + FAR }, -- toward the beach
 		{ camX - FAR, camX + FAR, camZ - FAR, camZ - h }, -- out to sea
@@ -339,7 +344,7 @@ function Ocean:update(camX, camY, camZ, lead)
 		waves = waves,
 		time = model.time + lead,
 		cam = { camX, camY, camZ },
-		half = HALF,
+		half = self.half,
 		curl = { rin = CURL.rin, yc = CURL.yc, ex = CURL.ex, sweep = CURL.sweep, acoshYc = CURL.acoshYc, trough = CURL.trough, lip = CURL.lip },
 		wave = { tThrow = WAVE.tThrow, pool = WAVE.pool },
 		origin = self.origin,

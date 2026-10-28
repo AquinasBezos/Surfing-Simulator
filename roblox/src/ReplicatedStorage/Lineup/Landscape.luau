@@ -38,27 +38,33 @@ local current = nil -- { id, time, folder, parts = { { part } }, origin }
 local function axis(lo, hi, b0, b1, s0)
 	local GROW = 0.05
 	b0, b1 = math.clamp(b0, lo, hi), math.clamp(b1, lo, hi)
-	local out = {}
+	-- below b0, down to lo
+	local down = {}
 	local p = b0
 	while p > lo do
-		table.insert(out, 1, p)
+		table.insert(down, 1, p)
 		p -= s0 + GROW * (b0 - p)
 	end
-	if out[1] ~= lo then
-		table.insert(out, 1, lo)
+	local out = { lo }
+	for _, v in ipairs(down) do
+		if v > out[#out] then
+			table.insert(out, v)
+		end
 	end
+	-- between them, a few
 	local inner = math.max(1, math.ceil((b1 - b0) / 200))
 	for q = 1, inner - 1 do
 		table.insert(out, b0 + (b1 - b0) * q / inner)
 	end
-	if b1 > b0 then
-		p = b1
-		while p < hi do
+	-- from b1 up to hi
+	p = b1
+	while p < hi do
+		if p > out[#out] then
 			table.insert(out, p)
-			p += s0 + GROW * (p - b1)
 		end
+		p += s0 + GROW * (p - b1)
 	end
-	if out[#out] ~= hi then
+	if hi > out[#out] then
 		table.insert(out, hi)
 	end
 	return out
@@ -120,7 +126,12 @@ function Landscape.build(id, origin, parent, ready, timeName)
 	local folder = Instance.new("Folder")
 	folder.Name = "SkyLand_" .. id
 	folder.Parent = parent
-	local me = { id = id, time = timeName, folder = folder, parts = {}, origin = origin }
+	-- (a spot can set its own scale, and keep the miniature to part of the view: see Land)
+	local K = L and L.skyK or K
+	local keep = L and L.skyKeep or function()
+		return true
+	end
+	local me = { id = id, time = timeName, folder = folder, parts = {}, origin = origin, K = K }
 	current = me
 	if not (L and L.sky) then
 		return
@@ -165,7 +176,7 @@ function Landscape.build(id, origin, parent, ready, timeName)
 				local k = (j - 1) * nx + i
 				H[k] = h
 				-- (within the near circle: drawn by the terrain)
-				inside[k] = (x - N[1]) ^ 2 + (z - N[2]) ^ 2 <= N[3] * N[3]
+				inside[k] = (x - N[1]) ^ 2 + (z - N[2]) ^ 2 <= N[3] * N[3] or not keep(x, z)
 				vid[k] = em:AddVertex(Vector3.new(x, h, z) * S * K)
 				-- half the colour of the terrain material that would be there (so it matches the
 				-- terrain where they meet), half the web version's, then the haze
@@ -224,7 +235,7 @@ function Landscape.build(id, origin, parent, ready, timeName)
 	-- (the faces, as indices into DIRS: +x -x +z -z top bottom)
 	local FACES = { { 5, 3, 1 }, { 5, 2, 3 }, { 5, 4, 2 }, { 5, 1, 4 }, { 6, 1, 3 }, { 6, 3, 2 }, { 6, 2, 4 }, { 6, 4, 1 } }
 	for _, t in ipairs(Land.trees(id)) do
-		if (t.x - N[1]) ^ 2 + (t.z - N[2]) ^ 2 <= N[3] * N[3] or nt > 19000 then
+		if (t.x - N[1]) ^ 2 + (t.z - N[2]) ^ 2 <= N[3] * N[3] or not keep(t.x, t.z) or nt > 19000 then
 			continue
 		end
 		local c = Vector3.new(t.x, t.h + 0.35 * t.r, t.z)
@@ -248,7 +259,7 @@ function Landscape.place(cameraPos)
 	if not cur then
 		return
 	end
-	local base = cameraPos * (1 - K) + cur.origin * K
+	local base = cameraPos * (1 - cur.K) + cur.origin * cur.K
 	for _, p in ipairs(cur.parts) do
 		p.part.CFrame = CFrame.new(base)
 	end

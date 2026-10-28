@@ -275,28 +275,49 @@ function Builder.build(id, lib)
 		end
 		pierBlock(P.bz - 6, PR.housingEnd, PR.housingHalf, -4.5, PR.housingTop, Color3.fromRGB(200, 205, 210), M.DiamondPlate, "Housing")
 		pierBlock(P.bz - 6, PR.housingEnd, PR.housingHalf + 0.3, PR.housingTop, PR.housingTop + 0.4, Color3.fromRGB(70, 75, 80), M.Metal, "HousingRoof")
+		-- The arch: an opening exactly AR.z +- AR.half long, open from the floor to the underside
+		-- of the bridge at AR.height (what Land.pool's collide lets you paddle through). The
+		-- walkway climbs to the bridge on ramps and comes down the other side.
 		local a0, a1 = AR.z - AR.half, AR.z + AR.half
+		local RAMP = 12
+		local bridge0, bridge1 = AR.height, AR.height + 0.5 -- the bridge slab
 		pierBlock(PR.housingEnd, a0, PR.half, -4.5, PR.deck, concrete, M.Concrete)
 		pierBlock(a1, PR.finish, PR.half, -4.5, PR.deck, concrete, M.Concrete)
 		pierBlock(PR.platform[1], PR.platform[2], PR.platformHalf, -4.5, PR.deck, concrete, M.Concrete, "Platform")
-		-- the arch: a bridge over the gap, with ramps up to it
-		pierBlock(a0, a1, PR.half, AR.height + 0.2, AR.height + 0.7, concrete, M.Concrete, "Arch")
+		pierBlock(a0, a1, PR.half, bridge0, bridge1, concrete, M.Concrete, "Arch")
+		local plank = Color3.fromRGB(150, 120, 90)
+		local rail = Color3.fromRGB(230, 230, 235)
+		-- a straight run of walkway from (z0, y0) to (z1, y1): planks on top, a rail each side
+		local function walk(z0, y0, z1, y1, name)
+			local a = o + Vector3.new(0, y0, z0) * S
+			local b = o + Vector3.new(0, y1, z1) * S
+			local len = (b - a).Magnitude
+			local cf = CFrame.lookAt((a + b) / 2, b)
+			block(f, name, Vector3.new(PR.half * 2 + 0.3, 0.15, len / S + 0.05), cf * CFrame.new(0, 0.075 * S, 0), plank, M.WoodPlanks)
+			for _, sx in ipairs({ -1, 1 }) do
+				block(f, "Rail", Vector3.new(0.08, 0.08, len / S), cf * CFrame.new(sx * PR.half * S, 1.05 * S, 0), rail, M.Metal)
+			end
+		end
+		-- the ramps: solid concrete under the climbing walkway, on top of the pier's wall
 		for _, sgn in ipairs({ -1, 1 }) do
 			local zA = if sgn < 0 then a0 else a1
 			local ramp = Instance.new("WedgePart")
-			ramp.Size = Vector3.new(PR.half * 2, AR.height + 0.7 - PR.deck, 12) * S
-			ramp.CFrame = CFrame.new(o + Vector3.new(0, (PR.deck + AR.height + 0.7) / 2, zA + sgn * 6) * S) * CFrame.Angles(0, if sgn < 0 then 0 else math.pi, 0)
+			ramp.Size = Vector3.new(PR.half * 2, bridge1 - PR.deck, RAMP) * S
+			-- (a wedge rises toward its +z face: turned so it rises toward the arch)
+			ramp.CFrame = CFrame.new(o + Vector3.new(0, (PR.deck + bridge1) / 2, zA + sgn * RAMP / 2) * S) * CFrame.Angles(0, if sgn < 0 then 0 else math.pi, 0)
 			ramp.Color = concrete
 			ramp.Material = M.Concrete
 			ramp.Anchored = true
 			ramp.CanCollide = false
+			ramp.CanQuery = false
+			ramp.CanTouch = false
 			ramp.Parent = f
 		end
-		-- the walkway's planks and rails along the pier
-		pierBlock(PR.housingEnd, PR.finish, PR.half + 0.15, PR.deck, PR.deck + 0.15, Color3.fromRGB(150, 120, 90), M.WoodPlanks, "Deck")
-		for _, sx in ipairs({ -1, 1 }) do
-			block(f, "Rail", Vector3.new(0.08, 0.08, PR.finish - PR.housingEnd), CFrame.new(o + Vector3.new(sx * PR.half, PR.deck + 1.05, (PR.housingEnd + PR.finish) / 2) * S), Color3.fromRGB(230, 230, 235), M.Metal)
-		end
+		walk(PR.housingEnd, PR.deck, a0 - RAMP, PR.deck, "Deck")
+		walk(a0 - RAMP, PR.deck, a0, bridge1, "Deck")
+		walk(a0, bridge1, a1, bridge1, "Deck")
+		walk(a1, bridge1, a1 + RAMP, PR.deck, "Deck")
+		walk(a1 + RAMP, PR.deck, PR.finish, PR.deck, "Deck")
 		-- the clubhouse on the shore, with a terrace
 		local cb = CFrame.new(o + Vector3.new(16, L.deck + 4, 143) * S)
 		block(f, "Clubhouse", Vector3.new(60, 8, 26), cb, Color3.fromRGB(235, 236, 232), M.Plaster)

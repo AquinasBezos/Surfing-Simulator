@@ -138,10 +138,17 @@ Spots.pool = {
 	lineup = { z = -10, side = 7 },
 	sunset = { 0.71, -0.71 },
 	inside = { z = 1e9, x = 1e9 },
+	-- (the waves are drawn within this many metres of the camera: the whole pool from anywhere
+	-- in it, and no further)
+	patch = 260,
 	water = {
 		surface = Color3.fromRGB(56, 160, 182),
 		transparency = 0.35,
-		open = Color3.fromRGB(30, 100, 122),
+		-- beyond the waves: not open sea but the fields round about, flat to the horizon, just
+		-- under the terrain's own
+		open = Color3.fromRGB(104, 146, 68),
+		openMaterial = Enum.Material.Grass,
+		openHeight = 0.9,
 		deep = Color3.fromRGB(14, 80, 108),
 		shallow = Color3.fromRGB(40, 136, 158),
 		glow = Color3.fromRGB(100, 210, 220),

@@ -514,9 +514,9 @@ function Surfer:step(h, inp)
 		end
 	end
 	if self.collide then
-		local hit = self.collide(self)
+		local hit, why = self.collide(self)
 		if hit > 3.5 and self.state == STATE.STANDING then
-			return self:wipeout("Ran into the wall")
+			return self:wipeout(why or "Ran into the wall")
 		end
 	end
 

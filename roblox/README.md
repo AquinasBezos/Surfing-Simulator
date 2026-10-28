@@ -87,7 +87,12 @@ so a few things are done differently from the web version:
   from its bottom puts it; the builder counts from the middle, so the terrain is within a few
   centimetres of the land functions.
 - **The wave pool** has no voxels in it: its floor is a mesh (`PoolFloor`) and its edges straight
-  concrete walkway slabs and walls.
+  concrete walkway slabs and walls. Its skybox is only beyond the clubhouse at the shallow end
+  (`Land.pool.skyKeep`, at three tenths scale): past the deep end and the sides, flat
+  grass-coloured planes run out to the horizon, so nothing shows between the walls and the
+  pier. The pier's arch is an opening exactly `Land.pool.arch` long, open from the floor to the
+  bridge's underside at `arch.height`: the board has to be wholly inside it to pass, and
+  standing taller than that knocks you off. The walkway ramps up over the bridge.
 - An EditableMesh's vertices are drawn where they are in its part's frame (no recentring), and
   editable meshes share a small memory budget on each client: the boards are built first, and
   there's a plain fallback board if a mesh can't be made.

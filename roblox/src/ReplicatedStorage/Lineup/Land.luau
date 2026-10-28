@@ -465,7 +465,9 @@ do
 	end
 	-- the pier: half-width at z (0 where there's none), and the arch under it near the shore
 	local PIER = { half = 2.4, deck = 2.0, housingHalf = 5, housingEnd = -38, housingTop = 7.6, platform = { 12, 40 }, platformHalf = 4.6, finish = P0.fz + 12 }
-	local ARCH = { z = 82, half = 11, height = 3.1 }
+	-- the arch under the pier near the shore: its middle, half its length along the pier, and
+	-- the height of the underside of the bridge over it (TerrainBuilder builds exactly this)
+	local ARCH = { z = 82, half = 11, height = 3.3 }
 	local function pierHalf(z)
 		if z < P0.bz - 6 or z > PIER.finish then
 			return 0
@@ -499,7 +501,16 @@ do
 			end
 		end
 		local half = pierHalf(s.z)
-		local through = abs(s.z - ARCH.z) < ARCH.half - 2.5
+		-- Through the arch: the whole board inside the opening (nose and tail, whichever way it
+		-- points along the pier). Standing too tall under the bridge, you hit it.
+		local reach = if s.board then s.board.length / 2 * abs(math.cos(s.yaw or 0)) + 0.3 else 1.2
+		local through = abs(s.z - ARCH.z) < ARCH.half - reach
+		if through and half > 0 and abs(s.x) < half + 0.6 and s.state == "standing" then
+			local head = (s.y or 0) + 1.8 - 0.75 * (s.crouch or 0)
+			if head > ARCH.height then
+				return 10, "Hit your head on the arch! Crouch under it"
+			end
+		end
 		if half > 0 and not through and abs(s.x) < half + 0.6 then
 			local side = if s.x < 0 then -1 else 1
 			s.x = side * (half + 0.6)
@@ -546,7 +557,16 @@ do
 		corners = P0,
 		deck = DECK,
 		bounds = { -420, 420, -320, 420 },
-		sky = { -2600, 2600, -2600, 2600, 25 },
+		-- The 3D skybox only beyond the clubhouse at the shallow end: anything real further
+		-- off than the miniature is drawn would be painted over by it, and round the deep end and
+		-- the sides that's the walls and the pier (the fields there are Ocean's flat planes, at
+		-- field height). From 600 m out at three tenths' scale, it's drawn further off than
+		-- the clubhouse and the end of the pier ever are.
+		sky = { -2600, 2600, 560, 2600, 25 },
+		skyK = 0.3,
+		skyKeep = function(_x, z)
+			return z > 600
+		end,
 		lineup = { 59, -10 },
 	}
 end
@@ -556,7 +576,7 @@ end
 -- in the 3D skybox (Landscape), the seabed is terrain everywhere it's built.
 Land.margaret.near = { 0, -5, 330 }
 Land.teahupoo.near = { 9, -13, 300 }
-Land.pool.near = { 0, 20, 260 }
+Land.pool.near = { 0, 20, 400 }
 
 -- Every spot's trees, the same on every client and in the builder: { x, z, h, r, shade }.
 -- (The builder makes the near ones as parts; the 3D skybox draws the rest.)
