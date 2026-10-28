@@ -14,7 +14,8 @@ function Config.editableMesh()
 	local ok, em = pcall(AssetService.CreateEditableMesh, AssetService)
 	if ok and em then
 		local usable = pcall(function()
-			em:RemoveVertex(em:AddVertex(Vector3.zero))
+			em:AddVertex(Vector3.zero)
+			em:RemoveUnused()
 		end)
 		if usable then
 			return em
